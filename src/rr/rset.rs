@@ -610,4 +610,175 @@ mod tests {
         assert_eq!(rrset1.name(), rrset2.name());
         assert_eq!(rrset1.len(), rrset2.len());
     }
+
+    #[test]
+    fn test_recordset_soa_serial_number_handling() {
+        use hickory_proto::rr::rdata::SOA;
+        
+        let name = create_test_name();
+        let mut rrset = RecordSet::new(name.clone(), RecordType::SOA);
+        
+        // Create first SOA with serial 100
+        let soa1 = SOA::new(
+            name.clone(),
+            Name::from_utf8("admin.example.com").unwrap(),
+            100, // serial
+            3600, 1800, 604800, 86400
+        );
+        let record1 = Record::from_rdata(name.clone(), TimeToLive::from(3600), soa1).into_record_rdata();
+        
+        // Insert first SOA
+        let result = rrset.insert(record1, SerialNumber::from(1));
+        assert!(result.is_ok());
+        assert!(result.unwrap()); // Should succeed
+        assert_eq!(rrset.len(), 1);
+        
+        // Try to insert SOA with older serial (50) - should be rejected
+        let soa2 = SOA::new(
+            name.clone(),
+            Name::from_utf8("admin.example.com").unwrap(),
+            50, // older serial
+            3600, 1800, 604800, 86400
+        );
+        let record2 = Record::from_rdata(name.clone(), TimeToLive::from(3600), soa2).into_record_rdata();
+        
+        let result = rrset.insert(record2, SerialNumber::from(2));
+        assert!(result.is_ok());
+        assert!(!result.unwrap()); // Should be rejected due to old serial
+        assert_eq!(rrset.len(), 1); // Length should not change
+        
+        // Try to insert SOA with newer serial (200) - should succeed
+        let soa3 = SOA::new(
+            name.clone(),
+            Name::from_utf8("admin.example.com").unwrap(),
+            200, // newer serial
+            3600, 1800, 604800, 86400
+        );
+        let record3 = Record::from_rdata(name, TimeToLive::from(3600), soa3).into_record_rdata();
+        
+        let result = rrset.insert(record3, SerialNumber::from(3));
+        assert!(result.is_ok());
+        assert!(result.unwrap()); // Should succeed
+        assert_eq!(rrset.len(), 1); // Still only one SOA (replaced)
+        
+        // Verify the SOA has the newer serial
+        let soa_record = rrset.records().next().unwrap();
+        if let RData::SOA(soa) = soa_record.rdata() {
+            assert_eq!(soa.serial(), 200);
+        } else {
+            panic!("Expected SOA record");
+        }
+    }
+
+    #[test]
+    fn test_recordset_ns_last_record_protection() {
+        use hickory_proto::rr::rdata::NS;
+        
+        let name = create_test_name();
+        let mut rrset = RecordSet::new(name.clone(), RecordType::NS);
+        
+        // Add first NS record
+        let ns1 = NS(Name::from_utf8("ns1.example.com").unwrap());
+        let record1 = Record::from_rdata(name.clone(), TimeToLive::from(86400), ns1.clone()).into_record_rdata();
+        rrset.insert(record1.clone(), SerialNumber::from(1)).unwrap();
+        assert_eq!(rrset.len(), 1);
+        
+        // Add second NS record
+        let ns2 = NS(Name::from_utf8("ns2.example.com").unwrap());
+        let record2 = Record::from_rdata(name.clone(), TimeToLive::from(86400), ns2).into_record_rdata();
+        rrset.insert(record2.clone(), SerialNumber::from(2)).unwrap();
+        assert_eq!(rrset.len(), 2);
+        
+        // Remove first NS record - should succeed
+        let result = rrset.remove(&record1, SerialNumber::from(3));
+        assert!(result.is_ok());
+        assert!(result.unwrap()); // Should succeed
+        assert_eq!(rrset.len(), 1);
+        
+        // Try to remove the last NS record - should be rejected
+        let result = rrset.remove(&record2, SerialNumber::from(4));
+        assert!(result.is_ok());
+        assert!(!result.unwrap()); // Should be rejected
+        assert_eq!(rrset.len(), 1); // Length should not change
+    }
+
+    #[test]
+    fn test_recordset_soa_deletion_protection() {
+        use hickory_proto::rr::rdata::SOA;
+        
+        let name = create_test_name();
+        let mut rrset = RecordSet::new(name.clone(), RecordType::SOA);
+        
+        // Add SOA record
+        let soa = SOA::new(
+            name.clone(),
+            Name::from_utf8("admin.example.com").unwrap(),
+            1, 3600, 1800, 604800, 86400
+        );
+        let record = Record::from_rdata(name, TimeToLive::from(3600), soa).into_record_rdata();
+        rrset.insert(record.clone(), SerialNumber::from(1)).unwrap();
+        assert_eq!(rrset.len(), 1);
+        
+        // Try to remove SOA record - should be rejected
+        let result = rrset.remove(&record, SerialNumber::from(2));
+        assert!(result.is_ok());
+        assert!(!result.unwrap()); // Should be rejected
+        assert_eq!(rrset.len(), 1); // Length should not change
+    }
+
+    #[test]
+    fn test_recordset_cname_replacement() {
+        use hickory_proto::rr::rdata::CNAME;
+        
+        let name = create_test_name();
+        let mut rrset = RecordSet::new(name.clone(), RecordType::CNAME);
+        
+        // Add first CNAME record
+        let cname1 = CNAME(Name::from_utf8("target1.example.com").unwrap());
+        let record1 = Record::from_rdata(name.clone(), TimeToLive::from(300), cname1).into_record_rdata();
+        rrset.insert(record1, SerialNumber::from(1)).unwrap();
+        assert_eq!(rrset.len(), 1);
+        
+        // Add second CNAME record - should replace the first
+        let cname2 = CNAME(Name::from_utf8("target2.example.com").unwrap());
+        let record2 = Record::from_rdata(name, TimeToLive::from(300), cname2).into_record_rdata();
+        rrset.insert(record2, SerialNumber::from(2)).unwrap();
+        assert_eq!(rrset.len(), 1); // Still only one CNAME
+        
+        // Verify the CNAME points to the new target
+        let cname_record = rrset.records().next().unwrap();
+        if let RData::CNAME(cname) = cname_record.rdata() {
+            assert!(cname.0.to_utf8().starts_with("target2.example.com"));
+        } else {
+            panic!("Expected CNAME record");
+        }
+    }
+
+    #[test]
+    fn test_recordset_aname_replacement() {
+        use hickory_proto::rr::rdata::ANAME;
+        
+        let name = create_test_name();
+        let mut rrset = RecordSet::new(name.clone(), RecordType::ANAME);
+        
+        // Add first ANAME record
+        let aname1 = ANAME(Name::from_utf8("target1.example.com").unwrap());
+        let record1 = Record::from_rdata(name.clone(), TimeToLive::from(300), aname1).into_record_rdata();
+        rrset.insert(record1, SerialNumber::from(1)).unwrap();
+        assert_eq!(rrset.len(), 1);
+        
+        // Add second ANAME record - should replace the first
+        let aname2 = ANAME(Name::from_utf8("target2.example.com").unwrap());
+        let record2 = Record::from_rdata(name, TimeToLive::from(300), aname2).into_record_rdata();
+        rrset.insert(record2, SerialNumber::from(2)).unwrap();
+        assert_eq!(rrset.len(), 1); // Still only one ANAME
+        
+        // Verify the ANAME points to the new target
+        let aname_record = rrset.records().next().unwrap();
+        if let RData::ANAME(aname) = aname_record.rdata() {
+            assert!(aname.0.to_utf8().starts_with("target2.example.com"));
+        } else {
+            panic!("Expected ANAME record");
+        }
+    }
 }

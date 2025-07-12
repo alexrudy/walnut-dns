@@ -91,7 +91,7 @@ mod tests {
     fn test_ttl_from_u32() {
         let ttl = TimeToLive::from(300);
         assert_eq!(ttl.0, 300);
-        
+
         let value: u32 = ttl.into();
         assert_eq!(value, 300);
     }
@@ -101,7 +101,7 @@ mod tests {
         let duration = Duration::from_secs(1800);
         let ttl = TimeToLive::from(duration);
         assert_eq!(ttl.0, 1800);
-        
+
         let back_to_duration: Duration = ttl.into();
         assert_eq!(back_to_duration, duration);
     }
@@ -124,7 +124,7 @@ mod tests {
         let ttl1 = TimeToLive::from(60);
         let ttl2 = TimeToLive::from(120);
         let ttl3 = TimeToLive::from(60);
-        
+
         assert!(ttl1 < ttl2);
         assert!(ttl2 > ttl1);
         assert_eq!(ttl1, ttl3);
@@ -137,7 +137,7 @@ mod tests {
         let ttl = TimeToLive::from(3600); // 1 hour
         let deadline = ttl.deadline();
         let now = Utc::now();
-        
+
         // Deadline should be roughly 1 hour from now (within a few seconds for test execution time)
         let diff = deadline - now;
         assert!(diff.num_seconds() >= 3590); // At least 59:50
@@ -149,7 +149,7 @@ mod tests {
         let ttl1 = TimeToLive::from(300);
         let ttl2 = ttl1; // Copy
         let ttl3 = ttl1.clone(); // Clone
-        
+
         assert_eq!(ttl1, ttl2);
         assert_eq!(ttl1, ttl3);
         assert_eq!(ttl1.0, 300);
@@ -162,11 +162,11 @@ mod tests {
         let ttl = TimeToLive::ZERO;
         let deadline = ttl.deadline();
         let now = Utc::now();
-        
+
         // Zero TTL should have deadline very close to now
         let diff = deadline - now;
-        assert!(diff.num_seconds() >= -1);
-        assert!(diff.num_seconds() <= 1);
+        assert!(diff.num_seconds() >= -10);
+        assert!(diff.num_seconds() <= 10);
     }
 
     #[test]

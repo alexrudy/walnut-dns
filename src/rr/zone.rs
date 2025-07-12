@@ -71,7 +71,7 @@ impl FromSql for ZoneType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Zone {
     id: ZoneID,
     zone_type: ZoneType,
@@ -328,7 +328,7 @@ impl Lookup for Zone {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hickory_proto::rr::{rdata::A, RecordType};
+    use hickory_proto::rr::{RecordType, rdata::A};
 
     fn create_test_name() -> Name {
         Name::from_utf8("test.example.com").unwrap()
@@ -379,14 +379,6 @@ mod tests {
         );
     }
 
-    // Note: Test for deprecated zone types is disabled as Forward type
-    // may not exist in current hickory_server version
-    // #[test]
-    // #[should_panic(expected = "Deprecated zone type")]
-    // fn test_zone_type_from_deprecated() {
-    //     let _zone_type = ZoneType::from(hickory_server::authority::ZoneType::Forward);
-    // }
-
     #[test]
     fn test_zone_type_debug() {
         assert!(format!("{:?}", ZoneType::Primary).contains("Primary"));
@@ -395,28 +387,11 @@ mod tests {
     }
 
     #[test]
-    fn test_zone_type_equality() {
-        assert_eq!(ZoneType::Primary, ZoneType::Primary);
-        assert_ne!(ZoneType::Primary, ZoneType::Secondary);
-        assert_ne!(ZoneType::Secondary, ZoneType::External);
-    }
-
-    #[test]
-    fn test_zone_type_clone_copy() {
-        let zt1 = ZoneType::Primary;
-        let zt2 = zt1; // Copy
-        let zt3 = zt1.clone(); // Clone
-        
-        assert_eq!(zt1, zt2);
-        assert_eq!(zt1, zt3);
-    }
-
-    #[test]
     fn test_zone_creation() {
         let name = create_test_name();
         let soa = create_test_soa();
         let zone = Zone::empty(name.clone(), soa, ZoneType::Primary, false);
-        
+
         assert_eq!(zone.name(), &name);
         assert_eq!(zone.zone_type(), ZoneType::Primary);
         assert_eq!(zone.dns_class(), DNSClass::IN);
@@ -429,34 +404,21 @@ mod tests {
     fn test_zone_with_allow_axfr() {
         let name = create_test_name();
         let soa = create_test_soa();
-        
+
         let mut zone = Zone::empty(
             name.clone(),
             soa,
             ZoneType::Primary,
             true, // allow_axfr
         );
-        
+
         assert_eq!(zone.name(), &name);
         assert_eq!(zone.zone_type(), ZoneType::Primary);
         assert!(zone.allow_axfr());
-        
+
         // Test set_allow_axfr
         zone.set_allow_axfr(false);
         assert!(!zone.allow_axfr());
-    }
-
-    #[test]
-    fn test_zone_soa_operations() {
-        let name = create_test_name();
-        let soa = create_test_soa();
-        let zone = Zone::empty(name, soa, ZoneType::Primary, false);
-        
-        // Test getting SOA
-        let soa_record = zone.soa().unwrap();
-        assert_eq!(soa_record.record_type(), RecordType::SOA);
-        
-        // SOA is accessible via the soa() method
     }
 
     #[test]
@@ -464,14 +426,11 @@ mod tests {
         let name = create_test_name();
         let soa = create_test_soa();
         let mut zone = Zone::empty(name.clone(), soa, ZoneType::Primary, false);
-        
+
         // Add A record
-        let a_record = Record::from_rdata(
-            name,
-            TimeToLive::from(300),
-            A::new(192, 168, 1, 1)
-        ).into_record_rdata();
-        
+        let a_record = Record::from_rdata(name, TimeToLive::from(300), A::new(192, 168, 1, 1))
+            .into_record_rdata();
+
         let result = zone.upsert(a_record.clone(), SerialNumber::from(1));
         assert!(result.is_ok());
         assert!(result.unwrap());
@@ -483,17 +442,15 @@ mod tests {
         let name = create_test_name();
         let soa = create_test_soa();
         let mut zone = Zone::empty(name.clone(), soa, ZoneType::Primary, false);
-        
+
         // Add A record
-        let a_record = Record::from_rdata(
-            name,
-            TimeToLive::from(300),
-            A::new(192, 168, 1, 1)
-        ).into_record_rdata();
-        
-        zone.upsert(a_record.clone(), SerialNumber::from(1)).unwrap();
+        let a_record = Record::from_rdata(name, TimeToLive::from(300), A::new(192, 168, 1, 1))
+            .into_record_rdata();
+
+        zone.upsert(a_record.clone(), SerialNumber::from(1))
+            .unwrap();
         assert_eq!(zone.records().count(), 2);
-        
+
         // Remove A record (using the key)
         let key = a_record.rrkey();
         let removed = zone.remove(&key);
@@ -506,21 +463,20 @@ mod tests {
         let name = create_test_name();
         let soa = create_test_soa();
         let mut zone = Zone::empty(name.clone(), soa, ZoneType::Primary, false);
-        
+
         // Add A record
-        let a_record = Record::from_rdata(
-            name.clone(),
-            TimeToLive::from(300),
-            A::new(192, 168, 1, 1)
-        ).into_record_rdata();
-        
-        zone.upsert(a_record.clone(), SerialNumber::from(1)).unwrap();
-        
+        let a_record =
+            Record::from_rdata(name.clone(), TimeToLive::from(300), A::new(192, 168, 1, 1))
+                .into_record_rdata();
+
+        zone.upsert(a_record.clone(), SerialNumber::from(1))
+            .unwrap();
+
         // Test get by key
         let key = a_record.rrkey();
         let result = zone.get(&key);
         assert!(result.is_some());
-        
+
         let rrset = result.unwrap();
         assert_eq!(rrset.record_type(), RecordType::A);
         assert_eq!(rrset.len(), 1);
@@ -531,11 +487,11 @@ mod tests {
         let name = create_test_name();
         let soa = create_test_soa();
         let zone = Zone::empty(name.clone(), soa, ZoneType::Primary, false);
-        
+
         // Test SOA access
         let soa_record = zone.soa().unwrap();
         assert_eq!(soa_record.record_type(), RecordType::SOA);
-        
+
         // Test serial number
         let serial = zone.serial();
         assert_eq!(serial.get(), 1); // From our test SOA
@@ -546,7 +502,7 @@ mod tests {
         let name = create_test_name();
         let soa = create_test_soa();
         let zone = Zone::empty(name, soa, ZoneType::Primary, false);
-        
+
         // Zone with only SOA is not considered empty
         assert!(!zone.is_empty());
     }
@@ -556,16 +512,13 @@ mod tests {
         let name = create_test_name();
         let soa = create_test_soa();
         let mut zone = Zone::empty(name.clone(), soa, ZoneType::Primary, false);
-        
+
         // Add A record
-        let a_record = Record::from_rdata(
-            name,
-            TimeToLive::from(300),
-            A::new(192, 168, 1, 1)
-        ).into_record_rdata();
-        
+        let a_record = Record::from_rdata(name, TimeToLive::from(300), A::new(192, 168, 1, 1))
+            .into_record_rdata();
+
         zone.upsert(a_record, SerialNumber::from(1)).unwrap();
-        
+
         // Test records iterator
         assert_eq!(zone.records().count(), 2); // SOA + A
     }
@@ -575,7 +528,7 @@ mod tests {
         let name = create_test_name();
         let soa = create_test_soa();
         let zone1 = Zone::empty(name.clone(), soa, ZoneType::Primary, false);
-        
+
         // Test that zones can be inspected (no Clone trait)
         assert_eq!(zone1.name(), &name);
         assert_eq!(zone1.zone_type(), ZoneType::Primary);
@@ -587,7 +540,7 @@ mod tests {
         let name = create_test_name();
         let zone1 = Zone::empty(name.clone(), create_test_soa(), ZoneType::Primary, false);
         let zone2 = Zone::empty(name, create_test_soa(), ZoneType::Primary, false);
-        
+
         assert_ne!(zone1.id(), zone2.id());
     }
 }

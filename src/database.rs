@@ -427,3 +427,297 @@ impl<'c> RecordPersistence<'c> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rr::{Record, TimeToLive, Zone, ZoneType};
+    use hickory_proto::rr::{RecordType, rdata};
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    fn create_test_zone() -> Zone {
+        let name = Name::from_utf8("test.example.com").unwrap();
+        let soa = rdata::SOA::new(
+            name.clone(),
+            Name::from_utf8("admin.example.com").unwrap(),
+            1,
+            3600,
+            1800,
+            604800,
+            86400,
+        );
+        let soa_record = Record::from_rdata(name.clone(), TimeToLive::from(3600), soa);
+        Zone::empty(name, soa_record, ZoneType::Primary, false)
+    }
+
+    fn create_test_a_record() -> Record {
+        let name = Name::from_utf8("www.test.example.com").unwrap();
+        let ttl = TimeToLive::from(300);
+        let rdata = rdata::A::new(192, 168, 1, 1);
+        Record::from_rdata(name, ttl, rdata).into_record_rdata()
+    }
+
+    #[test]
+    fn test_sqlite_configuration_serde() {
+        // Test deserialization with no path (default)
+        let json = "{}";
+        let config: SqliteConfiguration = serde_json::from_str(json).unwrap();
+        assert!(config.path.is_none());
+
+        // Test deserialization with path
+        let json = r#"{"path": "/tmp/test.db"}"#;
+        let config: SqliteConfiguration = serde_json::from_str(json).unwrap();
+        assert_eq!(config.path, Some(Utf8PathBuf::from("/tmp/test.db")));
+    }
+
+    #[test]
+    fn test_sqlite_catalog_new() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        let catalog = SqliteCatalog::new(connection);
+
+        // Should be created successfully
+        assert!(catalog.connection.lock().is_ok());
+    }
+
+    #[test]
+    fn test_sqlite_catalog_new_in_memory() {
+        let catalog = SqliteCatalog::new_in_memory().unwrap();
+
+        // Should be created successfully with migrations applied
+        assert!(catalog.connection.lock().is_ok());
+    }
+
+    #[test]
+    fn test_sqlite_catalog_new_from_config_in_memory() {
+        let config = SqliteConfiguration { path: None };
+        let catalog = SqliteCatalog::new_from_config(&config).unwrap();
+
+        // Should be created successfully
+        assert!(catalog.connection.lock().is_ok());
+    }
+
+    #[test]
+    fn test_sqlite_catalog_new_from_config_with_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let config = SqliteConfiguration {
+            path: Some(Utf8PathBuf::from_path_buf(db_path).unwrap()),
+        };
+
+        let catalog = SqliteCatalog::new_from_config(&config).unwrap();
+
+        // Should be created successfully
+        assert!(catalog.connection.lock().is_ok());
+
+        // File should exist
+        assert!(Path::new(config.path.as_ref().unwrap()).exists());
+    }
+
+    #[test]
+    fn test_catalog_upsert_and_get_zone() {
+        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let zone = create_test_zone();
+        let zone_id = zone.id();
+        let expected_name = zone.name().clone();
+        let expected_type = zone.zone_type();
+
+        // Upsert zone
+        let result = catalog.upsert(zone);
+        assert!(result.is_ok());
+
+        // Get zone back
+        let retrieved_zone = catalog.get(zone_id).unwrap();
+        assert_eq!(retrieved_zone.id(), zone_id);
+        assert_eq!(retrieved_zone.name(), &expected_name);
+        assert_eq!(retrieved_zone.zone_type(), expected_type);
+    }
+
+    #[test]
+    fn test_catalog_find_zone() {
+        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let zone = create_test_zone();
+        let zone_name = LowerName::from(zone.name().clone());
+        let expected_name = zone.name().clone();
+
+        // Upsert zone
+        catalog.upsert(zone).unwrap();
+
+        // Find zone by name
+        let found_zones = catalog.find(&zone_name).unwrap();
+        assert_eq!(found_zones.len(), 1);
+        assert_eq!(found_zones[0].name(), &expected_name);
+    }
+
+    #[test]
+    fn test_catalog_find_nonexistent_zone() {
+        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let nonexistent_name = LowerName::from(Name::from_utf8("nonexistent.example.com").unwrap());
+
+        // Find nonexistent zone
+        let found_zones = catalog.find(&nonexistent_name).unwrap();
+        assert!(found_zones.is_empty());
+    }
+
+    #[test]
+    fn test_catalog_delete_zone() {
+        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let zone = create_test_zone();
+        let zone_id = zone.id();
+
+        // Upsert zone
+        catalog.upsert(zone).unwrap();
+
+        // Verify zone exists
+        assert!(catalog.get(zone_id).is_ok());
+
+        // Delete zone
+        let result = catalog.delete(zone_id);
+        assert!(result.is_ok());
+
+        // Verify zone no longer exists
+        assert!(catalog.get(zone_id).is_err());
+    }
+
+    #[test]
+    fn test_catalog_list_zones() {
+        let catalog = SqliteCatalog::new_in_memory().unwrap();
+
+        // Start with empty list
+        let initial_list = catalog.list().unwrap();
+        assert!(initial_list.is_empty());
+
+        // Add a zone
+        let zone = create_test_zone();
+        let zone_name = zone.name().clone();
+        catalog.upsert(zone).unwrap();
+
+        // List should contain the zone
+        let zone_list = catalog.list().unwrap();
+        assert_eq!(zone_list.len(), 1);
+        assert_eq!(zone_list[0], zone_name);
+    }
+
+    #[test]
+    fn test_catalog_multiple_zones() {
+        let catalog = SqliteCatalog::new_in_memory().unwrap();
+
+        // Create multiple zones
+        let zone1 = create_test_zone();
+        let zone1_name = zone1.name().clone();
+        let zone2 = {
+            let name = Name::from_utf8("another.example.com").unwrap();
+            let soa = rdata::SOA::new(
+                name.clone(),
+                Name::from_utf8("admin.another.example.com").unwrap(),
+                1,
+                3600,
+                1800,
+                604800,
+                86400,
+            );
+            let soa_record = Record::from_rdata(name.clone(), TimeToLive::from(3600), soa);
+            Zone::empty(name, soa_record, ZoneType::Secondary, true)
+        };
+        let zone2_name = zone2.name().clone();
+
+        // Upsert both zones
+        catalog.upsert(zone1).unwrap();
+        catalog.upsert(zone2).unwrap();
+
+        // List should contain both zones
+        let zone_list = catalog.list().unwrap();
+        assert_eq!(zone_list.len(), 2);
+        assert!(zone_list.contains(&zone1_name));
+        assert!(zone_list.contains(&zone2_name));
+    }
+
+    #[test]
+    fn test_catalog_zone_with_records() {
+        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let mut zone = create_test_zone();
+        let a_record = create_test_a_record();
+
+        // Add record to zone
+        zone.upsert(a_record.clone(), SerialNumber::from(1))
+            .unwrap();
+        let zone_id = zone.id();
+
+        // Upsert zone with records
+        catalog.upsert(zone).unwrap();
+
+        // Retrieve zone and verify records
+        let retrieved_zone = catalog.get(zone_id).unwrap();
+        assert_eq!(retrieved_zone.records().count(), 2); // SOA + A record
+
+        // Verify A record exists
+        let a_records: Vec<_> = retrieved_zone
+            .records()
+            .filter(|r| r.record_type() == RecordType::A)
+            .collect();
+        assert_eq!(a_records.len(), 1);
+    }
+
+    #[test]
+    fn test_catalog_concurrent_access() {
+        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let zone = create_test_zone();
+        let zone_name = LowerName::from(zone.name().clone());
+
+        // Test that the catalog can handle concurrent access via Arc<Mutex<Connection>>
+        let catalog_clone = catalog.clone();
+
+        // Upsert in original
+        catalog.upsert(zone).unwrap();
+
+        // Read from clone
+        let found_zones = catalog_clone.find(&zone_name).unwrap();
+        assert_eq!(found_zones.len(), 1);
+    }
+
+    #[test]
+    fn test_catalog_debug_format() {
+        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let debug_string = format!("{:?}", catalog);
+        assert!(debug_string.contains("SqliteCatalog"));
+    }
+
+    #[test]
+    fn test_zone_update_serial_number() {
+        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let mut zone = create_test_zone();
+        let a_record = create_test_a_record();
+
+        // Add record with serial 1
+        zone.upsert(a_record.clone(), SerialNumber::from(1))
+            .unwrap();
+        let zone_id = zone.id();
+        catalog.upsert(zone).unwrap();
+
+        // Retrieve zone and add same record with serial 2 (simulating an update)
+        let mut retrieved_zone = catalog.get(zone_id).unwrap();
+        retrieved_zone
+            .upsert(a_record, SerialNumber::from(2))
+            .unwrap();
+        catalog.upsert(retrieved_zone).unwrap();
+
+        // Retrieve and verify the zone was updated
+        let final_zone = catalog.get(zone_id).unwrap();
+        assert_eq!(final_zone.records().count(), 2); // SOA + A record (not duplicated)
+    }
+
+    #[test]
+    fn test_zone_name_case_insensitive_search() {
+        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let zone = create_test_zone();
+        let expected_name = zone.name().clone();
+
+        catalog.upsert(zone).unwrap();
+
+        // Search with different case
+        let upper_name = LowerName::from(Name::from_utf8("TEST.EXAMPLE.COM").unwrap());
+        let found_zones = catalog.find(&upper_name).unwrap();
+        assert_eq!(found_zones.len(), 1);
+        assert_eq!(found_zones[0].name(), &expected_name);
+    }
+}
