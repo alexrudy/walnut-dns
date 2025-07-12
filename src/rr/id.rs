@@ -58,3 +58,89 @@ macro_rules! impl_id {
 
 impl_id!(ZoneID);
 impl_id!(RecordID);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_zone_id_creation() {
+        let id1 = ZoneID::new();
+        let id2 = ZoneID::new();
+        
+        // Each ID should be unique
+        assert_ne!(id1, id2);
+        
+        // Default should create a new ID
+        let id3 = ZoneID::default();
+        assert_ne!(id1, id3);
+    }
+
+    #[test]
+    fn test_record_id_creation() {
+        let id1 = RecordID::new();
+        let id2 = RecordID::new();
+        
+        // Each ID should be unique
+        assert_ne!(id1, id2);
+        
+        // Default should create a new ID
+        let id3 = RecordID::default();
+        assert_ne!(id1, id3);
+    }
+
+    #[test]
+    fn test_zone_id_ordering() {
+        let id1 = ZoneID::new();
+        let id2 = ZoneID::new();
+        
+        // Should be orderable
+        assert!(id1.cmp(&id2) != std::cmp::Ordering::Equal);
+        assert_eq!(id1.partial_cmp(&id1), Some(std::cmp::Ordering::Equal));
+    }
+
+    #[test]
+    fn test_record_id_display() {
+        let id = RecordID::new();
+        let display_str = format!("{}", id);
+        
+        // Should be a valid UUID string with hyphens
+        assert!(display_str.len() == 36);
+        assert!(display_str.contains('-'));
+    }
+
+    #[test]
+    fn test_zone_id_from_str() {
+        let uuid_str = "550e8400-e29b-41d4-a716-446655440000";
+        let id = ZoneID::from_str(uuid_str).unwrap();
+        
+        // Converting back to string should match
+        assert_eq!(format!("{}", id), uuid_str);
+    }
+
+    #[test]
+    fn test_record_id_from_str_invalid() {
+        let invalid_uuid = "not-a-uuid";
+        let result = RecordID::from_str(invalid_uuid);
+        
+        // Should fail for invalid UUID
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_zone_id_hash() {
+        use std::collections::HashMap;
+        
+        let id1 = ZoneID::new();
+        let id2 = ZoneID::new();
+        
+        let mut map = HashMap::new();
+        map.insert(id1, "zone1");
+        map.insert(id2, "zone2");
+        
+        // Should be able to use as hash keys
+        assert_eq!(map.get(&id1), Some(&"zone1"));
+        assert_eq!(map.get(&id2), Some(&"zone2"));
+    }
+}

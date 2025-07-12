@@ -312,3 +312,191 @@ impl<R: RecordData> AsHickory for Record<R> {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hickory_proto::rr::{rdata::A, RecordType};
+    use chrono::{Duration, Utc};
+
+    fn create_test_name() -> Name {
+        Name::from_utf8("test.example.com").unwrap()
+    }
+
+    fn create_test_a_record() -> Record<A> {
+        let name = create_test_name();
+        let ttl = TimeToLive::from(300);
+        let rdata = A::new(192, 168, 1, 1);
+        Record::from_rdata(name, ttl, rdata)
+    }
+
+    #[test]
+    fn test_record_creation() {
+        let record = create_test_a_record();
+        
+        assert!(record.name().to_utf8().starts_with("test.example.com"));
+        assert_eq!(u32::from(record.ttl()), 300u32);
+        assert_eq!(record.dns_class(), DNSClass::IN);
+        assert_eq!(record.record_type(), RecordType::A);
+        assert!(!record.mdns_cache_flush());
+        assert_eq!(record.expires(), None);
+    }
+
+    #[test]
+    fn test_record_update0() {
+        let name = create_test_name();
+        let ttl = TimeToLive::from(600);
+        let record = Record::update0(name.clone(), ttl, RecordType::A);
+        
+        assert_eq!(record.name(), &name);
+        assert_eq!(record.ttl(), ttl);
+        assert_eq!(record.record_type(), RecordType::A);
+        
+        if let RData::Update0(rt) = record.rdata() {
+            assert_eq!(*rt, RecordType::A);
+        } else {
+            panic!("Expected Update0 rdata");
+        }
+    }
+
+    #[test]
+    fn test_record_id_uniqueness() {
+        let record1 = create_test_a_record();
+        let record2 = create_test_a_record();
+        
+        assert_ne!(record1.id(), record2.id());
+    }
+
+    #[test]
+    fn test_record_ttl_modification() {
+        let mut record = create_test_a_record();
+        let new_ttl = TimeToLive::from(600);
+        
+        record.set_ttl(new_ttl);
+        assert_eq!(record.ttl(), new_ttl);
+    }
+
+    #[test]
+    fn test_record_expiration() {
+        let mut record = create_test_a_record();
+        let future_time = Utc::now() + Duration::hours(1);
+        
+        // Initially not expired and no expiration set
+        assert!(!record.expired());
+        assert_eq!(record.expires(), None);
+        
+        // Set expiration in the future
+        record.set_expires(future_time);
+        assert_eq!(record.expires(), Some(future_time));
+        assert!(!record.expired());
+        
+        // Set expiration in the past
+        let past_time = Utc::now() - Duration::hours(1);
+        record.set_expires(past_time);
+        assert!(record.expired());
+        
+        // Clear expiration
+        record.clear_expires();
+        assert_eq!(record.expires(), None);
+        assert!(!record.expired());
+    }
+
+    #[test]
+    fn test_record_mdns_cache_flush() {
+        let mut record = create_test_a_record();
+        
+        assert!(!record.mdns_cache_flush());
+        record.set_mdns_cache_flush(true);
+        assert!(record.mdns_cache_flush());
+        record.set_mdns_cache_flush(false);
+        assert!(!record.mdns_cache_flush());
+    }
+
+    #[test]
+    fn test_record_equality() {
+        let name = create_test_name();
+        let ttl = TimeToLive::from(300);
+        let rdata = A::new(192, 168, 1, 1);
+        
+        let record1 = Record::from_rdata(name.clone(), ttl, rdata);
+        let record2 = Record::from_rdata(name, ttl, rdata);
+        
+        // Records should be equal based on name, class, and rdata (not ID or TTL)
+        assert_eq!(record1, record2);
+    }
+
+    #[test]
+    fn test_record_into_record_rdata() {
+        let record = create_test_a_record();
+        let id = record.id();
+        let name = record.name().clone();
+        let ttl = record.ttl();
+        
+        let generic_record = record.into_record_rdata();
+        
+        assert_eq!(generic_record.id(), id);
+        assert_eq!(generic_record.name(), &name);
+        assert_eq!(generic_record.ttl(), ttl);
+        assert_eq!(generic_record.record_type(), RecordType::A);
+    }
+
+    #[test]
+    fn test_record_rrkey() {
+        let record = create_test_a_record();
+        let rrkey = record.rrkey();
+        
+        assert_eq!(rrkey.name(), &hickory_proto::rr::LowerName::from(record.name()));
+        assert_eq!(rrkey.record_type, RecordType::A);
+    }
+
+    #[test]
+    fn test_record_display() {
+        let record = create_test_a_record();
+        let display_str = format!("{}", record);
+        
+        assert!(display_str.contains("test.example.com"));
+        assert!(display_str.contains("300"));
+        assert!(display_str.contains("IN"));
+        assert!(display_str.contains("A"));
+        assert!(display_str.contains("192.168.1.1"));
+    }
+
+    #[test]
+    fn test_record_ordering() {
+        let name1 = Name::from_utf8("a.example.com").unwrap();
+        let name2 = Name::from_utf8("b.example.com").unwrap();
+        let ttl = TimeToLive::from(300);
+        let rdata = A::new(192, 168, 1, 1);
+        
+        let record1 = Record::from_rdata(name1, ttl, rdata);
+        let record2 = Record::from_rdata(name2, ttl, rdata);
+        
+        // Convert to RData records for ordering comparison
+        let rdata_record1 = record1.into_record_rdata();
+        let rdata_record2 = record2.into_record_rdata();
+        
+        assert!(rdata_record1 < rdata_record2);
+    }
+
+    #[test]
+    fn test_record_as_hickory() {
+        let record = create_test_a_record();
+        let hickory_record = record.as_hickory();
+        
+        assert_eq!(hickory_record.name(), record.name());
+        assert_eq!(hickory_record.ttl(), record.ttl().into());
+        assert_eq!(hickory_record.record_type(), record.record_type());
+        assert_eq!(hickory_record.dns_class(), record.dns_class());
+    }
+
+    #[test]
+    fn test_record_clone() {
+        let record1 = create_test_a_record();
+        let record2 = record1.clone();
+        
+        assert_eq!(record1.id(), record2.id());
+        assert_eq!(record1.name(), record2.name());
+        assert_eq!(record1.ttl(), record2.ttl());
+        assert_eq!(record1.rdata(), record2.rdata());
+    }
+}

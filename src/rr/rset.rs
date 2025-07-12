@@ -371,3 +371,243 @@ impl AsHickory for RecordSet {
 #[derive(Debug, Clone, Copy, thiserror::Error)]
 #[error("Mismatched {0} between new record and record set")]
 pub struct Mismatch(pub(super) &'static str);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hickory_proto::rr::{rdata::A, RecordType};
+
+    fn create_test_name() -> Name {
+        Name::from_utf8("test.example.com").unwrap()
+    }
+
+    fn create_test_a_record() -> Record {
+        let name = create_test_name();
+        let ttl = TimeToLive::from(300);
+        let rdata = A::new(192, 168, 1, 1);
+        Record::from_rdata(name, ttl, rdata).into_record_rdata()
+    }
+
+    #[test]
+    fn test_recordset_new() {
+        let name = create_test_name();
+        let rrset = RecordSet::new(name.clone(), RecordType::A);
+        
+        assert_eq!(rrset.name(), &name);
+        assert_eq!(rrset.record_type(), RecordType::A);
+        assert_eq!(rrset.dns_class(), DNSClass::IN);
+        assert_eq!(rrset.ttl(), TimeToLive::ZERO);
+        assert!(rrset.is_empty());
+        assert_eq!(rrset.len(), 0);
+        assert_eq!(rrset.serial(), SerialNumber::ZERO);
+    }
+
+    #[test]
+    fn test_recordset_from_record() {
+        let name = create_test_name();
+        let record = create_test_a_record();
+        let ttl = record.ttl();
+        
+        let rrset = RecordSet::from_record(name.clone(), record);
+        
+        assert_eq!(rrset.name(), &name);
+        assert_eq!(rrset.record_type(), RecordType::A);
+        assert_eq!(rrset.dns_class(), DNSClass::IN);
+        assert_eq!(rrset.ttl(), ttl);
+        assert!(!rrset.is_empty());
+        assert_eq!(rrset.len(), 1);
+    }
+
+    #[test]
+    fn test_recordset_with_name() {
+        let name1 = create_test_name();
+        let name2 = Name::from_utf8("other.example.com").unwrap();
+        let record = create_test_a_record();
+        
+        let rrset1 = RecordSet::from_record(name1, record);
+        let rrset2 = rrset1.with_name(name2.clone());
+        
+        assert_eq!(rrset2.name(), &name2);
+        assert_eq!(rrset2.record_type(), RecordType::A);
+        assert_eq!(rrset2.len(), 1);
+        assert!(rrset2.rrsigs().is_empty()); // RRSIGs should be cleared
+    }
+
+    #[test]
+    fn test_recordset_push() {
+        let name = create_test_name();
+        let mut rrset = RecordSet::new(name, RecordType::A);
+        let rdata = RData::A(A::new(192, 168, 1, 1));
+        
+        let result = rrset.push(rdata);
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+        assert_eq!(rrset.len(), 1);
+        assert!(!rrset.is_empty());
+    }
+
+    #[test]
+    fn test_recordset_set_ttl() {
+        let name = create_test_name();
+        let record = create_test_a_record();
+        let mut rrset = RecordSet::from_record(name, record);
+        
+        let new_ttl = TimeToLive::from(600);
+        rrset.set_ttl(new_ttl);
+        
+        assert_eq!(rrset.ttl(), new_ttl);
+        for record in rrset.records() {
+            assert_eq!(record.ttl(), new_ttl);
+        }
+    }
+
+    #[test]
+    fn test_recordset_set_dns_class() {
+        let name = create_test_name();
+        let mut rrset = RecordSet::new(name, RecordType::A);
+        
+        rrset.set_dns_class(DNSClass::CH);
+        assert_eq!(rrset.dns_class(), DNSClass::CH);
+    }
+
+    #[test]
+    fn test_recordset_insert_duplicate() {
+        let name = create_test_name();
+        let mut rrset = RecordSet::new(name.clone(), RecordType::A);
+        let rdata = RData::A(A::new(192, 168, 1, 1));
+        
+        // Insert first record
+        let record1 = Record::from_rdata(name.clone(), TimeToLive::from(300), rdata.clone()).into_record_rdata();
+        let result1 = rrset.insert(record1, SerialNumber::from(1));
+        assert!(result1.is_ok());
+        assert!(result1.unwrap());
+        assert_eq!(rrset.len(), 1);
+        
+        // Insert duplicate record
+        let record2 = Record::from_rdata(name, TimeToLive::from(300), rdata).into_record_rdata();
+        let result2 = rrset.insert(record2, SerialNumber::from(2));
+        assert!(result2.is_ok());
+        assert!(!result2.unwrap()); // Should return false for duplicate
+        assert_eq!(rrset.len(), 1); // Length should not change
+    }
+
+    #[test]
+    fn test_recordset_insert_wrong_name() {
+        let name1 = create_test_name();
+        let name2 = Name::from_utf8("other.example.com").unwrap();
+        let mut rrset = RecordSet::new(name1, RecordType::A);
+        
+        let record = Record::from_rdata(name2, TimeToLive::from(300), RData::A(A::new(192, 168, 1, 1))).into_record_rdata();
+        let result = rrset.insert(record, SerialNumber::from(1));
+        
+        assert!(result.is_err());
+        if let Err(Mismatch(msg)) = result {
+            assert_eq!(msg, "name");
+        }
+    }
+
+    #[test]
+    fn test_recordset_insert_wrong_type() {
+        let name = create_test_name();
+        let mut rrset = RecordSet::new(name.clone(), RecordType::A);
+        
+        let record = Record::from_rdata(name, TimeToLive::from(300), RData::CNAME(hickory_proto::rr::rdata::CNAME(Name::from_utf8("target.example.com").unwrap()))).into_record_rdata();
+        let result = rrset.insert(record, SerialNumber::from(1));
+        
+        assert!(result.is_err());
+        if let Err(Mismatch(msg)) = result {
+            assert_eq!(msg, "type");
+        }
+    }
+
+    #[test]
+    fn test_recordset_remove() {
+        let name = create_test_name();
+        let mut rrset = RecordSet::new(name.clone(), RecordType::A);
+        let rdata = RData::A(A::new(192, 168, 1, 1));
+        let record = Record::from_rdata(name, TimeToLive::from(300), rdata).into_record_rdata();
+        
+        // Insert record
+        rrset.insert(record.clone(), SerialNumber::from(1)).unwrap();
+        assert_eq!(rrset.len(), 1);
+        
+        // Remove record
+        let result = rrset.remove(&record, SerialNumber::from(2));
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+        assert_eq!(rrset.len(), 0);
+        assert!(rrset.is_empty());
+    }
+
+    #[test]
+    fn test_recordset_rrkey() {
+        let name = create_test_name();
+        let rrset = RecordSet::new(name.clone(), RecordType::A);
+        let rrkey = rrset.rrkey();
+        
+        assert_eq!(rrkey.name(), &LowerName::from(name));
+        assert_eq!(rrkey.record_type, RecordType::A);
+    }
+
+    #[test]
+    fn test_recordset_iterators() {
+        let name = create_test_name();
+        let record = create_test_a_record();
+        let rrset = RecordSet::from_record(name, record);
+        
+        // Test records iterator
+        assert_eq!(rrset.records().count(), 1);
+        
+        // Test into_records
+        let records: Vec<_> = rrset.clone().into_records().collect();
+        assert_eq!(records.len(), 1);
+        
+        // Test signed_records (no signatures)
+        assert_eq!(rrset.signed_records().count(), 1);
+        
+        // Test into_signed_records
+        let signed_records: Vec<_> = rrset.into_signed_records().collect();
+        assert_eq!(signed_records.len(), 1);
+    }
+
+    #[test]
+    fn test_recordset_rrsigs() {
+        let name = create_test_name();
+        let mut rrset = RecordSet::new(name, RecordType::A);
+        
+        assert!(rrset.rrsigs().is_empty());
+        
+        // Clear RRSIGs (should be no-op when empty)
+        rrset.clear_rrsigs();
+        assert!(rrset.rrsigs().is_empty());
+    }
+
+    #[test]
+    fn test_recordset_as_hickory() {
+        let name = create_test_name();
+        let record = create_test_a_record();
+        let rrset = RecordSet::from_record(name.clone(), record);
+        
+        let hickory_rrset = rrset.as_hickory();
+        assert_eq!(hickory_rrset.name(), &name);
+        assert_eq!(hickory_rrset.record_type(), RecordType::A);
+    }
+
+    #[test]
+    fn test_mismatch_error() {
+        let mismatch = Mismatch("test");
+        assert_eq!(format!("{}", mismatch), "Mismatched test between new record and record set");
+    }
+
+    #[test]
+    fn test_recordset_clone() {
+        let name = create_test_name();
+        let record = create_test_a_record();
+        let rrset1 = RecordSet::from_record(name, record);
+        let rrset2 = rrset1.clone();
+        
+        assert_eq!(rrset1, rrset2);
+        assert_eq!(rrset1.name(), rrset2.name());
+        assert_eq!(rrset1.len(), rrset2.len());
+    }
+}
