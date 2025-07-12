@@ -47,7 +47,7 @@ fn upsert_one() {
     let example = example_zone("example.com.");
 
     catalog
-        .upsert(example.origin().clone(), vec![example.into()])
+        .upsert(example.origin().clone(), &vec![example.into()])
         .unwrap();
 
     let zone = catalog
@@ -73,7 +73,7 @@ fn upsert_multiple() {
     catalog
         .upsert(
             example1.origin().clone(),
-            vec![example1.into(), example2.into()],
+            &vec![example1.into(), example2.into()],
         )
         .unwrap();
 
@@ -87,7 +87,7 @@ fn upsert_multiple() {
     assert_eq!(zones.len(), 2, "Two initial zones");
 
     catalog
-        .upsert(example3.origin().clone(), vec![example3.into()])
+        .upsert(example3.origin().clone(), &vec![example3.into()])
         .unwrap();
 
     let zones = catalog
@@ -111,7 +111,7 @@ fn find_heirarchical_name() {
     catalog
         .upsert(
             example1.origin().clone(),
-            vec![example1.into(), example2.into()],
+            &vec![example1.into(), example2.into()],
         )
         .unwrap();
 
@@ -136,7 +136,7 @@ fn remove_name() {
     catalog
         .upsert(
             example1.origin().clone(),
-            vec![example1.into(), example2.into()],
+            &vec![example1.into(), example2.into()],
         )
         .unwrap();
 
@@ -174,7 +174,7 @@ fn get_insert_delete() {
     catalog
         .upsert(
             example1.origin().clone(),
-            vec![example1.into(), example2.into()],
+            &vec![example1.into(), example2.into()],
         )
         .unwrap();
 
@@ -204,8 +204,8 @@ fn get_insert_delete() {
 
     let example3 = example_zone("example.com.");
 
-    assert_eq!(catalog.insert(zone).unwrap(), 1);
-    assert_eq!(catalog.insert(example3).unwrap(), 1);
+    assert_eq!(catalog.insert(&zone).unwrap(), 1);
+    assert_eq!(catalog.insert(&example3).unwrap(), 1);
 
     let zones = catalog
         .find(&hickory_proto::rr::LowerName::new(
@@ -217,7 +217,7 @@ fn get_insert_delete() {
     assert_eq!(zones.len(), 3);
 
     // Already exists in the database, gets upserted.
-    assert_eq!(catalog.insert(example1.into_inner()).unwrap(), 1);
+    assert_eq!(catalog.insert(&example1.into_inner()).unwrap(), 1);
 
     let zones = catalog
         .find(&hickory_proto::rr::LowerName::new(

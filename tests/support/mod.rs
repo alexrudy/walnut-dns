@@ -129,10 +129,10 @@ impl<Z: Clone> CatalogStore<Z> for TestZoneStore<Z> {
     fn upsert(
         &self,
         name: walnut_dns::rr::LowerName,
-        zones: Vec<Z>,
+        zones: &[Z],
     ) -> Result<(), walnut_dns::authority::CatalogError> {
         let mut data = self.zones.lock().expect("poisoned");
-        data.insert(name.into(), zones);
+        data.insert(name.into(), zones.to_vec());
         Ok(())
     }
 

@@ -101,7 +101,7 @@ impl SqliteCatalog {
     }
 
     #[tracing::instrument(skip_all, fields(zone=%zone.name()), level = "debug")]
-    pub fn insert(&self, zone: Zone) -> Result<usize, crate::authority::CatalogError> {
+    pub fn insert(&self, zone: &Zone) -> Result<usize, crate::authority::CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
         let zx = ZonePersistence::new(&tx);
@@ -134,7 +134,7 @@ impl CatalogStore<ZoneAuthority<Zone>> for SqliteCatalog {
     fn upsert(
         &self,
         name: LowerName,
-        zones: Vec<ZoneAuthority<Zone>>,
+        zones: &[ZoneAuthority<Zone>],
     ) -> Result<(), crate::authority::CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
@@ -144,7 +144,7 @@ impl CatalogStore<ZoneAuthority<Zone>> for SqliteCatalog {
         zx.clear(&name)?;
         let mut n = 0;
         for zone in zones {
-            n += zx.upsert(zone.into_inner())?;
+            n += zx.upsert(&zone)?;
         }
         tx.commit()?;
         tracing::debug!("upsert {n} zones");
@@ -303,7 +303,7 @@ impl<'c> ZonePersistence<'c> {
     }
 
     #[tracing::instrument(skip_all, fields(zone=%zone.name()), level = "trace")]
-    fn upsert(&self, zone: Zone) -> rusqlite::Result<usize> {
+    fn upsert(&self, zone: &Zone) -> rusqlite::Result<usize> {
         let guard = tracing::trace_span!("zone").entered();
 
         let mut stmt = self.connection.prepare(&Self::TABLE.upsert())?;
@@ -395,7 +395,7 @@ impl<'c> RecordPersistence<'c> {
             |row| {
                 let record = Record::from_row(row)?;
                 let zone_id: ZoneID = row.get("zone_id")?;
-                let serial: SerialNumber = row.get("soa_serail")?;
+                let serial: SerialNumber = row.get("soa_serial")?;
                 Ok((zone_id, record, serial))
             },
         )?;
@@ -603,7 +603,7 @@ mod tests {
         let expected_type = zone.zone_type();
 
         // Upsert zone
-        let result = catalog.insert(zone);
+        let result = catalog.insert(&zone);
         assert!(result.is_ok());
 
         // Get zone back
@@ -621,7 +621,7 @@ mod tests {
         let expected_name = zone.name().clone();
 
         // Upsert zone
-        catalog.insert(zone).unwrap();
+        catalog.insert(&zone).unwrap();
 
         // Find zone by name
         let found_zones = catalog.find(&zone_name).unwrap().unwrap();
@@ -646,7 +646,7 @@ mod tests {
         let zone_id = zone.id();
 
         // Upsert zone
-        catalog.insert(zone).unwrap();
+        catalog.insert(&zone).unwrap();
 
         // Verify zone exists
         assert!(catalog.get(zone_id).is_ok());
@@ -670,7 +670,7 @@ mod tests {
         // Add a zone
         let zone = create_test_zone();
         let zone_name = zone.name().clone();
-        catalog.insert(zone).unwrap();
+        catalog.insert(&zone).unwrap();
 
         // List should contain the zone
         let zone_list = catalog.list().unwrap();
@@ -702,8 +702,8 @@ mod tests {
         let zone2_name = zone2.name().clone();
 
         // Upsert both zones
-        catalog.insert(zone1).unwrap();
-        catalog.insert(zone2).unwrap();
+        catalog.insert(&zone1).unwrap();
+        catalog.insert(&zone2).unwrap();
 
         // List should contain both zones
         let zone_list = catalog.list().unwrap();
@@ -721,7 +721,7 @@ mod tests {
         let zone2 = create_test_zone();
         let name = zone1.origin().clone();
         catalog
-            .upsert(name.clone(), vec![zone1.into(), zone2.into()])
+            .upsert(name.clone(), &vec![zone1.into(), zone2.into()])
             .unwrap();
 
         // List should contain both zones
@@ -742,7 +742,7 @@ mod tests {
         let zone_id = zone.id();
 
         // Upsert zone with records
-        catalog.insert(zone).unwrap();
+        catalog.insert(&zone).unwrap();
 
         // Retrieve zone and verify records
         let retrieved_zone = catalog.get(zone_id).unwrap();
@@ -766,7 +766,7 @@ mod tests {
         let catalog_clone = catalog.clone();
 
         // Upsert in original
-        catalog.insert(zone).unwrap();
+        catalog.insert(&zone).unwrap();
 
         // Read from clone
         let found_zones = catalog_clone.find(&zone_name).unwrap().unwrap();
@@ -790,14 +790,14 @@ mod tests {
         zone.upsert(a_record.clone(), SerialNumber::from(1))
             .unwrap();
         let zone_id = zone.id();
-        catalog.insert(zone).unwrap();
+        catalog.insert(&zone).unwrap();
 
         // Retrieve zone and add same record with serial 2 (simulating an update)
         let mut retrieved_zone = catalog.get(zone_id).unwrap();
         retrieved_zone
             .upsert(a_record, SerialNumber::from(2))
             .unwrap();
-        catalog.insert(retrieved_zone).unwrap();
+        catalog.insert(&retrieved_zone).unwrap();
 
         // Retrieve and verify the zone was updated
         let final_zone = catalog.get(zone_id).unwrap();
@@ -810,7 +810,7 @@ mod tests {
         let zone = create_test_zone();
         let expected_name = zone.name().clone();
 
-        catalog.insert(zone).unwrap();
+        catalog.insert(&zone).unwrap();
 
         // Search with different case
         let upper_name = LowerName::from(Name::from_utf8("TEST.EXAMPLE.COM").unwrap());

@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 
 use chrono::Utc;
 use hickory_proto::ProtoError;
@@ -22,7 +23,8 @@ mod prerequisites;
 mod update;
 
 pub trait Journal<Z> {
-    fn insert(&self, zone: &Z, records: &[Record]) -> Result<(), CatalogError>;
+    fn insert_records(&self, zone: &Z, records: &[Record]) -> Result<(), CatalogError>;
+    fn upsert_zone(&self, zone: &Z) -> Result<(), CatalogError>;
 }
 
 /// Error type to unify Mismatch errors and generic DNSSEC errors
@@ -35,13 +37,14 @@ pub enum DnsSecZoneError {
 }
 
 /// Adapter for DNSZones to provide DNSSEC features.
+#[derive(Clone)]
 pub struct DNSSecZone<Z> {
     zone: ZoneAuthority<Z>,
-    secure_keys: Vec<SigSigner>,
+    secure_keys: Vec<Arc<SigSigner>>,
     nx_proof_kind: Option<NxProofKind>,
     allow_update: bool,
     is_dnssec_enabled: bool,
-    journal: Option<Box<dyn Journal<Self> + Send + Sync + 'static>>,
+    journal: Option<Arc<dyn Journal<Self> + Send + Sync + 'static>>,
 }
 
 impl<Z> Deref for DNSSecZone<Z> {
@@ -105,11 +108,11 @@ where
     where
         J: Journal<Self> + Send + Sync + 'static,
     {
-        self.journal = Some(Box::new(journal));
+        self.journal = Some(Arc::new(journal));
         self
     }
 
-    pub fn secure_keys(&self) -> &[SigSigner] {
+    pub fn secure_keys(&self) -> &[Arc<SigSigner>] {
         &self.secure_keys
     }
 }
@@ -518,7 +521,7 @@ where
 
     pub(super) fn sign_rrset(
         rr_set: &mut RecordSet,
-        secure_keys: &[SigSigner],
+        secure_keys: &[Arc<SigSigner>],
         zone_ttl: TimeToLive,
         zone_class: DNSClass,
     ) -> DnsSecResult<()> {
@@ -633,7 +636,7 @@ where
         // TODO: also generate the CDS and CDNSKEY
         let serial = self.serial();
         self.zone.upsert(dnskey, serial)?;
-        self.secure_keys.push(signer);
+        self.secure_keys.push(Arc::new(signer));
         Ok(())
     }
 
@@ -662,7 +665,7 @@ where
 #[async_trait::async_trait]
 impl<Z> Authority for DNSSecZone<Z>
 where
-    Z: Lookup + ZoneInfo + Send + Sync + 'static,
+    Z: Lookup + ZoneInfo + Clone + Send + Sync + 'static,
 {
     type Lookup = AuthLookup;
 
@@ -740,8 +743,9 @@ where
         self.verify_prerequisites(update.prerequisites()).await?;
         self.pre_scan(update.updates()).await?;
 
-        //TODO: Need to mutate records for update!!!
-        // self.update_records(update.updates(), true).await
+        let mut updated_zone = self.clone();
+        updated_zone.update_records(update.updates(), true).await?;
+
         Ok(true)
     }
 

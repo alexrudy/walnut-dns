@@ -1,7 +1,7 @@
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
 
-use super::RecordPersistence;
+use super::{RecordPersistence, ZonePersistence};
 use crate::{authority::Journal, rr::Zone};
 
 pub struct SqliteJournal {
@@ -12,7 +12,7 @@ impl<Z> Journal<Z> for SqliteJournal
 where
     Z: AsRef<Zone>,
 {
-    fn insert(
+    fn insert_records(
         &self,
         zone: &Z,
         records: &[crate::rr::Record],
@@ -22,6 +22,16 @@ where
         let rx = RecordPersistence::new(&tx);
         let zone = zone.as_ref();
         rx.insert_records(zone, records.iter())?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn upsert_zone(&self, zone: &Z) -> Result<(), crate::authority::CatalogError> {
+        let mut conn = self.connection.lock().expect("poisoned");
+        let tx = conn.transaction()?;
+        let zx = ZonePersistence::new(&tx);
+        let zone = zone.as_ref();
+        zx.upsert(zone)?;
         tx.commit()?;
         Ok(())
     }

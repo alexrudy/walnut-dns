@@ -46,7 +46,7 @@ where
         //  subsequent to a failure of the server.
         if let Some(journal) = self.journal.as_ref() {
             let records = records.iter().cloned().map(Into::into).collect::<Vec<_>>();
-            if let Err(error) = journal.insert(&self, &records) {
+            if let Err(error) = journal.insert_records(&self, &records) {
                 error!("could not persist update records: {}", error);
                 return Err(ResponseCode::ServFail);
             }
@@ -197,6 +197,13 @@ where
                 // the secure_zone() function increments the SOA during it's operation, if we're not
                 //  dnssec, then we need to do it here...
                 self.increment_soa_serial();
+            }
+        }
+
+        if let Some(journal) = self.journal.as_ref() {
+            if let Err(error) = journal.upsert_zone(&self) {
+                error!("could not persist updated zone: {}", error);
+                return Err(ResponseCode::ServFail);
             }
         }
 

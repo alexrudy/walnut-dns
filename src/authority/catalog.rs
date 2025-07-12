@@ -30,7 +30,7 @@ impl CatalogError {
 
 pub trait CatalogStore<A> {
     fn find(&self, origin: &LowerName) -> Result<Option<Vec<A>>, CatalogError>;
-    fn upsert(&self, name: LowerName, zones: Vec<A>) -> Result<(), CatalogError>;
+    fn upsert(&self, name: LowerName, zones: &[A]) -> Result<(), CatalogError>;
     fn list(&self) -> Result<Vec<Name>, CatalogError>;
     fn remove(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError>;
 }
@@ -422,8 +422,8 @@ impl<A> Catalog<A> {
         }
     }
 
-    pub fn upsert(&self, name: LowerName, zone: Vec<A>) -> Result<(), CatalogError> {
-        (*self.zones).upsert(name, zone)
+    pub fn upsert(&self, name: LowerName, zones: Vec<A>) -> Result<(), CatalogError> {
+        (*self.zones).upsert(name, &zones)
     }
 
     pub fn remove(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError> {
@@ -495,7 +495,7 @@ where
 {
     pub fn insert(&self, zone: A) -> Result<(), CatalogError> {
         let name = LowerName::new(zone.as_ref().origin());
-        (*self.zones).upsert(name, vec![zone])
+        (*self.zones).upsert(name, &vec![zone])
     }
 
     async fn update<R: ResponseHandler>(
