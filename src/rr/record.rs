@@ -136,18 +136,27 @@ impl<R: RecordData> Record<R> {
     }
 
     /// Sets the TTL, in seconds, to the specified value
-    pub fn set_ttl(&mut self, ttl: TimeToLive) {
+    pub fn set_ttl(&mut self, ttl: TimeToLive) -> &mut Self {
         self.ttl = ttl;
+        self
+    }
+
+    /// Sets the `DNSClass` of the Record
+    pub fn set_dns_class(&mut self, dns_class: DNSClass) -> &mut Self {
+        self.dns_class = dns_class;
+        self
     }
 
     /// Set an expiry time for the record
-    pub fn set_expires(&mut self, expires: DateTime<Utc>) {
+    pub fn set_expires(&mut self, expires: DateTime<Utc>) -> &mut Self {
         self.expires = Some(expires);
+        self
     }
 
     /// Clear the expiry time for the record
-    pub fn clear_expires(&mut self) {
+    pub fn clear_expires(&mut self) -> &mut Self {
         self.expires = None;
+        self
     }
 
     /// Check if this record has expired
@@ -155,8 +164,9 @@ impl<R: RecordData> Record<R> {
         self.expires.is_some_and(|expires| expires < Utc::now())
     }
 
-    pub(crate) fn set_data(&mut self, rdata: R) {
+    pub(crate) fn set_data(&mut self, rdata: R) -> &mut Self {
         self.rdata = rdata;
+        self
     }
 }
 

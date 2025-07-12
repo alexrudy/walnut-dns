@@ -9,11 +9,11 @@ use hickory_server::authority::{
 };
 use hickory_server::server::{Request, RequestHandler, RequestInfo, ResponseHandler, ResponseInfo};
 
-use crate::rr::{Name, Zone, ZoneID};
+use crate::rr::Name;
 
+use super::EdnsResponse;
 use super::edns::lookup_options_for_edns;
 use super::response::{ResponseHandleExt, ResponseInfoExt, ResponseResultExt};
-use super::{EdnsResponse, ZoneAuthority};
 
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
@@ -28,16 +28,15 @@ impl CatalogError {
     }
 }
 
-pub trait ZoneCatalog {
-    fn get(&self, id: ZoneID) -> Result<Zone, CatalogError>;
-    fn find(&self, origin: &LowerName) -> Result<Vec<Zone>, CatalogError>;
-    fn upsert(&self, zone: Zone) -> Result<(), CatalogError>;
-    fn delete(&self, id: ZoneID) -> Result<(), CatalogError>;
+pub trait CatalogStore<A> {
+    fn find(&self, origin: &LowerName) -> Result<Option<Vec<A>>, CatalogError>;
+    fn upsert(&self, name: LowerName, zones: Vec<A>) -> Result<(), CatalogError>;
     fn list(&self) -> Result<Vec<Name>, CatalogError>;
+    fn remove(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError>;
 }
 
-pub struct Catalog {
-    zones: Arc<dyn ZoneCatalog + Send + Sync + 'static>,
+pub struct Catalog<A> {
+    zones: Arc<dyn CatalogStore<A> + Send + Sync + 'static>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -401,7 +400,7 @@ async fn lookup<R: ResponseHandler + Unpin>(
             result,
             response_edns,
             request,
-            *authority,
+            &**authority,
             request_id,
             query,
             edns,
@@ -413,39 +412,34 @@ async fn lookup<R: ResponseHandler + Unpin>(
     Err(LookupError::ResponseCode(ResponseCode::ServFail))
 }
 
-impl Catalog {
+impl<A> Catalog<A> {
     pub fn new<T>(zones: T) -> Self
     where
-        T: ZoneCatalog + Send + Sync + 'static,
+        T: CatalogStore<A> + Send + Sync + 'static,
     {
         Self {
             zones: Arc::new(zones),
         }
     }
 
-    pub fn insert(&self, zone: Zone) -> Result<(), CatalogError> {
-        (*self.zones).upsert(zone)?;
-        Ok(())
+    pub fn upsert(&self, name: LowerName, zone: Vec<A>) -> Result<(), CatalogError> {
+        (*self.zones).upsert(name, zone)
     }
 
-    fn find(&self, name: &LowerName) -> Result<Option<Vec<Zone>>, CatalogError> {
+    pub fn remove(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError> {
+        (*self.zones).remove(name)
+    }
+
+    fn find(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError> {
         tracing::debug!("searching for {}", name);
-        let mut name = name.clone();
-        loop {
-            match (*self.zones).find(&name) {
-                Ok(zones) if zones.is_empty() => {
-                    if !name.is_root() {
-                        name = name.base_name();
-                    } else {
-                        return Ok(None);
-                    }
-                }
-                Ok(zones) => return Ok(Some(zones)),
-                Err(error) => return Err(error),
-            }
-        }
+        (*self.zones).find(&name)
     }
+}
 
+impl<A> Catalog<A>
+where
+    A: AsRef<dyn AuthorityObject>,
+{
     #[tracing::instrument(skip_all, level = "trace")]
     pub async fn lookup<R: ResponseHandler>(
         &self,
@@ -460,8 +454,8 @@ impl Catalog {
                 .await;
         };
 
-        let authorities: Vec<ZoneAuthority<Zone>> = match self.find(request_info.query.name()) {
-            Ok(Some(zones)) => zones.into_iter().map(ZoneAuthority::new).collect(),
+        let authorities: Vec<A> = match self.find(request_info.query.name()) {
+            Ok(Some(zones)) => zones,
             Ok(None) => {
                 tracing::trace!("No authorities found for {}", request_info.query.name());
                 return response_handle
@@ -478,10 +472,7 @@ impl Catalog {
 
         tracing::trace!("{} authorities found", authorities.len());
 
-        let refs = authorities
-            .iter()
-            .map(|za| za as &dyn AuthorityObject)
-            .collect::<Vec<_>>();
+        let refs = authorities.iter().map(|za| za.as_ref()).collect::<Vec<_>>();
 
         match lookup(
             request_info.clone(),
@@ -495,6 +486,16 @@ impl Catalog {
             Ok(lookup) => lookup,
             Err(_) => ResponseInfo::serve_failed(),
         }
+    }
+}
+
+impl<A> Catalog<A>
+where
+    A: AsRef<dyn AuthorityObject>,
+{
+    pub fn insert(&self, zone: A) -> Result<(), CatalogError> {
+        let name = LowerName::new(zone.as_ref().origin());
+        (*self.zones).upsert(name, vec![zone])
     }
 
     async fn update<R: ResponseHandler>(
@@ -519,10 +520,7 @@ impl Catalog {
         }
 
         let authorities = match self.find(request_info.query.name()) {
-            Ok(Some(zones)) => zones
-                .into_iter()
-                .map(ZoneAuthority::new)
-                .collect::<Vec<_>>(),
+            Ok(Some(zones)) => zones,
             Ok(None) => {
                 return response_handle
                     .send_error(request, ResponseCode::NotAuth)
@@ -538,7 +536,7 @@ impl Catalog {
 
         #[allow(clippy::never_loop)]
         for authority in authorities {
-            let update_result = AuthorityObject::update(&authority, request).await;
+            let update_result = AuthorityObject::update(authority.as_ref(), request).await;
             let response_code = match update_result {
                 // successful update
                 Ok(..) => ResponseCode::NoError,
@@ -630,7 +628,10 @@ impl Catalog {
 }
 
 #[async_trait::async_trait]
-impl RequestHandler for Catalog {
+impl<A> RequestHandler for Catalog<A>
+where
+    A: AsRef<dyn AuthorityObject> + Send + 'static,
+{
     #[tracing::instrument("dns", skip_all, fields(?request), level="debug")]
     async fn handle_request<R: ResponseHandler>(
         &self,

@@ -10,7 +10,7 @@ use rusqlite::{Connection, named_params};
 use serde::Deserialize;
 
 use crate::{
-    authority::{Lookup as _, ZoneCatalog, ZoneInfo as _},
+    authority::{CatalogStore, Lookup as _, ZoneAuthority, ZoneInfo as _},
     rr::{LowerName, Name, Record, SerialNumber, SqlName, Zone, ZoneID},
 };
 
@@ -76,9 +76,9 @@ impl From<rusqlite::Error> for crate::authority::CatalogError {
     }
 }
 
-impl ZoneCatalog for SqliteCatalog {
+impl SqliteCatalog {
     #[tracing::instrument(skip_all, fields(zone=%id), level = "debug")]
-    fn get(&self, id: ZoneID) -> Result<Zone, crate::authority::CatalogError> {
+    pub fn get(&self, id: ZoneID) -> Result<Zone, crate::authority::CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
         let zx = ZonePersistence::new(&tx);
@@ -87,30 +87,8 @@ impl ZoneCatalog for SqliteCatalog {
         Ok(zone)
     }
 
-    #[tracing::instrument(skip_all, fields(%origin), level = "debug")]
-    fn find(&self, origin: &LowerName) -> Result<Vec<Zone>, crate::authority::CatalogError> {
-        let mut conn = self.connection.lock().expect("connection poisoned");
-        let tx = conn.transaction()?;
-        let zx = ZonePersistence::new(&tx);
-        let zones = zx.find(origin)?;
-        tx.commit()?;
-        tracing::debug!("find {n} zones", n = zones.len());
-        Ok(zones)
-    }
-
-    #[tracing::instrument(skip_all, fields(zone=%zone.name()), level = "debug")]
-    fn upsert(&self, zone: Zone) -> Result<(), crate::authority::CatalogError> {
-        let mut conn = self.connection.lock().expect("connection poisoned");
-        let tx = conn.transaction()?;
-        let zx = ZonePersistence::new(&tx);
-        let n = zx.upsert(zone)?;
-        tx.commit()?;
-        tracing::debug!("upsert {n} zones");
-        Ok(())
-    }
-
     #[tracing::instrument(skip_all, fields(zone=%id), level = "debug")]
-    fn delete(&self, id: ZoneID) -> Result<(), crate::authority::CatalogError> {
+    pub fn delete(&self, id: ZoneID) -> Result<(), crate::authority::CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
         let zx = ZonePersistence::new(&tx);
@@ -120,12 +98,76 @@ impl ZoneCatalog for SqliteCatalog {
         Ok(())
     }
 
+    #[tracing::instrument(skip_all, fields(zone=%zone.name()), level = "debug")]
+    pub fn insert(&self, zone: Zone) -> Result<usize, crate::authority::CatalogError> {
+        let mut conn = self.connection.lock().expect("connection poisoned");
+        let tx = conn.transaction()?;
+        let zx = ZonePersistence::new(&tx);
+        let n = zx.upsert(zone)?;
+        tx.commit()?;
+        tracing::debug!("insert {n} zones");
+        Ok(n)
+    }
+}
+
+impl CatalogStore<ZoneAuthority<Zone>> for SqliteCatalog {
+    #[tracing::instrument(skip_all, fields(%origin), level = "debug")]
+    fn find(
+        &self,
+        origin: &LowerName,
+    ) -> Result<Option<Vec<ZoneAuthority<Zone>>>, crate::authority::CatalogError> {
+        let mut conn = self.connection.lock().expect("connection poisoned");
+        let tx = conn.transaction()?;
+        let zx = ZonePersistence::new(&tx);
+        let zones = zx.find(origin)?;
+        tx.commit()?;
+        tracing::debug!(
+            "found {n} zones",
+            n = zones.as_ref().map(|z| z.len()).unwrap_or_default()
+        );
+        Ok(zones.map(|z| z.into_iter().map(ZoneAuthority::new).collect()))
+    }
+
+    #[tracing::instrument(skip_all, fields(zone=%name), level = "debug")]
+    fn upsert(
+        &self,
+        name: LowerName,
+        zones: Vec<ZoneAuthority<Zone>>,
+    ) -> Result<(), crate::authority::CatalogError> {
+        let mut conn = self.connection.lock().expect("connection poisoned");
+        let tx = conn.transaction()?;
+        let zx = ZonePersistence::new(&tx);
+        let mut n = 0;
+        for zone in zones {
+            n += zx.upsert(zone.into_inner())?;
+        }
+        tx.commit()?;
+        tracing::debug!("upsert {n} zones");
+        Ok(())
+    }
+
+    #[tracing::instrument(skip_all, level = "debug")]
     fn list(&self) -> Result<Vec<Name>, crate::authority::CatalogError> {
         let conn = self.connection.lock().expect("connection poisoned");
         let zx = ZonePersistence::new(&conn);
         let names = zx.list()?;
         tracing::debug!("list {n} zones", n = names.len());
         Ok(names)
+    }
+
+    #[tracing::instrument(skip_all, fields(zone=%name), level = "debug")]
+    fn remove(
+        &self,
+        name: &LowerName,
+    ) -> Result<Option<Vec<ZoneAuthority<Zone>>>, crate::authority::CatalogError> {
+        let mut conn = self.connection.lock().expect("connection poisoned");
+        let tx = conn.transaction()?;
+        let zx = ZonePersistence::new(&tx);
+        let zones = zx.find(name)?;
+        let n = zx.clear(name)?;
+        tracing::debug!("removed {n} zones");
+        tx.commit()?;
+        Ok(zones.map(|z| z.into_iter().map(ZoneAuthority::new).collect()))
     }
 }
 
@@ -227,23 +269,32 @@ impl<'c> ZonePersistence<'c> {
 
     /// Find zones based on zone name
     #[tracing::instrument(skip_all, fields(zone=%name), level = "trace")]
-    fn find(&self, name: &LowerName) -> rusqlite::Result<Vec<Zone>> {
+    fn find(&self, name: &LowerName) -> rusqlite::Result<Option<Vec<Zone>>> {
         let mut stmt = self
             .connection
             .prepare(&Self::TABLE.select("WHERE lower(name) = lower(:name)"))?;
-        let mut zones = stmt
-            .query_map(
-                named_params! { ":name": SqlName::from(name.clone()) },
-                Zone::from_row,
-            )?
-            .collect::<Result<Vec<_>, _>>()?;
 
-        if !zones.is_empty() {
-            let rx = RecordPersistence::new(self.connection);
-            rx.populate_zones(name, zones.as_mut_slice())?;
+        let mut name = name.clone();
+        loop {
+            let mut zones = stmt
+                .query_map(
+                    named_params! { ":name": SqlName::from(name.clone()) },
+                    Zone::from_row,
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            if !zones.is_empty() {
+                let rx = RecordPersistence::new(self.connection);
+                rx.populate_zones(&name, zones.as_mut_slice())?;
+                return Ok(Some(zones));
+            }
+
+            if !name.is_root() {
+                name = name.base_name();
+            } else {
+                return Ok(None);
+            }
         }
-
-        Ok(zones)
     }
 
     #[tracing::instrument(skip_all, fields(zone=%zone.name()), level = "trace")]
@@ -272,6 +323,17 @@ impl<'c> ZonePersistence<'c> {
         // CASCADE will handle deleting the associated records.
         let mut stmt = self.connection.prepare(&Self::TABLE.delete())?;
         let n = stmt.execute(named_params! { ":id": id })?;
+        Ok(n)
+    }
+
+    #[tracing::instrument(skip_all, fields(zone=%name), level = "trace")]
+    fn clear(&self, name: &LowerName) -> rusqlite::Result<usize> {
+        // CASCADE will handle deleting the associated records.
+        let mut stmt = self.connection.prepare(&format!(
+            "DELETE FROM {} WHERE lower(name) = lower(:name)",
+            Self::TABLE.table
+        ))?;
+        let n = stmt.execute(named_params! { ":name": SqlName::from(name.clone()) })?;
         Ok(n)
     }
 
@@ -523,7 +585,7 @@ mod tests {
         let expected_type = zone.zone_type();
 
         // Upsert zone
-        let result = catalog.upsert(zone);
+        let result = catalog.insert(zone);
         assert!(result.is_ok());
 
         // Get zone back
@@ -541,10 +603,10 @@ mod tests {
         let expected_name = zone.name().clone();
 
         // Upsert zone
-        catalog.upsert(zone).unwrap();
+        catalog.insert(zone).unwrap();
 
         // Find zone by name
-        let found_zones = catalog.find(&zone_name).unwrap();
+        let found_zones = catalog.find(&zone_name).unwrap().unwrap();
         assert_eq!(found_zones.len(), 1);
         assert_eq!(found_zones[0].name(), &expected_name);
     }
@@ -556,7 +618,7 @@ mod tests {
 
         // Find nonexistent zone
         let found_zones = catalog.find(&nonexistent_name).unwrap();
-        assert!(found_zones.is_empty());
+        assert!(found_zones.is_none());
     }
 
     #[test]
@@ -566,7 +628,7 @@ mod tests {
         let zone_id = zone.id();
 
         // Upsert zone
-        catalog.upsert(zone).unwrap();
+        catalog.insert(zone).unwrap();
 
         // Verify zone exists
         assert!(catalog.get(zone_id).is_ok());
@@ -590,7 +652,7 @@ mod tests {
         // Add a zone
         let zone = create_test_zone();
         let zone_name = zone.name().clone();
-        catalog.upsert(zone).unwrap();
+        catalog.insert(zone).unwrap();
 
         // List should contain the zone
         let zone_list = catalog.list().unwrap();
@@ -622,8 +684,8 @@ mod tests {
         let zone2_name = zone2.name().clone();
 
         // Upsert both zones
-        catalog.upsert(zone1).unwrap();
-        catalog.upsert(zone2).unwrap();
+        catalog.insert(zone1).unwrap();
+        catalog.insert(zone2).unwrap();
 
         // List should contain both zones
         let zone_list = catalog.list().unwrap();
@@ -644,7 +706,7 @@ mod tests {
         let zone_id = zone.id();
 
         // Upsert zone with records
-        catalog.upsert(zone).unwrap();
+        catalog.insert(zone).unwrap();
 
         // Retrieve zone and verify records
         let retrieved_zone = catalog.get(zone_id).unwrap();
@@ -668,10 +730,10 @@ mod tests {
         let catalog_clone = catalog.clone();
 
         // Upsert in original
-        catalog.upsert(zone).unwrap();
+        catalog.insert(zone).unwrap();
 
         // Read from clone
-        let found_zones = catalog_clone.find(&zone_name).unwrap();
+        let found_zones = catalog_clone.find(&zone_name).unwrap().unwrap();
         assert_eq!(found_zones.len(), 1);
     }
 
@@ -692,14 +754,14 @@ mod tests {
         zone.upsert(a_record.clone(), SerialNumber::from(1))
             .unwrap();
         let zone_id = zone.id();
-        catalog.upsert(zone).unwrap();
+        catalog.insert(zone).unwrap();
 
         // Retrieve zone and add same record with serial 2 (simulating an update)
         let mut retrieved_zone = catalog.get(zone_id).unwrap();
         retrieved_zone
             .upsert(a_record, SerialNumber::from(2))
             .unwrap();
-        catalog.upsert(retrieved_zone).unwrap();
+        catalog.insert(retrieved_zone).unwrap();
 
         // Retrieve and verify the zone was updated
         let final_zone = catalog.get(zone_id).unwrap();
@@ -712,11 +774,11 @@ mod tests {
         let zone = create_test_zone();
         let expected_name = zone.name().clone();
 
-        catalog.upsert(zone).unwrap();
+        catalog.insert(zone).unwrap();
 
         // Search with different case
         let upper_name = LowerName::from(Name::from_utf8("TEST.EXAMPLE.COM").unwrap());
-        let found_zones = catalog.find(&upper_name).unwrap();
+        let found_zones = catalog.find(&upper_name).unwrap().unwrap();
         assert_eq!(found_zones.len(), 1);
         assert_eq!(found_zones[0].name(), &expected_name);
     }

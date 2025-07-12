@@ -59,18 +59,20 @@ impl RecordSet {
     }
 
     /// Sets the `DNSClass` of the RecordSet
-    pub fn set_dns_class(&mut self, dns_class: DNSClass) {
+    pub fn set_dns_class(&mut self, dns_class: DNSClass) -> &mut Self {
         self.dns_class = dns_class;
+        self
     }
 
     /// Sets the TTL, in seconds, to the specified value
     ///
     /// This will traverse every record and associate with it the specified ttl
-    pub fn set_ttl(&mut self, ttl: TimeToLive) {
+    pub fn set_ttl(&mut self, ttl: TimeToLive) -> &mut Self {
         self.ttl = ttl;
         for r in &mut self.records {
             r.set_ttl(ttl);
         }
+        self
     }
 
     /// Make a copy of this record set with a new name
@@ -348,6 +350,14 @@ impl RecordSet {
     }
 }
 
+impl From<Record> for RecordSet {
+    fn from(record: Record) -> Self {
+        let mut rrset = RecordSet::new(record.name().clone(), record.record_type());
+        rrset.insert(record, SerialNumber::ZERO).unwrap();
+        rrset
+    }
+}
+
 impl AsHickory for RecordSet {
     type Hickory = hickory_proto::rr::RecordSet;
 
@@ -374,8 +384,10 @@ pub struct Mismatch(pub(super) &'static str);
 
 #[cfg(test)]
 mod tests {
+    use std::net::Ipv4Addr;
+
     use super::*;
-    use hickory_proto::rr::{rdata::A, RecordType};
+    use hickory_proto::rr::{RecordType, rdata::A};
 
     fn create_test_name() -> Name {
         Name::from_utf8("test.example.com").unwrap()
@@ -392,7 +404,7 @@ mod tests {
     fn test_recordset_new() {
         let name = create_test_name();
         let rrset = RecordSet::new(name.clone(), RecordType::A);
-        
+
         assert_eq!(rrset.name(), &name);
         assert_eq!(rrset.record_type(), RecordType::A);
         assert_eq!(rrset.dns_class(), DNSClass::IN);
@@ -407,9 +419,9 @@ mod tests {
         let name = create_test_name();
         let record = create_test_a_record();
         let ttl = record.ttl();
-        
+
         let rrset = RecordSet::from_record(name.clone(), record);
-        
+
         assert_eq!(rrset.name(), &name);
         assert_eq!(rrset.record_type(), RecordType::A);
         assert_eq!(rrset.dns_class(), DNSClass::IN);
@@ -423,10 +435,10 @@ mod tests {
         let name1 = create_test_name();
         let name2 = Name::from_utf8("other.example.com").unwrap();
         let record = create_test_a_record();
-        
+
         let rrset1 = RecordSet::from_record(name1, record);
         let rrset2 = rrset1.with_name(name2.clone());
-        
+
         assert_eq!(rrset2.name(), &name2);
         assert_eq!(rrset2.record_type(), RecordType::A);
         assert_eq!(rrset2.len(), 1);
@@ -438,7 +450,7 @@ mod tests {
         let name = create_test_name();
         let mut rrset = RecordSet::new(name, RecordType::A);
         let rdata = RData::A(A::new(192, 168, 1, 1));
-        
+
         let result = rrset.push(rdata);
         assert!(result.is_ok());
         assert!(result.unwrap());
@@ -451,10 +463,10 @@ mod tests {
         let name = create_test_name();
         let record = create_test_a_record();
         let mut rrset = RecordSet::from_record(name, record);
-        
+
         let new_ttl = TimeToLive::from(600);
         rrset.set_ttl(new_ttl);
-        
+
         assert_eq!(rrset.ttl(), new_ttl);
         for record in rrset.records() {
             assert_eq!(record.ttl(), new_ttl);
@@ -465,7 +477,7 @@ mod tests {
     fn test_recordset_set_dns_class() {
         let name = create_test_name();
         let mut rrset = RecordSet::new(name, RecordType::A);
-        
+
         rrset.set_dns_class(DNSClass::CH);
         assert_eq!(rrset.dns_class(), DNSClass::CH);
     }
@@ -475,14 +487,15 @@ mod tests {
         let name = create_test_name();
         let mut rrset = RecordSet::new(name.clone(), RecordType::A);
         let rdata = RData::A(A::new(192, 168, 1, 1));
-        
+
         // Insert first record
-        let record1 = Record::from_rdata(name.clone(), TimeToLive::from(300), rdata.clone()).into_record_rdata();
+        let record1 = Record::from_rdata(name.clone(), TimeToLive::from(300), rdata.clone())
+            .into_record_rdata();
         let result1 = rrset.insert(record1, SerialNumber::from(1));
         assert!(result1.is_ok());
         assert!(result1.unwrap());
         assert_eq!(rrset.len(), 1);
-        
+
         // Insert duplicate record
         let record2 = Record::from_rdata(name, TimeToLive::from(300), rdata).into_record_rdata();
         let result2 = rrset.insert(record2, SerialNumber::from(2));
@@ -496,10 +509,15 @@ mod tests {
         let name1 = create_test_name();
         let name2 = Name::from_utf8("other.example.com").unwrap();
         let mut rrset = RecordSet::new(name1, RecordType::A);
-        
-        let record = Record::from_rdata(name2, TimeToLive::from(300), RData::A(A::new(192, 168, 1, 1))).into_record_rdata();
+
+        let record = Record::from_rdata(
+            name2,
+            TimeToLive::from(300),
+            RData::A(A::new(192, 168, 1, 1)),
+        )
+        .into_record_rdata();
         let result = rrset.insert(record, SerialNumber::from(1));
-        
+
         assert!(result.is_err());
         if let Err(Mismatch(msg)) = result {
             assert_eq!(msg, "name");
@@ -510,10 +528,17 @@ mod tests {
     fn test_recordset_insert_wrong_type() {
         let name = create_test_name();
         let mut rrset = RecordSet::new(name.clone(), RecordType::A);
-        
-        let record = Record::from_rdata(name, TimeToLive::from(300), RData::CNAME(hickory_proto::rr::rdata::CNAME(Name::from_utf8("target.example.com").unwrap()))).into_record_rdata();
+
+        let record = Record::from_rdata(
+            name,
+            TimeToLive::from(300),
+            RData::CNAME(hickory_proto::rr::rdata::CNAME(
+                Name::from_utf8("target.example.com").unwrap(),
+            )),
+        )
+        .into_record_rdata();
         let result = rrset.insert(record, SerialNumber::from(1));
-        
+
         assert!(result.is_err());
         if let Err(Mismatch(msg)) = result {
             assert_eq!(msg, "type");
@@ -526,11 +551,11 @@ mod tests {
         let mut rrset = RecordSet::new(name.clone(), RecordType::A);
         let rdata = RData::A(A::new(192, 168, 1, 1));
         let record = Record::from_rdata(name, TimeToLive::from(300), rdata).into_record_rdata();
-        
+
         // Insert record
         rrset.insert(record.clone(), SerialNumber::from(1)).unwrap();
         assert_eq!(rrset.len(), 1);
-        
+
         // Remove record
         let result = rrset.remove(&record, SerialNumber::from(2));
         assert!(result.is_ok());
@@ -544,7 +569,7 @@ mod tests {
         let name = create_test_name();
         let rrset = RecordSet::new(name.clone(), RecordType::A);
         let rrkey = rrset.rrkey();
-        
+
         assert_eq!(rrkey.name(), &LowerName::from(name));
         assert_eq!(rrkey.record_type, RecordType::A);
     }
@@ -554,17 +579,17 @@ mod tests {
         let name = create_test_name();
         let record = create_test_a_record();
         let rrset = RecordSet::from_record(name, record);
-        
+
         // Test records iterator
         assert_eq!(rrset.records().count(), 1);
-        
+
         // Test into_records
         let records: Vec<_> = rrset.clone().into_records().collect();
         assert_eq!(records.len(), 1);
-        
+
         // Test signed_records (no signatures)
         assert_eq!(rrset.signed_records().count(), 1);
-        
+
         // Test into_signed_records
         let signed_records: Vec<_> = rrset.into_signed_records().collect();
         assert_eq!(signed_records.len(), 1);
@@ -574,9 +599,9 @@ mod tests {
     fn test_recordset_rrsigs() {
         let name = create_test_name();
         let mut rrset = RecordSet::new(name, RecordType::A);
-        
+
         assert!(rrset.rrsigs().is_empty());
-        
+
         // Clear RRSIGs (should be no-op when empty)
         rrset.clear_rrsigs();
         assert!(rrset.rrsigs().is_empty());
@@ -587,7 +612,7 @@ mod tests {
         let name = create_test_name();
         let record = create_test_a_record();
         let rrset = RecordSet::from_record(name.clone(), record);
-        
+
         let hickory_rrset = rrset.as_hickory();
         assert_eq!(hickory_rrset.name(), &name);
         assert_eq!(hickory_rrset.record_type(), RecordType::A);
@@ -596,7 +621,10 @@ mod tests {
     #[test]
     fn test_mismatch_error() {
         let mismatch = Mismatch("test");
-        assert_eq!(format!("{}", mismatch), "Mismatched test between new record and record set");
+        assert_eq!(
+            format!("{}", mismatch),
+            "Mismatched test between new record and record set"
+        );
     }
 
     #[test]
@@ -605,7 +633,7 @@ mod tests {
         let record = create_test_a_record();
         let rrset1 = RecordSet::from_record(name, record);
         let rrset2 = rrset1.clone();
-        
+
         assert_eq!(rrset1, rrset2);
         assert_eq!(rrset1.name(), rrset2.name());
         assert_eq!(rrset1.len(), rrset2.len());
@@ -614,53 +642,64 @@ mod tests {
     #[test]
     fn test_recordset_soa_serial_number_handling() {
         use hickory_proto::rr::rdata::SOA;
-        
+
         let name = create_test_name();
         let mut rrset = RecordSet::new(name.clone(), RecordType::SOA);
-        
+
         // Create first SOA with serial 100
         let soa1 = SOA::new(
             name.clone(),
             Name::from_utf8("admin.example.com").unwrap(),
             100, // serial
-            3600, 1800, 604800, 86400
+            3600,
+            1800,
+            604800,
+            86400,
         );
-        let record1 = Record::from_rdata(name.clone(), TimeToLive::from(3600), soa1).into_record_rdata();
-        
+        let record1 =
+            Record::from_rdata(name.clone(), TimeToLive::from(3600), soa1).into_record_rdata();
+
         // Insert first SOA
         let result = rrset.insert(record1, SerialNumber::from(1));
         assert!(result.is_ok());
         assert!(result.unwrap()); // Should succeed
         assert_eq!(rrset.len(), 1);
-        
+
         // Try to insert SOA with older serial (50) - should be rejected
         let soa2 = SOA::new(
             name.clone(),
             Name::from_utf8("admin.example.com").unwrap(),
             50, // older serial
-            3600, 1800, 604800, 86400
+            3600,
+            1800,
+            604800,
+            86400,
         );
-        let record2 = Record::from_rdata(name.clone(), TimeToLive::from(3600), soa2).into_record_rdata();
-        
+        let record2 =
+            Record::from_rdata(name.clone(), TimeToLive::from(3600), soa2).into_record_rdata();
+
         let result = rrset.insert(record2, SerialNumber::from(2));
         assert!(result.is_ok());
         assert!(!result.unwrap()); // Should be rejected due to old serial
         assert_eq!(rrset.len(), 1); // Length should not change
-        
+
         // Try to insert SOA with newer serial (200) - should succeed
         let soa3 = SOA::new(
             name.clone(),
             Name::from_utf8("admin.example.com").unwrap(),
             200, // newer serial
-            3600, 1800, 604800, 86400
+            3600,
+            1800,
+            604800,
+            86400,
         );
         let record3 = Record::from_rdata(name, TimeToLive::from(3600), soa3).into_record_rdata();
-        
+
         let result = rrset.insert(record3, SerialNumber::from(3));
         assert!(result.is_ok());
         assert!(result.unwrap()); // Should succeed
         assert_eq!(rrset.len(), 1); // Still only one SOA (replaced)
-        
+
         // Verify the SOA has the newer serial
         let soa_record = rrset.records().next().unwrap();
         if let RData::SOA(soa) = soa_record.rdata() {
@@ -673,28 +712,34 @@ mod tests {
     #[test]
     fn test_recordset_ns_last_record_protection() {
         use hickory_proto::rr::rdata::NS;
-        
+
         let name = create_test_name();
         let mut rrset = RecordSet::new(name.clone(), RecordType::NS);
-        
+
         // Add first NS record
         let ns1 = NS(Name::from_utf8("ns1.example.com").unwrap());
-        let record1 = Record::from_rdata(name.clone(), TimeToLive::from(86400), ns1.clone()).into_record_rdata();
-        rrset.insert(record1.clone(), SerialNumber::from(1)).unwrap();
+        let record1 = Record::from_rdata(name.clone(), TimeToLive::from(86400), ns1.clone())
+            .into_record_rdata();
+        rrset
+            .insert(record1.clone(), SerialNumber::from(1))
+            .unwrap();
         assert_eq!(rrset.len(), 1);
-        
+
         // Add second NS record
         let ns2 = NS(Name::from_utf8("ns2.example.com").unwrap());
-        let record2 = Record::from_rdata(name.clone(), TimeToLive::from(86400), ns2).into_record_rdata();
-        rrset.insert(record2.clone(), SerialNumber::from(2)).unwrap();
+        let record2 =
+            Record::from_rdata(name.clone(), TimeToLive::from(86400), ns2).into_record_rdata();
+        rrset
+            .insert(record2.clone(), SerialNumber::from(2))
+            .unwrap();
         assert_eq!(rrset.len(), 2);
-        
+
         // Remove first NS record - should succeed
         let result = rrset.remove(&record1, SerialNumber::from(3));
         assert!(result.is_ok());
         assert!(result.unwrap()); // Should succeed
         assert_eq!(rrset.len(), 1);
-        
+
         // Try to remove the last NS record - should be rejected
         let result = rrset.remove(&record2, SerialNumber::from(4));
         assert!(result.is_ok());
@@ -705,20 +750,24 @@ mod tests {
     #[test]
     fn test_recordset_soa_deletion_protection() {
         use hickory_proto::rr::rdata::SOA;
-        
+
         let name = create_test_name();
         let mut rrset = RecordSet::new(name.clone(), RecordType::SOA);
-        
+
         // Add SOA record
         let soa = SOA::new(
             name.clone(),
             Name::from_utf8("admin.example.com").unwrap(),
-            1, 3600, 1800, 604800, 86400
+            1,
+            3600,
+            1800,
+            604800,
+            86400,
         );
         let record = Record::from_rdata(name, TimeToLive::from(3600), soa).into_record_rdata();
         rrset.insert(record.clone(), SerialNumber::from(1)).unwrap();
         assert_eq!(rrset.len(), 1);
-        
+
         // Try to remove SOA record - should be rejected
         let result = rrset.remove(&record, SerialNumber::from(2));
         assert!(result.is_ok());
@@ -729,22 +778,23 @@ mod tests {
     #[test]
     fn test_recordset_cname_replacement() {
         use hickory_proto::rr::rdata::CNAME;
-        
+
         let name = create_test_name();
         let mut rrset = RecordSet::new(name.clone(), RecordType::CNAME);
-        
+
         // Add first CNAME record
         let cname1 = CNAME(Name::from_utf8("target1.example.com").unwrap());
-        let record1 = Record::from_rdata(name.clone(), TimeToLive::from(300), cname1).into_record_rdata();
+        let record1 =
+            Record::from_rdata(name.clone(), TimeToLive::from(300), cname1).into_record_rdata();
         rrset.insert(record1, SerialNumber::from(1)).unwrap();
         assert_eq!(rrset.len(), 1);
-        
+
         // Add second CNAME record - should replace the first
         let cname2 = CNAME(Name::from_utf8("target2.example.com").unwrap());
         let record2 = Record::from_rdata(name, TimeToLive::from(300), cname2).into_record_rdata();
         rrset.insert(record2, SerialNumber::from(2)).unwrap();
         assert_eq!(rrset.len(), 1); // Still only one CNAME
-        
+
         // Verify the CNAME points to the new target
         let cname_record = rrset.records().next().unwrap();
         if let RData::CNAME(cname) = cname_record.rdata() {
@@ -757,22 +807,23 @@ mod tests {
     #[test]
     fn test_recordset_aname_replacement() {
         use hickory_proto::rr::rdata::ANAME;
-        
+
         let name = create_test_name();
         let mut rrset = RecordSet::new(name.clone(), RecordType::ANAME);
-        
+
         // Add first ANAME record
         let aname1 = ANAME(Name::from_utf8("target1.example.com").unwrap());
-        let record1 = Record::from_rdata(name.clone(), TimeToLive::from(300), aname1).into_record_rdata();
+        let record1 =
+            Record::from_rdata(name.clone(), TimeToLive::from(300), aname1).into_record_rdata();
         rrset.insert(record1, SerialNumber::from(1)).unwrap();
         assert_eq!(rrset.len(), 1);
-        
+
         // Add second ANAME record - should replace the first
         let aname2 = ANAME(Name::from_utf8("target2.example.com").unwrap());
         let record2 = Record::from_rdata(name, TimeToLive::from(300), aname2).into_record_rdata();
         rrset.insert(record2, SerialNumber::from(2)).unwrap();
         assert_eq!(rrset.len(), 1); // Still only one ANAME
-        
+
         // Verify the ANAME points to the new target
         let aname_record = rrset.records().next().unwrap();
         if let RData::ANAME(aname) = aname_record.rdata() {
@@ -780,5 +831,127 @@ mod tests {
         } else {
             panic!("Expected ANAME record");
         }
+    }
+
+    #[test]
+    #[allow(clippy::blocks_in_conditions)]
+    fn test_get_filter() {
+        use hickory_proto::dnssec::{
+            Algorithm,
+            rdata::{DNSSECRData, RRSIG},
+        };
+
+        let name = Name::root();
+        let rsasha256 = RRSIG::new(
+            RecordType::A,
+            Algorithm::RSASHA256,
+            0,
+            0,
+            0,
+            0,
+            0,
+            Name::root(),
+            vec![],
+        );
+        let ecp256 = RRSIG::new(
+            RecordType::A,
+            Algorithm::ECDSAP256SHA256,
+            0,
+            0,
+            0,
+            0,
+            0,
+            Name::root(),
+            vec![],
+        );
+        let ecp384 = RRSIG::new(
+            RecordType::A,
+            Algorithm::ECDSAP384SHA384,
+            0,
+            0,
+            0,
+            0,
+            0,
+            Name::root(),
+            vec![],
+        );
+        let ed25519 = RRSIG::new(
+            RecordType::A,
+            Algorithm::ED25519,
+            0,
+            0,
+            0,
+            0,
+            0,
+            Name::root(),
+            vec![],
+        );
+
+        let rrsig_rsa = Record::from_rdata(
+            name.clone(),
+            3600.into(),
+            RData::DNSSEC(DNSSECRData::RRSIG(rsasha256)),
+        )
+        .set_dns_class(DNSClass::IN)
+        .clone();
+        let rrsig_ecp256 = Record::from_rdata(
+            name.clone(),
+            3600.into(),
+            RData::DNSSEC(DNSSECRData::RRSIG(ecp256)),
+        )
+        .set_dns_class(DNSClass::IN)
+        .clone();
+        let rrsig_ecp384 = Record::from_rdata(
+            name.clone(),
+            3600.into(),
+            RData::DNSSEC(DNSSECRData::RRSIG(ecp384)),
+        )
+        .set_dns_class(DNSClass::IN)
+        .clone();
+        let rrsig_ed25519 = Record::from_rdata(
+            name.clone(),
+            3600.into(),
+            RData::DNSSEC(DNSSECRData::RRSIG(ed25519)),
+        )
+        .set_dns_class(DNSClass::IN)
+        .clone();
+
+        let a = Record::from_rdata(
+            name,
+            3600.into(),
+            RData::A(Ipv4Addr::new(93, 184, 216, 24).into()),
+        )
+        .set_dns_class(DNSClass::IN)
+        .clone();
+
+        let mut rrset = RecordSet::from(a);
+        rrset.insert_rrsig(rrsig_rsa).unwrap();
+        rrset.insert_rrsig(rrsig_ecp256).unwrap();
+        rrset.insert_rrsig(rrsig_ecp384).unwrap();
+        rrset.insert_rrsig(rrsig_ed25519).unwrap();
+
+        assert!(rrset.signed_records().any(|r| {
+            if let RData::DNSSEC(DNSSECRData::RRSIG(sig)) = r.rdata() {
+                sig.algorithm() == Algorithm::ED25519
+            } else {
+                false
+            }
+        },));
+
+        assert!(rrset.signed_records().any(|r| {
+            if let RData::DNSSEC(DNSSECRData::RRSIG(sig)) = r.rdata() {
+                sig.algorithm() == Algorithm::ECDSAP384SHA384
+            } else {
+                false
+            }
+        }));
+
+        assert!(rrset.signed_records().any(|r| {
+            if let RData::DNSSEC(DNSSECRData::RRSIG(sig)) = r.rdata() {
+                sig.algorithm() == Algorithm::ED25519
+            } else {
+                false
+            }
+        }));
     }
 }

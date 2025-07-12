@@ -4,7 +4,7 @@ use hickory_proto::rr::{DNSClass, LowerName, RecordType, RrKey, rdata};
 use rusqlite::{ToSql, types::FromSql};
 
 use crate::{
-    authority::{Lookup, ZoneInfo},
+    authority::{Lookup, ZoneAuthority, ZoneInfo},
     database::FromRow,
 };
 
@@ -322,6 +322,12 @@ impl Lookup for Zone {
 
     fn remove(&mut self, key: &RrKey) -> Option<RecordSet> {
         self.records.remove(key)
+    }
+}
+
+impl From<Zone> for ZoneAuthority<Zone> {
+    fn from(value: Zone) -> Self {
+        ZoneAuthority::new(value)
     }
 }
 

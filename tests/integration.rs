@@ -1,7 +1,7 @@
 use std::sync::Once;
 
 use hickory_proto::rr::{IntoName as _, rdata};
-use walnut_dns::authority::ZoneCatalog;
+use walnut_dns::authority::CatalogStore;
 use walnut_dns::rr::{Name, Record, Zone};
 use walnut_dns::{database::SqliteCatalog, rr::ZoneType};
 
@@ -45,10 +45,13 @@ fn persistence() {
         false,
     );
 
-    catalog.upsert(zone).unwrap();
+    catalog
+        .upsert(primary.clone().into(), vec![zone.into()])
+        .unwrap();
 
     let zone = catalog
         .find(&hickory_proto::rr::LowerName::from(Name::from(primary)))
+        .unwrap()
         .unwrap()
         .pop()
         .unwrap();

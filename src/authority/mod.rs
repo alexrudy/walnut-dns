@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use hickory_proto::op::ResponseCode;
 use hickory_proto::rr::{DNSClass, LowerName, RecordType, RrKey};
-use hickory_server::authority::{AnyRecords, AuthLookup, Authority};
+use hickory_server::authority::{AnyRecords, AuthLookup, Authority, AuthorityObject};
 use hickory_server::authority::{LookupControlFlow, LookupError};
 use hickory_server::authority::{LookupObject, LookupOptions, LookupRecords};
 use hickory_server::authority::{MessageRequest, Nsec3QueryInfo, UpdateResult};
@@ -20,7 +20,7 @@ mod dnssec;
 mod edns;
 mod response;
 
-pub use self::catalog::{Catalog, CatalogError, ZoneCatalog};
+pub use self::catalog::{Catalog, CatalogError, CatalogStore};
 pub use self::dnssec::{DNSSecZone, SecureZone};
 use self::edns::EdnsResponse;
 
@@ -354,6 +354,15 @@ impl<Z> ZoneAuthority<Z> {
 
     pub fn into_inner(self) -> Z {
         self.0
+    }
+}
+
+impl<Z> AsRef<dyn AuthorityObject> for ZoneAuthority<Z>
+where
+    Z: Lookup + ZoneInfo + Send + Sync + 'static,
+{
+    fn as_ref(&self) -> &(dyn AuthorityObject + 'static) {
+        self
     }
 }
 

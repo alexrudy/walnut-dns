@@ -1,7 +1,7 @@
 -- DNS Zone file
 CREATE TABLE IF NOT EXISTS zone (
     id STRING NOT NULL PRIMARY KEY,
-    name STRING NOT NULL UNIQUE,
+    name STRING NOT NULL,
     zone_type INTEGER NOT NULL, -- Primary / Secondary / External
     allow_axfr BOOLEAN NOT NULL,
     dns_class INTEGER NOT NULL -- almost always IN

@@ -1,44 +1,18 @@
-use std::{
-    future::poll_fn,
-    io,
-    str::FromStr,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
-    task::Poll,
-};
+use std::str::FromStr;
 
-use futures::FutureExt as _;
-use hickory_proto::{
-    op::*,
-    rr::{rdata::*, *},
-    serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder},
-    xfer::Protocol,
-};
+use hickory_proto::op::*;
+use hickory_proto::rr::{rdata::*, *};
+use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
+use hickory_proto::xfer::Protocol;
 
-use hickory_server::{
-    authority::{MessageRequest, MessageResponse},
-    server::{Request, ResponseHandler, ResponseInfo},
-};
+use hickory_server::{authority::MessageRequest, server::Request};
 use walnut_dns::{Catalog, rr::ZoneType};
 use walnut_dns::{Lookup as _, SqliteCatalog};
 use walnut_dns::{ZoneInfo as _, rr::Zone};
 
-use std::sync::Once;
-
-/// Registers a global default tracing subscriber when called for the first time. This is intended
-/// for use in tests.
-pub fn subscribe() {
-    static INSTALL_TRACING_SUBSCRIBER: Once = Once::new();
-    INSTALL_TRACING_SUBSCRIBER.call_once(|| {
-        let subscriber = tracing_subscriber::FmtSubscriber::builder()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .with_test_writer()
-            .finish();
-        tracing::subscriber::set_global_default(subscriber).unwrap();
-    });
-}
+mod support;
+use support::TestResponseHandler;
+use support::subscribe;
 
 #[allow(unused)]
 #[allow(clippy::unreadable_literal)]
@@ -204,67 +178,6 @@ pub fn create_example() -> Zone {
     zone
 }
 
-#[derive(Clone, Default)]
-pub struct TestResponseHandler {
-    message_ready: Arc<AtomicBool>,
-    buf: Arc<Mutex<Vec<u8>>>,
-}
-
-impl TestResponseHandler {
-    pub fn new() -> Self {
-        let buf = Arc::new(Mutex::new(Vec::with_capacity(512)));
-        let message_ready = Arc::new(AtomicBool::new(false));
-        TestResponseHandler { message_ready, buf }
-    }
-
-    fn into_inner(self) -> impl Future<Output = Vec<u8>> {
-        poll_fn(move |_| {
-            if self
-                .message_ready
-                .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
-                let bytes: Vec<u8> = std::mem::take(&mut self.buf.lock().unwrap());
-                Poll::Ready(bytes)
-            } else {
-                Poll::Pending
-            }
-        })
-    }
-
-    pub fn into_message(self) -> impl Future<Output = Message> {
-        let bytes = self.into_inner();
-        bytes.map(|b| {
-            let mut decoder = BinDecoder::new(&b);
-            Message::read(&mut decoder).expect("could not decode message")
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl ResponseHandler for TestResponseHandler {
-    async fn send_response<'a>(
-        &mut self,
-        response: MessageResponse<
-            '_,
-            'a,
-            impl Iterator<Item = &'a Record> + Send + 'a,
-            impl Iterator<Item = &'a Record> + Send + 'a,
-            impl Iterator<Item = &'a Record> + Send + 'a,
-            impl Iterator<Item = &'a Record> + Send + 'a,
-        >,
-    ) -> io::Result<ResponseInfo> {
-        let buf = &mut self.buf.lock().unwrap();
-        buf.clear();
-        let mut encoder = BinEncoder::new(buf);
-        let info = response
-            .destructive_emit(&mut encoder)
-            .expect("could not encode");
-        self.message_ready.store(true, Ordering::Release);
-        Ok(info)
-    }
-}
-
 #[allow(clippy::unreadable_literal)]
 pub fn create_records(zone: &mut Zone) {
     use walnut_dns::rr::{Record, SerialNumber};
@@ -373,8 +286,8 @@ async fn test_catalog_lookup() {
     let test_origin = test.origin().clone();
 
     let catalog = Catalog::new(SqliteCatalog::new_in_memory().unwrap());
-    catalog.insert(example).unwrap();
-    catalog.insert(test).unwrap();
+    catalog.insert(example.into()).unwrap();
+    catalog.insert(test.into()).unwrap();
 
     let mut question: Message = Message::new();
 
@@ -451,8 +364,8 @@ async fn test_catalog_lookup_soa() {
     let origin = example.origin().clone();
 
     let catalog = Catalog::new(SqliteCatalog::new_in_memory().unwrap());
-    catalog.insert(example).unwrap();
-    catalog.insert(test).unwrap();
+    catalog.insert(example.into()).unwrap();
+    catalog.insert(test.into()).unwrap();
 
     let mut question: Message = Message::new();
 
@@ -519,7 +432,7 @@ async fn test_catalog_nx_soa() {
     let example = create_example();
 
     let catalog = Catalog::new(SqliteCatalog::new_in_memory().unwrap());
-    catalog.insert(example).unwrap();
+    catalog.insert(example.into()).unwrap();
 
     let mut question: Message = Message::new();
 
@@ -570,7 +483,7 @@ async fn test_non_authoritive_nx_refused() {
     let example = create_example();
 
     let catalog = Catalog::new(SqliteCatalog::new_in_memory().unwrap());
-    catalog.insert(example).unwrap();
+    catalog.insert(example.into()).unwrap();
 
     let mut question: Message = Message::new();
 
@@ -786,7 +699,7 @@ async fn test_cname_additionals() {
     let example = create_example();
 
     let catalog = Catalog::new(SqliteCatalog::new_in_memory().unwrap());
-    catalog.insert(example).unwrap();
+    catalog.insert(example.into()).unwrap();
 
     let mut question: Message = Message::new();
 
@@ -834,7 +747,7 @@ async fn test_multiple_cname_additionals() {
     let example = create_example();
 
     let catalog = Catalog::new(SqliteCatalog::new_in_memory().unwrap());
-    catalog.insert(example).unwrap();
+    catalog.insert(example.into()).unwrap();
 
     let mut question: Message = Message::new();
 
