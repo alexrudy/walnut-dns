@@ -340,7 +340,7 @@ impl<'c> ZonePersistence<'c> {
     #[tracing::instrument(skip_all, level = "trace")]
     fn list(&self) -> rusqlite::Result<Vec<Name>> {
         let mut stmt = self.connection.prepare(&format!(
-            "SELECT name FROM {table}",
+            "SELECT DISTINCT name FROM {table}",
             table = Self::TABLE.table
         ))?;
         let names = stmt
@@ -692,6 +692,24 @@ mod tests {
         assert_eq!(zone_list.len(), 2);
         assert!(zone_list.contains(&zone1_name));
         assert!(zone_list.contains(&zone2_name));
+    }
+
+    #[test]
+    fn test_catalog_chained_zones() {
+        let catalog = SqliteCatalog::new_in_memory().unwrap();
+
+        // Create multiple zones
+        let zone1 = create_test_zone();
+        let zone2 = create_test_zone();
+        let name = zone1.origin().clone();
+        catalog
+            .upsert(name.clone(), vec![zone1.into(), zone2.into()])
+            .unwrap();
+
+        // List should contain both zones
+        let zone_list = catalog.list().unwrap();
+        assert_eq!(zone_list.len(), 1);
+        assert!(zone_list.contains(&name.into()));
     }
 
     #[test]
