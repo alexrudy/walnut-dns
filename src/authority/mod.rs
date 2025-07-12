@@ -21,7 +21,7 @@ mod edns;
 mod response;
 
 pub use self::catalog::{Catalog, CatalogError, CatalogStore};
-pub use self::dnssec::DNSSecZone;
+pub use self::dnssec::{DNSSecZone, Journal};
 use self::edns::EdnsResponse;
 
 pub(crate) type LookupChain<L, E = LookupError> = (LookupControlFlow<L, E>, Option<LookupRecords>);
@@ -41,6 +41,7 @@ pub trait ZoneInfo {
 
 pub trait Lookup: ZoneInfo {
     fn get(&self, key: &RrKey) -> Option<&RecordSet>;
+    fn get_mut(&mut self, key: &RrKey) -> Option<&mut RecordSet>;
     fn keys(&self) -> impl Iterator<Item = &RrKey>;
     fn records(&self) -> impl Iterator<Item = &RecordSet>;
     fn records_reversed(&self) -> impl Iterator<Item = &RecordSet>;
@@ -344,7 +345,7 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ZoneAuthority<Z>(Z);
 
 impl<Z> ZoneAuthority<Z> {

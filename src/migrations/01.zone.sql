@@ -12,6 +12,7 @@ CREATE INDEX IF NOT EXISTS idx_zone_name ON zone (lower(name));
 CREATE TABLE IF NOT EXISTS record (
     id STRING NOT NULL PRIMARY KEY,
     zone_id STRING NOT NULL REFERENCES zone (id) ON DELETE CASCADE,
+    soa_serial INTEGER,
     name_labels STRING,
     dns_class INTEGER NOT NULL,
     ttl INTEGER,

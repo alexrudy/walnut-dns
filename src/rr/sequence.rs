@@ -1,5 +1,7 @@
 use std::{cmp::Ordering, ops::Add};
 
+use rusqlite::{ToSql, types::FromSql};
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SerialNumber(u32);
 
@@ -52,6 +54,21 @@ impl PartialOrd for SerialNumber {
     }
 }
 
+impl ToSql for SerialNumber {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        self.0.to_sql()
+    }
+}
+
+impl FromSql for SerialNumber {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        match value {
+            rusqlite::types::ValueRef::Integer(i) => Ok(SerialNumber(i as u32)),
+            _ => Err(rusqlite::types::FromSqlError::InvalidType),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -60,7 +77,7 @@ mod tests {
     fn test_serial_number_creation() {
         let sn = SerialNumber::from(123);
         assert_eq!(sn.get(), 123);
-        
+
         let zero = SerialNumber::ZERO;
         assert_eq!(zero.get(), 0);
     }
@@ -86,7 +103,7 @@ mod tests {
         let sn1 = SerialNumber::from(42);
         let sn2 = SerialNumber::from(42);
         let sn3 = SerialNumber::from(43);
-        
+
         assert_eq!(sn1, sn2);
         assert_ne!(sn1, sn3);
         assert_eq!(sn1.partial_cmp(&sn2), Some(Ordering::Equal));
@@ -96,7 +113,7 @@ mod tests {
     fn test_serial_number_comparison_simple() {
         let sn1 = SerialNumber::from(10);
         let sn2 = SerialNumber::from(20);
-        
+
         assert_eq!(sn1.partial_cmp(&sn2), Some(Ordering::Less));
         assert_eq!(sn2.partial_cmp(&sn1), Some(Ordering::Greater));
     }
@@ -106,11 +123,11 @@ mod tests {
         // Test RFC 1982 serial number arithmetic wrap-around behavior
         let sn1 = SerialNumber::from(100);
         let sn2 = SerialNumber::from(100 + 0x40000000); // Within valid comparison range
-        
+
         // According to RFC 1982, comparison should be well-defined within valid range
         let result = sn1.partial_cmp(&sn2);
         assert_eq!(result, Some(std::cmp::Ordering::Less));
-        
+
         // Test the boundary case that results in undefined comparison
         let sn3 = SerialNumber::from(0);
         let sn4 = SerialNumber::from(0x80000000); // Exactly half the range - undefined
@@ -123,7 +140,7 @@ mod tests {
         // Test case where comparison is undefined (exactly half the range apart)
         let sn1 = SerialNumber::from(0);
         let sn2 = SerialNumber::from(0x80000000); // Exactly half the range
-        
+
         // Should return None for undefined comparison
         assert_eq!(sn1.partial_cmp(&sn2), None);
     }
@@ -134,7 +151,7 @@ mod tests {
         let s = SerialNumber::from(10);
         let s_plus_1 = SerialNumber::from(11);
         let s_plus_100 = SerialNumber::from(110);
-        
+
         assert_eq!(s.partial_cmp(&s_plus_1), Some(Ordering::Less));
         assert_eq!(s.partial_cmp(&s_plus_100), Some(Ordering::Less));
         assert_eq!(s_plus_1.partial_cmp(&s_plus_100), Some(Ordering::Less));
@@ -145,7 +162,7 @@ mod tests {
         let sn1 = SerialNumber::from(42);
         let sn2 = sn1; // Copy
         let sn3 = sn1.clone(); // Clone
-        
+
         assert_eq!(sn1, sn2);
         assert_eq!(sn1, sn3);
         assert_eq!(sn1.get(), 42);

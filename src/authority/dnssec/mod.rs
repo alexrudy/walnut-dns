@@ -6,9 +6,8 @@ use chrono::Utc;
 use hickory_proto::ProtoError;
 use hickory_proto::dnssec::rdata::{DNSKEY, DNSSECRData, KEY, NSEC, NSEC3, NSEC3PARAM, RRSIG, SIG};
 use hickory_proto::dnssec::{DnsSecError, DnsSecResult, Nsec3HashAlgorithm, SigSigner, TBS};
-use hickory_proto::op::ResponseCode;
 use hickory_proto::rr::{DNSClass, LowerName, RData, RecordType, RrKey};
-use hickory_server::authority::{AuthLookup, Authority};
+use hickory_server::authority::{AuthLookup, Authority, UpdateRequest as _};
 use hickory_server::authority::{LookupControlFlow, LookupError};
 use hickory_server::authority::{LookupObject, LookupOptions, LookupRecords};
 use hickory_server::authority::{MessageRequest, Nsec3QueryInfo, UpdateResult};
@@ -16,7 +15,15 @@ use hickory_server::{dnssec::NxProofKind, server::RequestInfo};
 
 use crate::rr::{AsHickory as _, Mismatch, Name, Record, RecordSet, TimeToLive};
 
-use super::{Lookup, ZoneAuthority, ZoneInfo};
+use super::{CatalogError, Lookup, ZoneAuthority, ZoneInfo};
+
+mod authorize;
+mod prerequisites;
+mod update;
+
+pub trait Journal<Z> {
+    fn insert(&self, zone: &Z, records: &[Record]) -> Result<(), CatalogError>;
+}
 
 /// Error type to unify Mismatch errors and generic DNSSEC errors
 #[derive(Debug, thiserror::Error)]
@@ -32,10 +39,13 @@ pub struct DNSSecZone<Z> {
     zone: ZoneAuthority<Z>,
     secure_keys: Vec<SigSigner>,
     nx_proof_kind: Option<NxProofKind>,
+    allow_update: bool,
+    is_dnssec_enabled: bool,
+    journal: Option<Box<dyn Journal<Self> + Send + Sync + 'static>>,
 }
 
 impl<Z> Deref for DNSSecZone<Z> {
-    type Target = Z;
+    type Target = ZoneAuthority<Z>;
 
     fn deref(&self) -> &Self::Target {
         &self.zone
@@ -58,12 +68,18 @@ impl<Z: ZoneInfo> fmt::Debug for DNSSecZone<Z> {
     }
 }
 
-impl<Z> DNSSecZone<Z> {
-    pub fn new(zone: Z, nx_proof_kind: Option<NxProofKind>) -> Self {
+impl<Z> DNSSecZone<Z>
+where
+    Z: ZoneInfo,
+{
+    pub fn new(zone: Z, nx_proof_kind: Option<NxProofKind>, allow_update: bool) -> Self {
         Self {
             zone: ZoneAuthority::new(zone),
             secure_keys: Vec::new(),
             nx_proof_kind,
+            allow_update,
+            is_dnssec_enabled: true,
+            journal: None,
         }
     }
 
@@ -73,6 +89,23 @@ impl<Z> DNSSecZone<Z> {
 
     pub fn set_nx_proof_kind(&mut self, kind: Option<NxProofKind>) -> &mut Self {
         self.nx_proof_kind = kind;
+        self
+    }
+
+    pub fn dnssec_enabled(&self) -> bool {
+        self.is_dnssec_enabled
+    }
+
+    pub fn set_dnssec_enabled(&mut self, enabled: bool) -> &mut Self {
+        self.is_dnssec_enabled = enabled;
+        self
+    }
+
+    pub fn set_journal<J>(&mut self, journal: J) -> &mut Self
+    where
+        J: Journal<Self> + Send + Sync + 'static,
+    {
+        self.journal = Some(Box::new(journal));
         self
     }
 
@@ -700,9 +733,16 @@ where
     ///
     /// true if any of additions, updates or deletes were made to the zone, false otherwise. Err is
     ///  returned in the case of bad data, etc.
-    async fn update(&self, _update: &MessageRequest) -> UpdateResult<bool> {
-        // No update for non-DNSSEC Zone
-        Err(ResponseCode::NotImp)
+    async fn update(&self, update: &MessageRequest) -> UpdateResult<bool> {
+        //let this = &mut self.in_memory.lock().await;
+        // the spec says to authorize after prereqs, seems better to auth first.
+        self.authorize(update).await?;
+        self.verify_prerequisites(update.prerequisites()).await?;
+        self.pre_scan(update.updates()).await?;
+
+        //TODO: Need to mutate records for update!!!
+        // self.update_records(update.updates(), true).await
+        Ok(true)
     }
 
     /// Get the origin of this zone, i.e. example.com is the origin for www.example.com

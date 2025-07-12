@@ -311,6 +311,22 @@ impl FromRow for Record<RData> {
     }
 }
 
+impl From<hickory_proto::rr::Record<RData>> for Record<RData> {
+    fn from(hrecord: hickory_proto::rr::Record<RData>) -> Self {
+        let parts = hrecord.into_parts();
+        Record {
+            id: RecordID::new(),
+            name_labels: parts.name_labels,
+            dns_class: parts.dns_class,
+            ttl: parts.ttl.into(),
+            rdata: parts.rdata,
+            mdns_cache_flush: parts.mdns_cache_flush,
+            proof: parts.proof,
+            expires: None,
+        }
+    }
+}
+
 impl<R: RecordData> AsHickory for Record<R> {
     type Hickory = hickory_proto::rr::Record<R>;
 

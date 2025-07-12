@@ -5,15 +5,15 @@ edition = "2024"
 
 [dependencies]
 async-trait = "0.1"
+arc-swap = "1"
 camino = "1"
 chrono = "0.4"
 data-encoding = { version = "2.2.0", default-features = false }
-hickory-proto = { version = "0.25", features = [] }
+hickory-proto = { version = "0.25", features = ["mdns", "dnssec-ring"] }
 hickory-server = { version = "0.25", features = ["dnssec-ring"] }
 rusqlite = { version = "0.37", features = ["blob", "chrono", "uuid", "trace"] }
 serde = { version = "1", features = ["derive"]}
 thiserror = "2"
-time = "0.3"
 tracing = "0.1"
 
 [dependencies.uuid]

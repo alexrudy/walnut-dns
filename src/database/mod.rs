@@ -14,6 +14,8 @@ use crate::{
     rr::{LowerName, Name, Record, SerialNumber, SqlName, Zone, ZoneID},
 };
 
+pub mod journal;
+
 pub(crate) trait FromRow {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self>
     where
@@ -23,7 +25,7 @@ pub(crate) trait FromRow {
 const MONARCH: StaticMonarchConfiguration<1> = StaticMonarchConfiguration {
     name: "walnut",
     enable_foreign_keys: true,
-    migrations: [include_str!("migrations/01.zone.sql")],
+    migrations: [include_str!("../migrations/01.zone.sql")],
 };
 
 /// Configuration for the SQLite backend.
@@ -363,11 +365,12 @@ impl<'c> RecordPersistence<'c> {
         Self { connection }
     }
 
-    const TABLE: QueryBuilder<9> = QueryBuilder {
+    const TABLE: QueryBuilder<10> = QueryBuilder {
         table: "record",
         columns: [
             "id",
             "zone_id",
+            "soa_serial",
             "name_labels",
             "dns_class",
             "ttl",
@@ -392,24 +395,25 @@ impl<'c> RecordPersistence<'c> {
             |row| {
                 let record = Record::from_row(row)?;
                 let zone_id: ZoneID = row.get("zone_id")?;
-                Ok((zone_id, record))
+                let serial: SerialNumber = row.get("soa_serail")?;
+                Ok((zone_id, record, serial))
             },
         )?;
 
         let mut records: BTreeMap<_, Vec<_>> = BTreeMap::new();
         let mut n = 0usize;
         for result in riter {
-            let (zone, record) = result?;
-            records.entry(zone).or_default().push(record);
+            let (zone, record, serial) = result?;
+            records.entry(zone).or_default().push((record, serial));
             n += 1;
         }
         tracing::trace!("Populating {} zones from {} records", records.len(), n);
         for zone in zones {
-            for record in records.remove(&zone.id()).unwrap_or_default() {
+            for (record, serial) in records.remove(&zone.id()).unwrap_or_default() {
                 if record.expired() {
                     continue;
                 }
-                zone.upsert(record, SerialNumber::ZERO)
+                zone.upsert(record, serial)
                     .expect("Zone and record mismatch during DB Load");
             }
         }
@@ -468,15 +472,27 @@ impl<'c> RecordPersistence<'c> {
     #[tracing::instrument("upsert", skip_all, level = "trace")]
     fn upsert_records(&self, zone: &Zone) -> rusqlite::Result<()> {
         self.delete_orphaned_records(zone)?;
+        self.insert_records(zone, zone.records())?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument("insert", skip_all, level = "trace")]
+    fn insert_records<'z>(
+        &self,
+        zone: &'z Zone,
+        records: impl Iterator<Item = &'z Record>,
+    ) -> rusqlite::Result<()> {
         let mut stmt = self.connection.prepare(&Self::TABLE.upsert())?;
         let mut n = 0;
-        for record in zone.records() {
+        for record in records {
             if record.expired() {
                 continue;
             }
             n += stmt.execute(named_params! {
                 ":id": record.id(),
                 ":zone_id": zone.id(),
+                ":soa_serial": zone.serial(),
                 ":name_labels": SqlName::from(record.name().clone()),
                 ":dns_class": u16::from(record.dns_class()),
                 ":ttl": record.ttl(),
@@ -487,8 +503,7 @@ impl<'c> RecordPersistence<'c> {
             })?;
         }
 
-        tracing::trace!("upsert {n} records");
-
+        tracing::trace!("inserted {n} records");
         Ok(())
     }
 }

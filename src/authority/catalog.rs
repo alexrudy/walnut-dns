@@ -534,7 +534,6 @@ where
             }
         };
 
-        #[allow(clippy::never_loop)]
         for authority in authorities {
             let update_result = AuthorityObject::update(authority.as_ref(), request).await;
             let response_code = match update_result {

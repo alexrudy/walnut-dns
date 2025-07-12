@@ -42,6 +42,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-swap"
+version = "1.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69f7f8c3906b62b754cd5326047894316021dcfe5a194c8ea52bdd94934a3457"
+
+[[package]]
 name = "async-recursion"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -434,6 +440,7 @@ dependencies = [
  "ring",
  "rustls-pki-types",
  "serde",
+ "socket2",
  "thiserror 2.0.12",
  "time",
  "tinyvec",
@@ -1599,6 +1606,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 name = "walnut-dns"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "async-trait",
  "camino",
  "chrono",
@@ -1612,7 +1620,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.12",
- "time",
  "tokio",
  "tower",
  "tracing",

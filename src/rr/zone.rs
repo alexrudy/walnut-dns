@@ -242,6 +242,10 @@ impl Lookup for Zone {
         self.records.get(key)
     }
 
+    fn get_mut(&mut self, key: &RrKey) -> Option<&mut RecordSet> {
+        self.records.get_mut(key)
+    }
+
     fn keys(&self) -> impl Iterator<Item = &RrKey> {
         self.records.keys()
     }
