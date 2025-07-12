@@ -18,96 +18,74 @@ use crate::rr::{AsHickory as _, Mismatch, Name, Record, RecordSet, TimeToLive};
 
 use super::{Lookup, ZoneAuthority, ZoneInfo};
 
-/// Required methods to enable DNSSEC for a zone
-pub trait SecureZone {
-    fn closest_nsec(&self, name: &LowerName) -> Option<RecordSet>;
-    fn nx_proof_kind(&self) -> Option<&NxProofKind>;
+/// Error type to unify Mismatch errors and generic DNSSEC errors
+#[derive(Debug, thiserror::Error)]
+pub enum DnsSecZoneError {
+    #[error(transparent)]
+    Mismatch(#[from] Mismatch),
+    #[error(transparent)]
+    DnsSec(#[from] DnsSecError),
 }
 
-/// Internal extension helper trait for DNSSEC
-trait SecureZoneProofs: SecureZone {
-    fn get_nsec_records(
-        &self,
-        name: &LowerName,
-        lookup_options: LookupOptions,
-    ) -> LookupControlFlow<AuthLookup>;
-    fn proof(&self, info: Nsec3QueryInfo<'_>) -> Result<Vec<RecordSet>, LookupError>;
-    fn get_hashed_owner_name(
-        &self,
-        info: &Nsec3QueryInfo<'_>,
-        name: &LowerName,
-    ) -> Result<LowerName, ProtoError>;
-    fn closest_encloser_proof(
-        &self,
-        name: &LowerName,
-        info: &Nsec3QueryInfo<'_>,
-    ) -> Result<Option<(LowerName, RecordSet)>, ProtoError>;
-    fn find_cover(
-        &self,
-        name: &LowerName,
-        info: &Nsec3QueryInfo<'_>,
-    ) -> Result<Option<RecordSet>, ProtoError>;
+/// Adapter for DNSZones to provide DNSSEC features.
+pub struct DNSSecZone<Z> {
+    zone: ZoneAuthority<Z>,
+    secure_keys: Vec<SigSigner>,
+    nx_proof_kind: Option<NxProofKind>,
 }
 
-impl<Z> SecureZoneProofs for Z
-where
-    Z: SecureZone + Lookup,
-{
-    fn get_nsec_records(
-        &self,
-        name: &LowerName,
-        lookup_options: LookupOptions,
-    ) -> LookupControlFlow<AuthLookup> {
-        let rr_key = RrKey::new(name.clone(), RecordType::NSEC);
-        let no_data = self
-            .get(&rr_key)
-            .map(|rr_set| LookupRecords::new(lookup_options, rr_set.as_hickory().into()));
+impl<Z> Deref for DNSSecZone<Z> {
+    type Target = Z;
 
-        if let Some(no_data) = no_data {
-            return LookupControlFlow::Continue(Ok(no_data.into()));
+    fn deref(&self) -> &Self::Target {
+        &self.zone
+    }
+}
+
+impl<Z> DerefMut for DNSSecZone<Z> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.zone
+    }
+}
+
+impl<Z: ZoneInfo> fmt::Debug for DNSSecZone<Z> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DNSSecZone")
+            .field("zone", &self.zone.origin())
+            .field("secure_keys", &self.secure_keys.len())
+            .field("nx_proof_kind", &self.nx_proof_kind)
+            .finish()
+    }
+}
+
+impl<Z> DNSSecZone<Z> {
+    pub fn new(zone: Z, nx_proof_kind: Option<NxProofKind>) -> Self {
+        Self {
+            zone: ZoneAuthority::new(zone),
+            secure_keys: Vec::new(),
+            nx_proof_kind,
         }
-
-        let closest_proof = self.closest_nsec(name);
-
-        // we need the wildcard proof, but make sure that it's still part of the zone.
-        let wildcard = name.base_name();
-        let origin = self.origin();
-        let wildcard = if origin.zone_of(&wildcard) {
-            wildcard
-        } else {
-            origin.clone()
-        };
-
-        // don't duplicate the record...
-        let wildcard_proof = if wildcard != *name {
-            self.closest_nsec(&wildcard)
-        } else {
-            None
-        };
-
-        let proofs = match (closest_proof, wildcard_proof) {
-            (Some(closest_proof), Some(wildcard_proof)) => {
-                // dedup with the wildcard proof
-                if wildcard_proof != closest_proof {
-                    vec![wildcard_proof, closest_proof]
-                } else {
-                    vec![closest_proof]
-                }
-            }
-            (None, Some(proof)) | (Some(proof), None) => vec![proof],
-            (None, None) => vec![],
-        };
-
-        LookupControlFlow::Continue(Ok(LookupRecords::many(
-            lookup_options,
-            proofs
-                .into_iter()
-                .map(|rrset| rrset.as_hickory().into())
-                .collect(),
-        )
-        .into()))
     }
 
+    pub fn nx_proof_kind(&self) -> Option<&NxProofKind> {
+        self.nx_proof_kind.as_ref()
+    }
+
+    pub fn set_nx_proof_kind(&mut self, kind: Option<NxProofKind>) -> &mut Self {
+        self.nx_proof_kind = kind;
+        self
+    }
+
+    pub fn secure_keys(&self) -> &[SigSigner] {
+        &self.secure_keys
+    }
+}
+
+/// DNSSEC helper functions
+impl<Z> DNSSecZone<Z>
+where
+    Z: ZoneInfo + Lookup,
+{
     fn get_hashed_owner_name(
         &self,
         info: &Nsec3QueryInfo<'_>,
@@ -243,96 +221,37 @@ where
             })
             .cloned())
     }
-}
 
-/// Adapter for DNSZones to provide DNSSEC features.
-pub struct DNSSecZone<Z> {
-    zone: ZoneAuthority<Z>,
-    secure_keys: Vec<SigSigner>,
-    nx_proof_kind: Option<NxProofKind>,
-}
+    fn closest_nsec(&self, name: &LowerName) -> Option<RecordSet> {
+        for rr_set in self.records_reversed() {
+            if rr_set.record_type() != RecordType::NSEC {
+                continue;
+            }
 
-impl<Z: ZoneInfo> fmt::Debug for DNSSecZone<Z> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DNSSecZone")
-            .field("zone", &self.zone.origin())
-            .field("secure_keys", &self.secure_keys.len())
-            .field("nx_proof_kind", &self.nx_proof_kind)
-            .finish()
-    }
-}
+            if *name < rr_set.name().into() {
+                continue;
+            }
 
-impl<Z> DNSSecZone<Z> {
-    pub fn new(zone: Z, nx_proof_kind: Option<NxProofKind>) -> Self {
-        Self {
-            zone: ZoneAuthority::new(zone),
-            secure_keys: Vec::new(),
-            nx_proof_kind,
-        }
-    }
+            // there should only be one record
+            let Some(record) = rr_set.records().next() else {
+                continue;
+            };
 
-    pub fn nx_proof_kind(&self) -> Option<&NxProofKind> {
-        self.nx_proof_kind.as_ref()
-    }
+            let RData::DNSSEC(DNSSECRData::NSEC(nsec)) = record.rdata() else {
+                continue;
+            };
 
-    pub fn secure_keys(&self) -> &[SigSigner] {
-        &self.secure_keys
-    }
-}
-
-impl<Z> DNSSecZone<Z>
-where
-    Z: ZoneInfo + Lookup,
-{
-    pub fn add_update_auth_key(
-        &mut self,
-        name: Name,
-        key: KEY,
-        ttl: TimeToLive,
-    ) -> Result<bool, Mismatch> {
-        let rdata = RData::DNSSEC(DNSSECRData::KEY(key));
-        let record = Record::from_rdata(name, ttl, rdata);
-
-        let serial = self.zone.serial();
-        self.zone.upsert(record, serial)
-    }
-
-    /// Adds a zone signing key to the zone.
-    pub fn add_zone_signing_key(&mut self, signer: SigSigner) -> Result<(), DnsSecZoneError> {
-        let zone_ttl = self.minimum_ttl();
-        let dnskey = DNSKEY::from_key(&signer.key().to_public_key()?);
-        let dnskey = Record::from_rdata(
-            self.name().clone(),
-            zone_ttl,
-            RData::DNSSEC(DNSSECRData::DNSKEY(dnskey)),
-        );
-
-        // TODO: also generate the CDS and CDNSKEY
-        let serial = self.serial();
-        self.zone.upsert(dnskey, serial)?;
-        self.secure_keys.push(signer);
-        Ok(())
-    }
-
-    /// (Re)generates the nsec records, increments the serial number and signs the zone
-    pub fn secure_zone(&mut self) -> DnsSecResult<()> {
-        match self.nx_proof_kind.as_ref() {
-            Some(NxProofKind::Nsec) => self.nsec_zone(),
-            Some(NxProofKind::Nsec3 {
-                algorithm,
-                salt,
-                iterations,
-                opt_out,
-            }) => self.nsec3_zone(*algorithm, &salt.clone(), *iterations, *opt_out)?,
-            None => (),
+            let next_domain_name = nsec.next_domain_name();
+            // the search name is less than the next NSEC record
+            if *name < next_domain_name.into() ||
+                // this is the last record, and wraps to the beginning of the zone
+                next_domain_name < rr_set.name()
+            {
+                return Some(rr_set.clone());
+            }
         }
 
-        // need to resign any records at the current serial number and bump the number.
-        // first bump the serial number on the SOA, so that it is resigned with the new serial.
-        self.increment_soa_serial();
-
-        // TODO: should we auto sign here? or maybe up a level...
-        self.sign_zone()
+        None
     }
 
     fn nsec_zone(&mut self) {
@@ -651,73 +570,66 @@ where
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum DnsSecZoneError {
-    #[error(transparent)]
-    Mismatch(#[from] Mismatch),
-    #[error(transparent)]
-    DnsSec(#[from] DnsSecError),
-}
-
-impl<Z> Deref for DNSSecZone<Z> {
-    type Target = Z;
-
-    fn deref(&self) -> &Self::Target {
-        &self.zone
-    }
-}
-
-impl<Z> DerefMut for DNSSecZone<Z> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.zone
-    }
-}
-
-impl<Z> SecureZone for DNSSecZone<Z>
+impl<Z> DNSSecZone<Z>
 where
     Z: ZoneInfo + Lookup,
 {
-    fn closest_nsec(&self, name: &LowerName) -> Option<RecordSet> {
-        for rr_set in self.records_reversed() {
-            if rr_set.record_type() != RecordType::NSEC {
-                continue;
-            }
+    pub fn add_update_auth_key(
+        &mut self,
+        name: Name,
+        key: KEY,
+        ttl: TimeToLive,
+    ) -> Result<bool, Mismatch> {
+        let rdata = RData::DNSSEC(DNSSECRData::KEY(key));
+        let record = Record::from_rdata(name, ttl, rdata);
 
-            if *name < rr_set.name().into() {
-                continue;
-            }
-
-            // there should only be one record
-            let Some(record) = rr_set.records().next() else {
-                continue;
-            };
-
-            let RData::DNSSEC(DNSSECRData::NSEC(nsec)) = record.rdata() else {
-                continue;
-            };
-
-            let next_domain_name = nsec.next_domain_name();
-            // the search name is less than the next NSEC record
-            if *name < next_domain_name.into() ||
-                // this is the last record, and wraps to the beginning of the zone
-                next_domain_name < rr_set.name()
-            {
-                return Some(rr_set.clone());
-            }
-        }
-
-        None
+        let serial = self.zone.serial();
+        self.zone.upsert(record, serial)
     }
 
-    fn nx_proof_kind(&self) -> Option<&NxProofKind> {
-        self.nx_proof_kind.as_ref()
+    /// Adds a zone signing key to the zone.
+    pub fn add_zone_signing_key(&mut self, signer: SigSigner) -> Result<(), DnsSecZoneError> {
+        let zone_ttl = self.minimum_ttl();
+        let dnskey = DNSKEY::from_key(&signer.key().to_public_key()?);
+        let dnskey = Record::from_rdata(
+            self.name().clone(),
+            zone_ttl,
+            RData::DNSSEC(DNSSECRData::DNSKEY(dnskey)),
+        );
+
+        // TODO: also generate the CDS and CDNSKEY
+        let serial = self.serial();
+        self.zone.upsert(dnskey, serial)?;
+        self.secure_keys.push(signer);
+        Ok(())
+    }
+
+    /// (Re)generates the nsec records, increments the serial number and signs the zone
+    pub fn secure_zone(&mut self) -> DnsSecResult<()> {
+        match self.nx_proof_kind.as_ref() {
+            Some(NxProofKind::Nsec) => self.nsec_zone(),
+            Some(NxProofKind::Nsec3 {
+                algorithm,
+                salt,
+                iterations,
+                opt_out,
+            }) => self.nsec3_zone(*algorithm, &salt.clone(), *iterations, *opt_out)?,
+            None => (),
+        }
+
+        // need to resign any records at the current serial number and bump the number.
+        // first bump the serial number on the SOA, so that it is resigned with the new serial.
+        self.increment_soa_serial();
+
+        // TODO: should we auto sign here? or maybe up a level...
+        self.sign_zone()
     }
 }
 
 #[async_trait::async_trait]
 impl<Z> Authority for DNSSecZone<Z>
 where
-    Z: Lookup + SecureZone + ZoneInfo + Send + Sync + 'static,
+    Z: Lookup + ZoneInfo + Send + Sync + 'static,
 {
     type Lookup = AuthLookup;
 
@@ -890,7 +802,54 @@ where
         name: &LowerName,
         lookup_options: LookupOptions,
     ) -> LookupControlFlow<Self::Lookup> {
-        self.deref().get_nsec_records(name, lookup_options)
+        let rr_key = RrKey::new(name.clone(), RecordType::NSEC);
+        let no_data = self
+            .get(&rr_key)
+            .map(|rr_set| LookupRecords::new(lookup_options, rr_set.as_hickory().into()));
+
+        if let Some(no_data) = no_data {
+            return LookupControlFlow::Continue(Ok(no_data.into()));
+        }
+
+        let closest_proof = self.closest_nsec(name);
+
+        // we need the wildcard proof, but make sure that it's still part of the zone.
+        let wildcard = name.base_name();
+        let origin = self.origin();
+        let wildcard = if origin.zone_of(&wildcard) {
+            wildcard
+        } else {
+            origin.clone()
+        };
+
+        // don't duplicate the record...
+        let wildcard_proof = if wildcard != *name {
+            self.closest_nsec(&wildcard)
+        } else {
+            None
+        };
+
+        let proofs = match (closest_proof, wildcard_proof) {
+            (Some(closest_proof), Some(wildcard_proof)) => {
+                // dedup with the wildcard proof
+                if wildcard_proof != closest_proof {
+                    vec![wildcard_proof, closest_proof]
+                } else {
+                    vec![closest_proof]
+                }
+            }
+            (None, Some(proof)) | (Some(proof), None) => vec![proof],
+            (None, None) => vec![],
+        };
+
+        LookupControlFlow::Continue(Ok(LookupRecords::many(
+            lookup_options,
+            proofs
+                .into_iter()
+                .map(|rrset| rrset.as_hickory().into())
+                .collect(),
+        )
+        .into()))
     }
 
     /// Return the NSEC3 records based on the information available for a query.
@@ -914,6 +873,6 @@ where
 
     /// Returns the kind of non-existence proof used for this zone.
     fn nx_proof_kind(&self) -> Option<&NxProofKind> {
-        SecureZone::nx_proof_kind(self.deref())
+        self.nx_proof_kind.as_ref()
     }
 }

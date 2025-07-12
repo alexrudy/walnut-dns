@@ -21,7 +21,7 @@ mod edns;
 mod response;
 
 pub use self::catalog::{Catalog, CatalogError, CatalogStore};
-pub use self::dnssec::{DNSSecZone, SecureZone};
+pub use self::dnssec::DNSSecZone;
 use self::edns::EdnsResponse;
 
 pub(crate) type LookupChain<L, E = LookupError> = (LookupControlFlow<L, E>, Option<LookupRecords>);
