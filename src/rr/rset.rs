@@ -1,6 +1,7 @@
 use hickory_proto::rr::{DNSClass, LowerName, RData, RecordData, RecordType, RrKey};
 
-use super::{AsHickory, SerialNumber, name::Name, record::Record, ttl::TimeToLive};
+use super::{AsHickory, SerialNumber, record::Record, ttl::TimeToLive};
+use hickory_proto::rr::Name;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordSet {
@@ -352,7 +353,7 @@ impl AsHickory for RecordSet {
 
     fn as_hickory(&self) -> Self::Hickory {
         let mut rset = hickory_proto::rr::RecordSet::new(
-            self.name().clone().into(),
+            self.name().clone(),
             self.record_type(),
             self.serial().get(),
         );

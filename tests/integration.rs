@@ -48,7 +48,7 @@ fn persistence() {
     catalog.upsert(zone).unwrap();
 
     let zone = catalog
-        .find(Name::from(primary).as_lower_ref())
+        .find(&hickory_proto::rr::LowerName::from(Name::from(primary)))
         .unwrap()
         .pop()
         .unwrap();

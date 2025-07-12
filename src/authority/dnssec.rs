@@ -234,7 +234,7 @@ where
         // the NSEC3 record with the largest owner name.
         Ok(records
             .filter(|rr_set| rr_set.record_type() == RecordType::NSEC3)
-            .filter(|rr_set| rr_set.name().deref() < &*owner_name)
+            .filter(|rr_set| rr_set.name() < &*owner_name)
             .max_by_key(|rr_set| rr_set.name())
             .or_else(|| {
                 self.records()
@@ -372,7 +372,7 @@ where
                     Some((name, vec)) => {
                         // names aren't equal, create the NSEC record
                         let rdata = NSEC::new_cover_self(key.name.clone().into(), mem::take(vec));
-                        let record = Record::from_rdata(Name::from(name.clone()), ttl, rdata);
+                        let record = Record::from_rdata(name.clone(), ttl, rdata);
                         records.push(record.into_record_rdata());
 
                         // new record...
@@ -385,7 +385,7 @@ where
             if let Some((name, vec)) = nsec_info {
                 // names aren't equal, create the NSEC record
                 let rdata = NSEC::new_cover_self(self.origin().clone().into(), vec);
-                let record = Record::from_rdata(name.clone().into(), ttl, rdata);
+                let record = Record::from_rdata(name.clone(), ttl, rdata);
                 records.push(record.into_record_rdata());
             }
         }
@@ -523,7 +523,7 @@ where
                 .origin()
                 .prepend_label(data_encoding::BASE32_DNSSEC.encode(hashed_name.as_ref()))?;
 
-            let record = Record::from_rdata(name.into(), ttl, rdata);
+            let record = Record::from_rdata(name, ttl, rdata);
             records.push(record.into_record_rdata());
         }
 

@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    Name, Record, SerialNumber, TimeToLive, ZoneID,
+    Name, Record, SerialNumber, SqlName, TimeToLive, ZoneID,
     rset::{Mismatch, RecordSet},
 };
 
@@ -154,7 +154,7 @@ impl Zone {
 impl FromRow for Zone {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
         let id = row.get("id")?;
-        let name: Name = row.get("name")?;
+        let name: Name = row.get::<_, SqlName>("name")?.into();
         let zone_type = row.get("zone_type")?;
         let allow_axfr = row.get("allow_axfr")?;
         let dns_class = row.get::<_, u16>("dns_class")?.into();

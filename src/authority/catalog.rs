@@ -9,7 +9,7 @@ use hickory_server::authority::{
 };
 use hickory_server::server::{Request, RequestHandler, RequestInfo, ResponseHandler, ResponseInfo};
 
-use crate::rr::{Lower, LowerRef, Name, Zone, ZoneID};
+use crate::rr::{Name, Zone, ZoneID};
 
 use super::edns::lookup_options_for_edns;
 use super::response::{ResponseHandleExt, ResponseInfoExt, ResponseResultExt};
@@ -30,7 +30,7 @@ impl CatalogError {
 
 pub trait ZoneCatalog {
     fn get(&self, id: ZoneID) -> Result<Zone, CatalogError>;
-    fn find(&self, origin: LowerRef<'_>) -> Result<Vec<Zone>, CatalogError>;
+    fn find(&self, origin: &LowerName) -> Result<Vec<Zone>, CatalogError>;
     fn upsert(&self, zone: Zone) -> Result<(), CatalogError>;
     fn delete(&self, id: ZoneID) -> Result<(), CatalogError>;
     fn list(&self) -> Result<Vec<Name>, CatalogError>;
@@ -430,12 +430,12 @@ impl Catalog {
 
     fn find(&self, name: &LowerName) -> Result<Option<Vec<Zone>>, CatalogError> {
         tracing::debug!("searching for {}", name);
-        let mut name = Lower::from(name.clone());
+        let mut name = name.clone();
         loop {
-            match (*self.zones).find(name.as_lower_ref()) {
+            match (*self.zones).find(&name) {
                 Ok(zones) if zones.is_empty() => {
                     if !name.is_root() {
-                        name = Lower::from(name.base_name());
+                        name = name.base_name();
                     } else {
                         return Ok(None);
                     }

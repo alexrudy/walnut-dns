@@ -11,7 +11,7 @@ use serde::Deserialize;
 
 use crate::{
     authority::{Lookup as _, ZoneCatalog, ZoneInfo as _},
-    rr::{LowerRef, Name, Record, SerialNumber, Zone, ZoneID},
+    rr::{LowerName, Name, Record, SerialNumber, SqlName, Zone, ZoneID},
 };
 
 pub(crate) trait FromRow {
@@ -88,7 +88,7 @@ impl ZoneCatalog for SqliteCatalog {
     }
 
     #[tracing::instrument(skip_all, fields(%origin), level = "debug")]
-    fn find(&self, origin: LowerRef<'_>) -> Result<Vec<Zone>, crate::authority::CatalogError> {
+    fn find(&self, origin: &LowerName) -> Result<Vec<Zone>, crate::authority::CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
         let zx = ZonePersistence::new(&tx);
@@ -227,12 +227,15 @@ impl<'c> ZonePersistence<'c> {
 
     /// Find zones based on zone name
     #[tracing::instrument(skip_all, fields(zone=%name), level = "trace")]
-    fn find(&self, name: LowerRef<'_>) -> rusqlite::Result<Vec<Zone>> {
+    fn find(&self, name: &LowerName) -> rusqlite::Result<Vec<Zone>> {
         let mut stmt = self
             .connection
             .prepare(&Self::TABLE.select("WHERE lower(name) = lower(:name)"))?;
         let mut zones = stmt
-            .query_map(named_params! { ":name": name }, Zone::from_row)?
+            .query_map(
+                named_params! { ":name": SqlName::from(name.clone()) },
+                Zone::from_row,
+            )?
             .collect::<Result<Vec<_>, _>>()?;
 
         if !zones.is_empty() {
@@ -248,7 +251,7 @@ impl<'c> ZonePersistence<'c> {
         let guard = tracing::trace_span!("zone").entered();
 
         let mut stmt = self.connection.prepare(&Self::TABLE.upsert())?;
-        let n = stmt.execute(named_params! { ":id": zone.id(), ":name": zone.name(), ":zone_type": zone.zone_type(), ":allow_axfr": zone.allow_axfr(), ":dns_class": u16::from(zone.dns_class()) })?;
+        let n = stmt.execute(named_params! { ":id": zone.id(), ":name": SqlName::from(zone.name().clone()), ":zone_type": zone.zone_type(), ":allow_axfr": zone.allow_axfr(), ":dns_class": u16::from(zone.dns_class()) })?;
         if n > 0 {
             tracing::trace!("affected {} rows", n);
         } else {
@@ -279,7 +282,7 @@ impl<'c> ZonePersistence<'c> {
             table = Self::TABLE.table
         ))?;
         let names = stmt
-            .query_map([], |row| row.get::<_, Name>("name"))?
+            .query_map([], |row| Ok(row.get::<_, SqlName>("name")?.into()))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(names)
     }
@@ -313,17 +316,20 @@ impl<'c> RecordPersistence<'c> {
 
     /// Populate a series of zones with records
     #[tracing::instrument("populate_many", skip_all, level = "trace")]
-    fn populate_zones(&self, origin: LowerRef<'_>, zones: &mut [Zone]) -> rusqlite::Result<()> {
+    fn populate_zones(&self, origin: &LowerName, zones: &mut [Zone]) -> rusqlite::Result<()> {
         tracing::trace!("Joined load for {} zones", zones.len());
         let mut stmt = self.connection.prepare(&Self::TABLE.select_for_join(
             "JOIN zone ON record.zone_id = zone.id WHERE lower(zone.name) == lower(:name)",
         ))?;
 
-        let riter = stmt.query_map(named_params! { ":name": origin }, |row| {
-            let record = Record::from_row(row)?;
-            let zone_id: ZoneID = row.get("zone_id")?;
-            Ok((zone_id, record))
-        })?;
+        let riter = stmt.query_map(
+            named_params! { ":name": SqlName::from(origin.clone()) },
+            |row| {
+                let record = Record::from_row(row)?;
+                let zone_id: ZoneID = row.get("zone_id")?;
+                Ok((zone_id, record))
+            },
+        )?;
 
         let mut records: BTreeMap<_, Vec<_>> = BTreeMap::new();
         let mut n = 0usize;
@@ -406,7 +412,7 @@ impl<'c> RecordPersistence<'c> {
             n += stmt.execute(named_params! {
                 ":id": record.id(),
                 ":zone_id": zone.id(),
-                ":name_labels": record.name(),
+                ":name_labels": SqlName::from(record.name().clone()),
                 ":dns_class": u16::from(record.dns_class()),
                 ":ttl": record.ttl(),
                 ":record_type": u16::from(record.record_type()),

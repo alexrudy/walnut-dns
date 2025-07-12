@@ -9,7 +9,8 @@ use hickory_proto::{
 
 use crate::database::FromRow;
 
-use super::{AsHickory, RecordID, name::Name, ttl::TimeToLive};
+use super::{AsHickory, RecordID, SqlName, ttl::TimeToLive};
+use hickory_proto::rr::Name;
 
 /// DNS Resource Record with extra fields
 ///
@@ -289,7 +290,7 @@ impl FromRow for Record<RData> {
     {
         Ok(Record {
             id: row.get("id")?,
-            name_labels: row.get("name_labels")?,
+            name_labels: row.get::<_, SqlName>("name_labels")?.into(),
             dns_class: row.get::<_, u16>("dns_class")?.into(),
             ttl: row.get("ttl")?,
             rdata: RData::from_row(row)?,
@@ -305,7 +306,7 @@ impl<R: RecordData> AsHickory for Record<R> {
 
     fn as_hickory(&self) -> Self::Hickory {
         hickory_proto::rr::Record::from_rdata(
-            self.name().clone().into(),
+            self.name().clone(),
             self.ttl().into(),
             self.rdata().clone(),
         )
