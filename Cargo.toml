@@ -1,0 +1,41 @@
+[package]
+name = "walnut-dns"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-trait = "0.1"
+camino = "1"
+chrono = "0.4"
+data-encoding = { version = "2.2.0", default-features = false }
+hickory-proto = { version = "0.25", features = [] }
+hickory-server = { version = "0.25", features = ["dnssec-ring"] }
+rusqlite = { version = "0.37", features = ["blob", "chrono", "uuid", "trace"] }
+serde = { version = "1", features = ["derive"]}
+thiserror = "2"
+time = "0.3"
+tracing = "0.1"
+
+[dependencies.uuid]
+version = "^1"
+features = [
+    "v4",                # Lets you generate random UUIDs
+    "fast-rng",          # Use a faster (but still sufficiently random) RNG
+    "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
+    "serde",
+]
+
+[dependencies.monarch-db]
+path = "../monarch-db"
+# git = "https://github.com/alexrudy/monarch-db.git"
+
+
+[dev-dependencies]
+futures = "0.3"
+hickory-server = { version = "0.25", features = ["testing"] }
+tokio = "1"
+tower = "0.5"
+
+[dev-dependencies.tracing-subscriber]
+version = "^0.3"
+features = ["env-filter", "json", "fmt", "ansi", "std"]
