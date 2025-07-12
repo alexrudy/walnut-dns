@@ -137,6 +137,9 @@ impl CatalogStore<ZoneAuthority<Zone>> for SqliteCatalog {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
         let zx = ZonePersistence::new(&tx);
+
+        // First clear existing name
+        zx.clear(&name)?;
         let mut n = 0;
         for zone in zones {
             n += zx.upsert(zone.into_inner())?;
