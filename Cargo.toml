@@ -26,9 +26,7 @@ features = [
 ]
 
 [dependencies.monarch-db]
-path = "../monarch-db"
-# git = "https://github.com/alexrudy/monarch-db.git"
-
+git = "https://github.com/alexrudy/monarch-db.git"
 
 [dev-dependencies]
 futures = "0.3"
@@ -41,3 +39,7 @@ tower = "0.5"
 [dev-dependencies.tracing-subscriber]
 version = "^0.3"
 features = ["env-filter", "json", "fmt", "ansi", "std"]
+
+[features]
+default = []
+bundled = ["rusqlite/bundled"]
