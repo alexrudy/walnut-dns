@@ -1616,6 +1616,7 @@ dependencies = [
  "hickory-server",
  "monarch-db",
  "rusqlite",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "tempfile",
@@ -1625,6 +1626,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

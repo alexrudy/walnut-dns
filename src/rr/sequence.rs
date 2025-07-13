@@ -30,6 +30,14 @@ impl Add for SerialNumber {
     }
 }
 
+impl Add<u32> for SerialNumber {
+    type Output = Self;
+
+    fn add(self, rhs: u32) -> Self::Output {
+        Self(self.0.wrapping_add(rhs))
+    }
+}
+
 /// Serial Number Comparison, see RFC 1982, section 3.2
 impl PartialOrd for SerialNumber {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {

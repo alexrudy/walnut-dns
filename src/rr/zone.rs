@@ -128,17 +128,21 @@ impl Zone {
     }
 
     /// Set whether to allow zone transfers
-    pub fn set_allow_axfr(&mut self, allow_axfr: bool) {
+    pub fn set_allow_axfr(&mut self, allow_axfr: bool) -> &mut Self {
         self.allow_axfr = allow_axfr;
+        self
     }
 
     /// Set the DNS class of this zone.
-    pub fn set_dns_class(&mut self, dns_class: DNSClass) {
+    pub fn set_dns_class(&mut self, dns_class: DNSClass) -> &mut Self {
         self.dns_class = dns_class;
+        self
     }
 
     pub fn records(&self) -> impl Iterator<Item = &Record> {
-        self.records.values().flat_map(|rrset| rrset.records())
+        self.records
+            .values()
+            .flat_map(|rrset| rrset.signed_records())
     }
 
     pub fn replace(&mut self, rrset: RecordSet) -> Option<RecordSet> {

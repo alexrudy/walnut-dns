@@ -14,6 +14,8 @@ use crate::{
     rr::{LowerName, Name, Record, SerialNumber, SqlName, Zone, ZoneID},
 };
 
+use self::journal::SqliteJournal;
+
 pub mod journal;
 
 pub(crate) trait FromRow {
@@ -48,6 +50,10 @@ impl SqliteCatalog {
         }
     }
 
+    pub(crate) fn connection(&self) -> Arc<Mutex<Connection>> {
+        self.connection.clone()
+    }
+
     fn prepare(connection: Connection) -> rusqlite::Result<Self> {
         let db = MonarchDB::from(MONARCH);
         let connection = db.migrations(connection)?;
@@ -69,6 +75,10 @@ impl SqliteCatalog {
     pub fn new_in_memory() -> rusqlite::Result<Self> {
         let connection = rusqlite::Connection::open_in_memory()?;
         Self::prepare(connection)
+    }
+
+    pub fn journal(&self) -> SqliteJournal {
+        SqliteJournal::new(self.connection.clone())
     }
 }
 
@@ -243,12 +253,12 @@ impl<const N: usize> QueryBuilder<N> {
 }
 
 #[derive(Debug, Clone)]
-struct ZonePersistence<'c> {
+pub(crate) struct ZonePersistence<'c> {
     connection: &'c Connection,
 }
 
 impl<'c> ZonePersistence<'c> {
-    fn new(connection: &'c Connection) -> Self {
+    pub(crate) fn new(connection: &'c Connection) -> Self {
         Self { connection }
     }
 
@@ -260,7 +270,7 @@ impl<'c> ZonePersistence<'c> {
 
     /// Get a single zone by ID
     #[tracing::instrument(skip_all, fields(zone=%id), level = "trace")]
-    fn get(&self, id: ZoneID) -> rusqlite::Result<Zone> {
+    pub(crate) fn get(&self, id: ZoneID) -> rusqlite::Result<Zone> {
         let mut stmt = self
             .connection
             .prepare(&Self::TABLE.select("WHERE id = :zone_id"))?;
@@ -274,7 +284,7 @@ impl<'c> ZonePersistence<'c> {
 
     /// Find zones based on zone name
     #[tracing::instrument(skip_all, fields(zone=%name), level = "trace")]
-    fn find(&self, name: &LowerName) -> rusqlite::Result<Option<Vec<Zone>>> {
+    pub(crate) fn find(&self, name: &LowerName) -> rusqlite::Result<Option<Vec<Zone>>> {
         let mut stmt = self
             .connection
             .prepare(&Self::TABLE.select("WHERE lower(name) = lower(:name)"))?;
@@ -303,7 +313,7 @@ impl<'c> ZonePersistence<'c> {
     }
 
     #[tracing::instrument(skip_all, fields(zone=%zone.name()), level = "trace")]
-    fn upsert(&self, zone: &Zone) -> rusqlite::Result<usize> {
+    pub(crate) fn upsert(&self, zone: &Zone) -> rusqlite::Result<usize> {
         let guard = tracing::trace_span!("zone").entered();
 
         let mut stmt = self.connection.prepare(&Self::TABLE.upsert())?;
@@ -324,7 +334,7 @@ impl<'c> ZonePersistence<'c> {
     }
 
     #[tracing::instrument(skip_all, fields(zone=%id), level = "trace")]
-    fn delete(&self, id: ZoneID) -> rusqlite::Result<usize> {
+    pub(crate) fn delete(&self, id: ZoneID) -> rusqlite::Result<usize> {
         // CASCADE will handle deleting the associated records.
         let mut stmt = self.connection.prepare(&Self::TABLE.delete())?;
         let n = stmt.execute(named_params! { ":id": id })?;
@@ -332,7 +342,7 @@ impl<'c> ZonePersistence<'c> {
     }
 
     #[tracing::instrument(skip_all, fields(zone=%name), level = "trace")]
-    fn clear(&self, name: &LowerName) -> rusqlite::Result<usize> {
+    pub(crate) fn clear(&self, name: &LowerName) -> rusqlite::Result<usize> {
         // CASCADE will handle deleting the associated records.
         let mut stmt = self.connection.prepare(&format!(
             "DELETE FROM {} WHERE lower(name) = lower(:name)",
@@ -343,7 +353,7 @@ impl<'c> ZonePersistence<'c> {
     }
 
     #[tracing::instrument(skip_all, level = "trace")]
-    fn list(&self) -> rusqlite::Result<Vec<Name>> {
+    pub(crate) fn list(&self) -> rusqlite::Result<Vec<Name>> {
         let mut stmt = self.connection.prepare(&format!(
             "SELECT DISTINCT name FROM {table}",
             table = Self::TABLE.table
@@ -356,7 +366,7 @@ impl<'c> ZonePersistence<'c> {
 }
 
 #[derive(Debug, Clone)]
-struct RecordPersistence<'c> {
+pub(crate) struct RecordPersistence<'c> {
     connection: &'c Connection,
 }
 
@@ -384,7 +394,11 @@ impl<'c> RecordPersistence<'c> {
 
     /// Populate a series of zones with records
     #[tracing::instrument("populate_many", skip_all, level = "trace")]
-    fn populate_zones(&self, origin: &LowerName, zones: &mut [Zone]) -> rusqlite::Result<()> {
+    pub(crate) fn populate_zones(
+        &self,
+        origin: &LowerName,
+        zones: &mut [Zone],
+    ) -> rusqlite::Result<()> {
         tracing::trace!("Joined load for {} zones", zones.len());
         let mut stmt = self.connection.prepare(&Self::TABLE.select_for_join(
             "JOIN zone ON record.zone_id = zone.id WHERE lower(zone.name) == lower(:name)",
@@ -423,7 +437,7 @@ impl<'c> RecordPersistence<'c> {
 
     /// Populate a single zone with records
     #[tracing::instrument("populate", skip_all, level = "trace")]
-    fn populate_zone(&self, zone: &mut Zone) -> rusqlite::Result<()> {
+    pub(crate) fn populate_zone(&self, zone: &mut Zone) -> rusqlite::Result<()> {
         let mut stmt = self
             .connection
             .prepare(&Self::TABLE.select("WHERE zone_id = :zone_id"))?;
@@ -442,7 +456,7 @@ impl<'c> RecordPersistence<'c> {
     }
 
     #[tracing::instrument("delete_orphans", skip_all, level = "trace")]
-    fn delete_orphaned_records(&self, zone: &Zone) -> rusqlite::Result<()> {
+    pub(crate) fn delete_orphaned_records(&self, zone: &Zone) -> rusqlite::Result<()> {
         let params: Vec<_> = zone
             .records()
             .filter(|r| !r.expired())
@@ -470,7 +484,7 @@ impl<'c> RecordPersistence<'c> {
 
     /// Upsert the set of records which belong to this zone.
     #[tracing::instrument("upsert", skip_all, level = "trace")]
-    fn upsert_records(&self, zone: &Zone) -> rusqlite::Result<()> {
+    pub(crate) fn upsert_records(&self, zone: &Zone) -> rusqlite::Result<()> {
         self.delete_orphaned_records(zone)?;
         self.insert_records(zone, zone.records())?;
 
@@ -478,7 +492,7 @@ impl<'c> RecordPersistence<'c> {
     }
 
     #[tracing::instrument("insert", skip_all, level = "trace")]
-    fn insert_records<'z>(
+    pub(crate) fn insert_records<'z>(
         &self,
         zone: &'z Zone,
         records: impl Iterator<Item = &'z Record>,

@@ -321,29 +321,44 @@ impl RecordSet {
                         .rdata()
                         .as_aname()
                         .map(|aname| (LowerName::new(&aname.0), t))
+                        .inspect(|(name, record_type)| {
+                            tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
+                        })
                 })
             }
             (t @ RecordType::NS, RecordType::NS) => self
                 .records()
                 .next()
-                .and_then(|record| record.rdata().as_ns().map(|ns| (LowerName::from(&ns.0), t))),
+                .and_then(|record| record.rdata().as_ns().map(|ns| (LowerName::from(&ns.0), t)))
+                .inspect(|(name, record_type)| {
+                    tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
+                }),
             (t @ RecordType::CNAME, _) => self.records().next().and_then(|record| {
                 record
                     .rdata()
                     .as_cname()
                     .map(|cname| (LowerName::from(&cname.0), t))
+                    .inspect(|(name, record_type)| {
+                        tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
+                    })
             }),
             (t @ RecordType::MX, RecordType::MX) => self.records().next().and_then(|record| {
                 record
                     .rdata()
                     .as_mx()
                     .map(|mx| (LowerName::from(mx.exchange()), t))
+                    .inspect(|(name, record_type)| {
+                        tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
+                    })
             }),
             (t @ RecordType::SRV, RecordType::SRV) => self.records().next().and_then(|record| {
                 record
                     .rdata()
                     .as_srv()
                     .map(|srv| (LowerName::from(srv.target()), t))
+                    .inspect(|(name, record_type)| {
+                        tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
+                    })
             }),
             _ => None,
         }
@@ -372,6 +387,10 @@ impl AsHickory for RecordSet {
                 record.as_hickory().into_record_of_rdata(),
                 self.serial().get(),
             );
+        }
+
+        for record in self.rrsigs() {
+            rset.insert_rrsig(record.as_hickory().into_record_of_rdata());
         }
 
         rset

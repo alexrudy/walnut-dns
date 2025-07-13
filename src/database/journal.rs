@@ -8,6 +8,12 @@ pub struct SqliteJournal {
     connection: Arc<Mutex<Connection>>,
 }
 
+impl SqliteJournal {
+    pub(super) fn new(connection: Arc<Mutex<Connection>>) -> Self {
+        Self { connection }
+    }
+}
+
 impl<Z> Journal<Z> for SqliteJournal
 where
     Z: AsRef<Zone>,

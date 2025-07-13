@@ -21,6 +21,7 @@ mod edns;
 mod response;
 
 pub use self::catalog::{Catalog, CatalogError, CatalogStore};
+pub use self::dnssec::{DNSKey, DNSSecStore};
 pub use self::dnssec::{DNSSecZone, Journal};
 use self::edns::EdnsResponse;
 
@@ -78,11 +79,15 @@ where
         query_type: RecordType,
         lookup_options: LookupOptions,
     ) -> LookupControlFlow<AuthLookup> {
-        tracing::trace!("Starting {query_type} lookup");
         let (result, additionals) = if matches!(query_type, RecordType::AXFR | RecordType::ANY) {
             self.lookup_any(name, query_type, lookup_options)
         } else {
-            let answer = self.lookup_records(name, query_type, lookup_options); // evaluate any cnames for additional inclusion
+            let answer = self.lookup_records(name, query_type, lookup_options);
+            if let Some(rrset) = &answer {
+                tracing::trace!("found {} records for {}", rrset.len(), rrset.record_type());
+            }
+
+            // evaluate any cnames for additional inclusion
             let additional_records_chain_root: Option<(_, _)> = answer
                 .as_ref()
                 .and_then(|rrset| rrset.next_lookup_name(query_type))
@@ -123,6 +128,9 @@ where
                         new_answer.push(rdata).unwrap();
                     }
 
+                    //TODO: New-answer needs to be re-signed for DNSSEC to work.
+                    tracing::warn!("New answer created, need to re-sign it if DNSSEC is enabled");
+
                     let additionals = std::iter::once(answer).chain(additionals).collect();
                     (Some(additionals), Some(new_answer))
                 }
@@ -141,6 +149,7 @@ where
             );
 
             let additionals = additionals.map(|a| {
+                tracing::trace!("Adding {} alternate lookup records", a.len());
                 LookupRecords::many(
                     lookup_options,
                     a.into_iter()
@@ -207,6 +216,7 @@ where
             name.clone(),
         );
 
+        tracing::trace!("Lookup AXFR|ANY {} records", self.0.records().count());
         (
             LookupControlFlow::Continue(Ok(LookupRecords::AnyRecords(records))),
             None,
@@ -286,6 +296,9 @@ where
             // we need to change the name to the query name in the result set since this was a wildcard
             let new_answer = rrset.with_name(name.clone().into());
 
+            //TODO This needs to be signed.
+            tracing::warn!("New answer created, need to re-sign it if DNSSEC is enabled");
+
             return Some(new_answer);
         }
     }
@@ -298,6 +311,11 @@ where
         _search_type: RecordType,
         lookup_options: LookupOptions,
     ) -> Option<Vec<RecordSet>> {
+        tracing::trace!(
+            "Additional search for name: {}, query type: {:?}",
+            next_name,
+            original_query_type
+        );
         let mut additionals = Vec::new();
         let mut query_types_arr = [original_query_type; 2];
         let query_types: &[RecordType] = match original_query_type {
@@ -338,8 +356,10 @@ where
         }
 
         if !additionals.is_empty() {
+            tracing::trace!("Additional search found {} records", additionals.len());
             Some(additionals)
         } else {
+            tracing::trace!("No additional seach found");
             None
         }
     }
@@ -486,7 +506,44 @@ where
         query_type: RecordType,
         lookup_options: LookupOptions,
     ) -> LookupControlFlow<Self::Lookup> {
-        self.0.lookup(name, query_type, lookup_options)
+        tracing::trace!("Starting lookup for name: {}, type: {}", name, query_type);
+        let result = self.0.lookup(name, query_type, lookup_options);
+        match &result {
+            LookupControlFlow::Continue(Ok(lookup)) => {
+                tracing::trace!(
+                    "Lookup for name: {}, type: {} found {} records (CONTINUE)",
+                    name,
+                    query_type,
+                    lookup.iter().count()
+                );
+            }
+            LookupControlFlow::Continue(Err(_)) => {
+                tracing::trace!(
+                    "Lookup for name: {}, type: {} error (CONTINUE)",
+                    name,
+                    query_type,
+                );
+            }
+            LookupControlFlow::Break(Ok(lookup)) => {
+                tracing::trace!(
+                    "Lookup for name: {}, type: {} found {} records (BREAK)",
+                    name,
+                    query_type,
+                    lookup.iter().count()
+                );
+            }
+            LookupControlFlow::Break(Err(_)) => {
+                tracing::trace!(
+                    "Lookup for name: {}, type: {} error (Break)",
+                    name,
+                    query_type,
+                );
+            }
+            LookupControlFlow::Skip => {
+                tracing::trace!("Lookup for name: {}, type: {} skipped", name, query_type)
+            }
+        };
+        result
     }
 
     /// Consulting lookup for all Resource Records matching the given `Name` and `RecordType`.

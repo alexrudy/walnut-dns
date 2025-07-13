@@ -201,6 +201,11 @@ impl<R: RecordData> Record<R> {
         &self.rdata
     }
 
+    /// Record Data of the record resource
+    pub fn data(&self) -> &R {
+        &self.rdata
+    }
+
     pub(crate) fn rdata_mut(&mut self) -> &mut R {
         &mut self.rdata
     }

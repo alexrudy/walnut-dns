@@ -12,9 +12,11 @@ data-encoding = { version = "2.2.0", default-features = false }
 hickory-proto = { version = "0.25", features = ["mdns", "dnssec-ring"] }
 hickory-server = { version = "0.25", features = ["dnssec-ring"] }
 rusqlite = { version = "0.37", features = ["blob", "chrono", "uuid", "trace"] }
-serde = { version = "1", features = ["derive"]}
+rustls-pki-types = "1.10"
+serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tracing = "0.1"
+zeroize = "1"
 
 [dependencies.uuid]
 version = "^1"

@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use std::collections::BTreeMap;
 use std::future::poll_fn;
 use std::io;
@@ -18,6 +20,8 @@ use hickory_server::{
 };
 use walnut_dns::authority::CatalogStore;
 use walnut_dns::rr::{LowerName, Name};
+
+pub mod examples;
 
 /// Registers a global default tracing subscriber when called for the first time. This is intended
 /// for use in tests.

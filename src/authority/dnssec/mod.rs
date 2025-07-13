@@ -16,9 +16,11 @@ use hickory_server::{dnssec::NxProofKind, server::RequestInfo};
 
 use crate::rr::{AsHickory as _, Mismatch, Name, Record, RecordSet, TimeToLive};
 
+pub use self::catalog::{DNSKey, DNSSecStore};
 use super::{CatalogError, Lookup, ZoneAuthority, ZoneInfo};
 
 mod authorize;
+mod catalog;
 mod prerequisites;
 mod update;
 
@@ -61,6 +63,12 @@ impl<Z> DerefMut for DNSSecZone<Z> {
     }
 }
 
+impl<Z> AsRef<Z> for DNSSecZone<Z> {
+    fn as_ref(&self) -> &Z {
+        &*self.zone
+    }
+}
+
 impl<Z: ZoneInfo> fmt::Debug for DNSSecZone<Z> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DNSSecZone")
@@ -75,12 +83,12 @@ impl<Z> DNSSecZone<Z>
 where
     Z: ZoneInfo,
 {
-    pub fn new(zone: Z, nx_proof_kind: Option<NxProofKind>, allow_update: bool) -> Self {
+    pub fn new(zone: Z) -> Self {
         Self {
             zone: ZoneAuthority::new(zone),
             secure_keys: Vec::new(),
-            nx_proof_kind,
-            allow_update,
+            nx_proof_kind: None,
+            allow_update: false,
             is_dnssec_enabled: true,
             journal: None,
         }
@@ -104,6 +112,15 @@ where
         self
     }
 
+    pub fn allow_update(&self) -> bool {
+        self.allow_update
+    }
+
+    pub fn set_allow_update(&mut self, allow_update: bool) -> &mut Self {
+        self.allow_update = allow_update;
+        self
+    }
+
     pub fn set_journal<J>(&mut self, journal: J) -> &mut Self
     where
         J: Journal<Self> + Send + Sync + 'static,
@@ -114,6 +131,14 @@ where
 
     pub fn secure_keys(&self) -> &[Arc<SigSigner>] {
         &self.secure_keys
+    }
+
+    pub fn persist_to_journal(&self) -> Result<(), CatalogError> {
+        if let Some(journal) = self.journal.as_ref() {
+            journal.upsert_zone(self)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -610,6 +635,7 @@ impl<Z> DNSSecZone<Z>
 where
     Z: ZoneInfo + Lookup,
 {
+    /// Adds a zone signing key to the zone as a DNSSEC KEY record.
     pub fn add_update_auth_key(
         &mut self,
         name: Name,
@@ -641,6 +667,7 @@ where
     }
 
     /// (Re)generates the nsec records, increments the serial number and signs the zone
+    #[tracing::instrument(skip_all, level = "trace")]
     pub fn secure_zone(&mut self) -> DnsSecResult<()> {
         match self.nx_proof_kind.as_ref() {
             Some(NxProofKind::Nsec) => self.nsec_zone(),
