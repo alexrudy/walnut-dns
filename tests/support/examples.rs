@@ -191,7 +191,7 @@ pub fn create_secure_example() -> DNSSecZone<Zone> {
     let mut authority = DNSSecZone::new(create_example());
     authority.set_nx_proof_kind(Some(NxProofKind::Nsec));
 
-    const KEY: &[u8] = include_bytes!("../rsa-2048.pk8");
+    const KEY: &[u8] = include_bytes!("../data/rsa-2048.pk8");
     let key =
         RsaSigningKey::from_pkcs8(&PrivatePkcs8KeyDer::from(KEY), Algorithm::RSASHA256).unwrap();
     let dnskey = key.to_public_key().unwrap();

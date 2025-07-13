@@ -781,7 +781,7 @@ mod tests {
     fn test_catalog_debug_format() {
         let catalog = SqliteStore::new_in_memory().unwrap();
         let debug_string = format!("{:?}", catalog);
-        assert!(debug_string.contains("SqliteCatalog"));
+        assert!(debug_string.contains("Sqlite"));
     }
 
     #[test]

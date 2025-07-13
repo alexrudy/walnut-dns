@@ -13,6 +13,7 @@ hickory-proto = { version = "0.25", features = ["mdns", "dnssec-ring"] }
 hickory-server = { version = "0.25", features = ["dnssec-ring"] }
 rusqlite = { version = "0.37", features = ["blob", "chrono", "uuid", "trace"] }
 rustls-pki-types = "1.10"
+rustls = { version = "0.23", default-features = false, features = ["logging", "std", "tls12"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tracing = "0.1"
@@ -32,7 +33,9 @@ git = "https://github.com/alexrudy/monarch-db.git"
 
 [dev-dependencies]
 futures = "0.3"
-hickory-server = { version = "0.25", features = ["testing"] }
+hickory-client = { version = "0.25" }
+hickory-proto = { version = "0.25", features = ["tls-ring"] }
+hickory-server = { version = "0.25", features = ["testing", "tls-ring"] }
 serde_json = "1.0"
 tempfile = "3.0"
 tokio = "1"
