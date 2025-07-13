@@ -31,7 +31,8 @@ features = [
 ]
 
 [dependencies.monarch-db]
-git = "https://github.com/alexrudy/monarch-db.git"
+version = "0.1"
+# git = "https://github.com/alexrudy/monarch-db.git"
 
 [dependencies.tracing-subscriber]
 version = "^0.3"

@@ -956,7 +956,8 @@ dependencies = [
 [[package]]
 name = "monarch-db"
 version = "0.1.0"
-source = "git+https://github.com/alexrudy/monarch-db.git#f6b09ca203694a3e3bd519b1f50f37abfd9cbe42"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74f48269b8375ba7c5d1cff1f69fe19c02cd98db1490c49bc480abb2bdd5c444"
 dependencies = [
  "camino",
  "rusqlite",
