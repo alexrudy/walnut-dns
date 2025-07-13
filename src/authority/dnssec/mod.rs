@@ -63,7 +63,7 @@ impl<Z> DerefMut for DNSSecZone<Z> {
 
 impl<Z> AsRef<Z> for DNSSecZone<Z> {
     fn as_ref(&self) -> &Z {
-        &*self.zone
+        &self.zone
     }
 }
 

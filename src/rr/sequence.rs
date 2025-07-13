@@ -169,7 +169,7 @@ mod tests {
     fn test_serial_number_clone_and_copy() {
         let sn1 = SerialNumber::from(42);
         let sn2 = sn1; // Copy
-        let sn3 = sn1.clone(); // Clone
+        let sn3 = sn1; // Clone
 
         assert_eq!(sn1, sn2);
         assert_eq!(sn1, sn3);

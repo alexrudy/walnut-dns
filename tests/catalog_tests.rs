@@ -23,7 +23,7 @@ pub fn create_records(zone: &mut Zone) {
 
     zone.upsert(
         Record::from_rdata(
-            origin.clone().into(),
+            origin.clone(),
             86400.into(),
             RData::NS(NS(Name::parse("a.iana-servers.net.", None).unwrap())),
         ),
@@ -32,7 +32,7 @@ pub fn create_records(zone: &mut Zone) {
     .unwrap();
     zone.upsert(
         Record::from_rdata(
-            origin.clone().into(),
+            origin.clone(),
             86400.into(),
             RData::NS(NS(Name::parse("b.iana-servers.net.", None).unwrap())),
         ),
@@ -42,7 +42,7 @@ pub fn create_records(zone: &mut Zone) {
 
     zone.upsert(
         Record::from_rdata(
-            origin.clone().into(),
+            origin.clone(),
             86400.into(),
             RData::A(A::new(94, 184, 216, 34)),
         ),
@@ -51,7 +51,7 @@ pub fn create_records(zone: &mut Zone) {
     .unwrap();
     zone.upsert(
         Record::from_rdata(
-            origin.clone().into(),
+            origin.clone(),
             86400.into(),
             RData::AAAA(AAAA::new(
                 0x2606, 0x2800, 0x21f, 0xcb07, 0x6820, 0x80da, 0xaf6b, 0x8b2c,
@@ -64,7 +64,7 @@ pub fn create_records(zone: &mut Zone) {
     let www_name: Name = Name::parse("www.test.com.", None).unwrap();
     zone.upsert(
         Record::from_rdata(
-            www_name.clone().into(),
+            www_name.clone(),
             86400.into(),
             RData::A(A::new(94, 184, 216, 34)),
         ),
@@ -73,7 +73,7 @@ pub fn create_records(zone: &mut Zone) {
     .unwrap();
     zone.upsert(
         Record::from_rdata(
-            www_name.clone().into(),
+            www_name.clone(),
             86400.into(),
             RData::AAAA(AAAA::new(
                 0x2606, 0x2800, 0x21f, 0xcb07, 0x6820, 0x80da, 0xaf6b, 0x8b2c,
@@ -90,9 +90,9 @@ pub fn create_test() -> Zone {
     let origin: Name = Name::parse("test.com.", None).unwrap();
 
     let mut records = Zone::empty(
-        origin.clone().into(),
+        origin.clone(),
         Record::from_rdata(
-            origin.clone().into(),
+            origin.clone(),
             3600.into(),
             SOA::new(
                 Name::parse("sns.dns.icann.org.", None).unwrap(),

@@ -141,7 +141,7 @@ impl CatalogStore<DNSSecZone<Zone>> for DNSSecStore {
         zx.clear(&name)?;
         let mut n = 0;
         for zone in zones {
-            n += zx.upsert(&zone)?;
+            n += zx.upsert(zone)?;
         }
         tx.commit()?;
         tracing::debug!("upsert {n} zones");

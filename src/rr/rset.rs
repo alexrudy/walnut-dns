@@ -657,7 +657,7 @@ mod tests {
     fn test_mismatch_error() {
         let mismatch = Mismatch("test");
         assert_eq!(
-            format!("{}", mismatch),
+            format!("{mismatch}"),
             "Mismatched test between new record and record set"
         );
     }

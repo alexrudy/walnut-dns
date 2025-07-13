@@ -18,9 +18,9 @@ pub fn create_example() -> Zone {
     // example.com.		3600	IN	SOA	sns.dns.icann.org. noc.dns.icann.org. 2015082403 7200 3600 1209600 3600
 
     let mut zone = Zone::empty(
-        origin.clone().into(),
+        origin.clone(),
         Record::from_rdata(
-            origin.clone().into(),
+            origin.clone(),
             3600.into(),
             SOA::new(
                 Name::parse("sns.dns.icann.org.", None).unwrap(),
@@ -38,7 +38,7 @@ pub fn create_example() -> Zone {
 
     zone.upsert(
         Record::from_rdata(
-            origin.clone().into(),
+            origin.clone(),
             86400.into(),
             RData::NS(NS(Name::parse("a.iana-servers.net.", None).unwrap())),
         ),
@@ -48,7 +48,7 @@ pub fn create_example() -> Zone {
 
     zone.upsert(
         Record::from_rdata(
-            origin.clone().into(),
+            origin.clone(),
             86400.into(),
             RData::NS(NS(Name::parse("b.iana-servers.net.", None).unwrap())),
         ),
@@ -61,7 +61,7 @@ pub fn create_example() -> Zone {
     // example.com.		60	IN	TXT	"$Id: example.com 4415 2015-08-24 20:12:23Z davids $"
     zone.upsert(
         Record::from_rdata(
-            origin.clone().into(),
+            origin.clone(),
             60.into(),
             RData::TXT(TXT::new(vec![
                 "$Id: example.com 4415 2015-08-24 \
@@ -76,7 +76,7 @@ pub fn create_example() -> Zone {
     // example.com.		86400	IN	A	93.184.215.14
     zone.upsert(
         Record::from_rdata(
-            origin.clone().into(),
+            origin.clone(),
             86400.into(),
             RData::A(A::new(93, 184, 215, 14)),
         ),
@@ -87,7 +87,7 @@ pub fn create_example() -> Zone {
     // example.com.		86400	IN	AAAA	2606:2800:21f:cb07:6820:80da:af6b:8b2c
     zone.upsert(
         Record::from_rdata(
-            origin.into(),
+            origin,
             86400.into(),
             RData::AAAA(AAAA::new(
                 0x2606, 0x2800, 0x21f, 0xcb07, 0x6820, 0x80da, 0xaf6b, 0x8b2c,
@@ -117,7 +117,7 @@ pub fn create_example() -> Zone {
     // www.example.com.	86400	IN	TXT	"v=spf1 -all"
     zone.upsert(
         Record::from_rdata(
-            www_name.clone().into(),
+            www_name.clone(),
             86400.into(),
             RData::TXT(TXT::new(vec!["v=spf1 -all".to_string()])),
         ),
@@ -128,7 +128,7 @@ pub fn create_example() -> Zone {
     // www.example.com.	86400	IN	A	93.184.215.14
     zone.upsert(
         Record::from_rdata(
-            www_name.clone().into(),
+            www_name.clone(),
             86400.into(),
             RData::A(A::new(93, 184, 215, 14)),
         ),
@@ -139,7 +139,7 @@ pub fn create_example() -> Zone {
     // www.example.com.	86400	IN	AAAA	2606:2800:21f:cb07:6820:80da:af6b:8b2c
     zone.upsert(
         Record::from_rdata(
-            www_name.clone().into(),
+            www_name.clone(),
             86400.into(),
             RData::AAAA(AAAA::new(
                 0x2606, 0x2800, 0x21f, 0xcb07, 0x6820, 0x80da, 0xaf6b, 0x8b2c,
@@ -152,7 +152,7 @@ pub fn create_example() -> Zone {
     // alias 86400 IN www
     zone.upsert(
         Record::from_rdata(
-            Name::from_str("alias.example.com.").unwrap().into(),
+            Name::from_str("alias.example.com.").unwrap(),
             86400.into(),
             RData::CNAME(CNAME(www_name)),
         ),
@@ -163,7 +163,7 @@ pub fn create_example() -> Zone {
     // alias2 86400 IN www, multiple cname chains
     zone.upsert(
         Record::from_rdata(
-            Name::from_str("alias2.example.com.").unwrap().into(),
+            Name::from_str("alias2.example.com.").unwrap(),
             86400.into(),
             RData::CNAME(CNAME(Name::from_str("alias.example.com.").unwrap())),
         ),

@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn test_ttl_display() {
         let ttl = TimeToLive::from(3600);
-        assert_eq!(format!("{}", ttl), "3600");
+        assert_eq!(format!("{ttl}"), "3600");
     }
 
     #[test]
@@ -148,7 +148,7 @@ mod tests {
     fn test_ttl_clone_and_copy() {
         let ttl1 = TimeToLive::from(300);
         let ttl2 = ttl1; // Copy
-        let ttl3 = ttl1.clone(); // Clone
+        let ttl3 = ttl1; // Clone
 
         assert_eq!(ttl1, ttl2);
         assert_eq!(ttl1, ttl3);
@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn test_ttl_debug() {
         let ttl = TimeToLive::from(600);
-        let debug_str = format!("{:?}", ttl);
+        let debug_str = format!("{ttl:?}");
         assert!(debug_str.contains("TimeToLive"));
         assert!(debug_str.contains("600"));
     }

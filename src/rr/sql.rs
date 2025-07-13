@@ -119,7 +119,7 @@ mod tests {
     fn test_sql_name_debug() {
         let name = Name::from_utf8("debug.example.com").unwrap();
         let sql_name = SqlName::from(name);
-        let debug_str = format!("{:?}", sql_name);
+        let debug_str = format!("{sql_name:?}");
 
         assert!(debug_str.contains("SqlName"));
     }

@@ -155,7 +155,7 @@ impl CatalogStore<ZoneAuthority<Zone>> for SqliteStore {
         zx.clear(&name)?;
         let mut n = 0;
         for zone in zones {
-            n += zx.upsert(&zone)?;
+            n += zx.upsert(zone)?;
         }
         tx.commit()?;
         tracing::debug!("upsert {n} zones");
@@ -325,7 +325,7 @@ impl<'c> ZonePersistence<'c> {
 
         if !zone.is_empty() {
             let rx = RecordPersistence::new(self.connection);
-            rx.upsert_records(&zone)?;
+            rx.upsert_records(zone)?;
         }
 
         Ok(n)
@@ -788,7 +788,7 @@ mod tests {
     #[test]
     fn test_catalog_debug_format() {
         let catalog = SqliteStore::new_in_memory().unwrap();
-        let debug_string = format!("{:?}", catalog);
+        let debug_string = format!("{catalog:?}");
         assert!(debug_string.contains("Sqlite"));
     }
 

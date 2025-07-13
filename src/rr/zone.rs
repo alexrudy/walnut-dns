@@ -374,7 +374,7 @@ impl Zone {
         let zone_path = path.as_ref();
         info!("loading zone file: {:?}", zone_path);
 
-        let buf = fs::read_to_string(&zone_path).inspect_err(|e| {
+        let buf = fs::read_to_string(zone_path).inspect_err(|e| {
             error!("failed to read {}: {:?}", zone_path.display(), e);
         })?;
 

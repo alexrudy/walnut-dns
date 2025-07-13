@@ -431,7 +431,7 @@ impl<A> Catalog<A> {
 
     fn find(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError> {
         tracing::debug!("searching for {}", name);
-        (*self.zones).find(&name)
+        (*self.zones).find(name)
     }
 }
 
@@ -494,7 +494,7 @@ where
 {
     pub fn insert(&self, zone: A) -> Result<(), CatalogError> {
         let name = LowerName::new(zone.as_ref().origin());
-        (*self.zones).upsert(name, &vec![zone])
+        (*self.zones).upsert(name, &[zone])
     }
 
     async fn update<R: ResponseHandler>(
@@ -533,7 +533,7 @@ where
             }
         };
 
-        for authority in authorities {
+        if let Some(authority) = authorities.into_iter().next() {
             let update_result = AuthorityObject::update(authority.as_ref(), request).await;
             let response_code = match update_result {
                 // successful update

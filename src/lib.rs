@@ -5,4 +5,4 @@ pub mod rr;
 
 pub use self::authority::{Lookup, ZoneInfo};
 pub use self::catalog::Catalog;
-pub use self::database::{SqliteStore, SqliteConfiguration};
+pub use self::database::{SqliteConfiguration, SqliteStore};

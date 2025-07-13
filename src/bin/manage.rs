@@ -80,7 +80,7 @@ fn manage() -> Result<(), ()> {
                 .get_one::<IpAddr>("address")
                 .expect("address is required");
             let port = matches.get_one::<u16>("port").expect("port is required");
-            match serve_dns(*address, *port, &db) {
+            match serve_dns(*address, *port, db) {
                 Ok(_) => {}
                 Err(error) => {
                     eprintln!("Error in DNS server");
@@ -124,7 +124,7 @@ async fn serve(address: IpAddr, port: u16, db: PathBuf) -> Result<(), Box<dyn st
     let mut server = hickory_server::ServerFuture::new(catalog);
     let socket = tokio::net::UdpSocket::bind((address, port)).await?;
     server.register_socket(socket);
-    println!("Server started on {}:{}", address, port);
+    println!("Server started on {address}:{port}");
     server.block_until_done().await?;
     println!("...end");
     Ok(())

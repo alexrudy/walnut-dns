@@ -980,7 +980,7 @@ async fn test_journal() {
     assert!(delete_rrset.was_empty());
 
     let mut recovered_authority = catalog
-        .find(&authority.origin())
+        .find(authority.origin())
         .unwrap()
         .unwrap()
         .pop()
@@ -1019,7 +1019,7 @@ async fn test_recovery() {
     authority.persist_to_journal().unwrap();
 
     let recovered_authority = catalog
-        .find(&authority.origin())
+        .find(authority.origin())
         .unwrap()
         .unwrap()
         .pop()
@@ -1048,7 +1048,7 @@ async fn test_recovery() {
     assert!(recovered_records.all(|(rr_key, rr_set)| {
         let other_rr_set = authority
             .get(rr_key)
-            .unwrap_or_else(|| panic!("key doesn't exist: {:?}", rr_key));
+            .unwrap_or_else(|| panic!("key doesn't exist: {rr_key:?}"));
         rr_set
             .records()
             .zip(other_rr_set.records())
@@ -1060,7 +1060,7 @@ async fn test_recovery() {
     assert!(authority.range(..).all(|(rr_key, rr_set)| {
         let other_rr_set = recovered_authority
             .get(rr_key)
-            .unwrap_or_else(|| panic!("key doesn't exist: {:?}", rr_key));
+            .unwrap_or_else(|| panic!("key doesn't exist: {rr_key:?}"));
         rr_set
             .records()
             .zip(other_rr_set.records())

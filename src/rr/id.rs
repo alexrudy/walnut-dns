@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn test_record_id_display() {
         let id = RecordID::new();
-        let display_str = format!("{}", id);
+        let display_str = format!("{id}");
 
         // Should be a valid UUID string with hyphens
         assert!(display_str.len() == 36);
@@ -131,7 +131,7 @@ mod tests {
         let id = ZoneID::from_str(uuid_str).unwrap();
 
         // Converting back to string should match
-        assert_eq!(format!("{}", id), uuid_str);
+        assert_eq!(format!("{id}"), uuid_str);
     }
 
     #[test]

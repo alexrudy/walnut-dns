@@ -130,7 +130,7 @@ impl<Z: Clone> CatalogStore<Z> for TestZoneStore<Z> {
 
     fn upsert(&self, name: walnut_dns::rr::LowerName, zones: &[Z]) -> Result<(), CatalogError> {
         let mut data = self.zones.lock().expect("poisoned");
-        data.insert(name.into(), zones.to_vec());
+        data.insert(name, zones.to_vec());
         Ok(())
     }
 
@@ -141,6 +141,6 @@ impl<Z: Clone> CatalogStore<Z> for TestZoneStore<Z> {
 
     fn remove(&self, name: &walnut_dns::rr::LowerName) -> Result<Option<Vec<Z>>, CatalogError> {
         let mut data = self.zones.lock().expect("poisoned");
-        Ok(data.remove(name.into()))
+        Ok(data.remove(name))
     }
 }

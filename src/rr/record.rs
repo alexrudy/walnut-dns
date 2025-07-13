@@ -486,7 +486,7 @@ mod tests {
     #[test]
     fn test_record_display() {
         let record = create_test_a_record();
-        let display_str = format!("{}", record);
+        let display_str = format!("{record}");
 
         assert!(display_str.contains("test.example.com"));
         assert!(display_str.contains("300"));

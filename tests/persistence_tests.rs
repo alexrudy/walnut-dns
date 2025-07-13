@@ -8,7 +8,7 @@ mod support;
 use support::subscribe;
 
 fn soa(primary: Name, email: Name) -> rdata::SOA {
-    rdata::SOA::new(primary.into(), email.into(), 0, 60, 60, 60, 60)
+    rdata::SOA::new(primary, email, 0, 60, 60, 60, 60)
 }
 
 fn example_zone(name: &str) -> Zone {
@@ -16,11 +16,11 @@ fn example_zone(name: &str) -> Zone {
     let email = Name::parse_soa_email(format!("admin@{name}")).unwrap();
 
     Zone::empty(
-        origin.clone().into(),
+        origin.clone(),
         Record::from_rdata(
-            origin.clone().into(),
+            origin.clone(),
             60.into(),
-            soa(origin.clone().into(), email.clone()),
+            soa(origin.clone(), email.clone()),
         ),
         ZoneType::Primary,
         false,
