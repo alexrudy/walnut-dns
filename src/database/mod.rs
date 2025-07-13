@@ -9,13 +9,13 @@ use monarch_db::{MonarchDB, StaticMonarchConfiguration};
 use rusqlite::{Connection, named_params};
 use serde::Deserialize;
 
-use crate::{
-    authority::{CatalogStore, Lookup as _, ZoneAuthority, ZoneInfo as _},
-    rr::{LowerName, Name, Record, SerialNumber, SqlName, Zone, ZoneID},
-};
+use crate::authority::{CatalogStore, Lookup as _, ZoneAuthority, ZoneInfo as _};
+use crate::rr::{LowerName, Name, Record, SerialNumber, SqlName, Zone, ZoneID};
 
+pub use self::dnssec::{DNSKey, DNSSecStore};
 use self::journal::SqliteJournal;
 
+pub mod dnssec;
 pub mod journal;
 
 pub(crate) trait FromRow {

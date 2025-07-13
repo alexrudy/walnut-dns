@@ -14,13 +14,10 @@ use hickory_server::authority::{LookupObject, LookupOptions, LookupRecords};
 use hickory_server::authority::{MessageRequest, Nsec3QueryInfo, UpdateResult};
 use hickory_server::{dnssec::NxProofKind, server::RequestInfo};
 
+use super::{CatalogError, Lookup, ZoneAuthority, ZoneInfo};
 use crate::rr::{AsHickory as _, Mismatch, Name, Record, RecordSet, TimeToLive};
 
-pub use self::catalog::{DNSKey, DNSSecStore};
-use super::{CatalogError, Lookup, ZoneAuthority, ZoneInfo};
-
 mod authorize;
-mod catalog;
 mod prerequisites;
 mod update;
 

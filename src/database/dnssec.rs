@@ -9,12 +9,12 @@ use rustls_pki_types::PrivateKeyDer;
 use zeroize::Zeroizing;
 
 use crate::authority::{CatalogError, CatalogStore};
+use crate::authority::{DNSSecZone, DnsSecZoneError};
 use crate::database::journal::SqliteJournal;
 use crate::rr::{TimeToLive, Zone};
 use crate::{SqliteCatalog, ZoneInfo as _};
 
-use super::{DNSSecZone, DnsSecZoneError};
-
+/// DNSSEC key builder
 #[derive(Clone)]
 pub struct DNSKey {
     key_data: Zeroizing<Box<[u8]>>,

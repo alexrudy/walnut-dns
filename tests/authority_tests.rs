@@ -16,9 +16,9 @@ use walnut_dns::Lookup as _;
 use walnut_dns::SqliteCatalog;
 use walnut_dns::ZoneInfo as _;
 use walnut_dns::authority::CatalogStore;
-use walnut_dns::authority::DNSSecStore;
 use walnut_dns::authority::DNSSecZone;
 use walnut_dns::authority::ZoneAuthority;
+use walnut_dns::database::DNSSecStore;
 
 mod support;
 use support::examples::{create_example, create_secure_example};
