@@ -373,6 +373,22 @@ impl From<Record> for RecordSet {
     }
 }
 
+impl From<hickory_proto::rr::RecordSet> for RecordSet {
+    fn from(value: hickory_proto::rr::RecordSet) -> Self {
+        let mut rrset = RecordSet::new(value.name().clone(), value.record_type());
+        let parts = value.into_parts();
+
+        for record in parts.records {
+            rrset.insert(record.into(), parts.serial.into()).unwrap();
+        }
+        for record in parts.rrsigs {
+            rrset.insert_rrsig(record.into()).unwrap();
+        }
+
+        rrset
+    }
+}
+
 impl AsHickory for RecordSet {
     type Hickory = hickory_proto::rr::RecordSet;
 

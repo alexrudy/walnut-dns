@@ -82,6 +82,14 @@ impl SqliteStore {
     }
 }
 
+impl TryFrom<Connection> for SqliteStore {
+    type Error = rusqlite::Error;
+
+    fn try_from(connection: Connection) -> Result<Self, Self::Error> {
+        Self::prepare(connection)
+    }
+}
+
 impl From<rusqlite::Error> for CatalogError {
     fn from(err: rusqlite::Error) -> Self {
         CatalogError::new(err)

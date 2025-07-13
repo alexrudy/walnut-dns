@@ -630,7 +630,7 @@ impl<A> RequestHandler for Catalog<A>
 where
     A: AsRef<dyn AuthorityObject> + Send + 'static,
 {
-    #[tracing::instrument("dns", skip_all, fields(?request), level="debug")]
+    #[tracing::instrument("dns", skip_all, fields(id=%request.id()), level="debug")]
     async fn handle_request<R: ResponseHandler>(
         &self,
         request: &Request,

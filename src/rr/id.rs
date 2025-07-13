@@ -37,13 +37,28 @@ macro_rules! impl_id {
             fn column_result(
                 value: ::rusqlite::types::ValueRef<'_>,
             ) -> ::rusqlite::types::FromSqlResult<Self> {
-                ::uuid::Uuid::column_result(value).map(|uuid| $name(uuid))
+                use ::rusqlite::types::ValueRef::*;
+                match value {
+                    Text(buf) | Blob(buf) => data_encoding::BASE64URL_NOPAD
+                        .decode(buf)
+                        .map_err(::rusqlite::types::FromSqlError::other)
+                        .and_then(|b| {
+                            ::uuid::Uuid::from_slice(&b)
+                                .map_err(::rusqlite::types::FromSqlError::other)
+                        })
+                        .map(|id| $name(id)),
+                    _ => Err(::rusqlite::types::FromSqlError::InvalidType),
+                }
             }
         }
 
         impl ::rusqlite::types::ToSql for $name {
             fn to_sql(&self) -> ::rusqlite::Result<::rusqlite::types::ToSqlOutput<'_>> {
-                self.0.to_sql()
+                Ok(::rusqlite::types::ToSqlOutput::Owned(
+                    ::rusqlite::types::Value::Text(
+                        data_encoding::BASE64URL_NOPAD.encode(self.0.as_bytes()),
+                    ),
+                ))
             }
         }
 
@@ -68,10 +83,10 @@ mod tests {
     fn test_zone_id_creation() {
         let id1 = ZoneID::new();
         let id2 = ZoneID::new();
-        
+
         // Each ID should be unique
         assert_ne!(id1, id2);
-        
+
         // Default should create a new ID
         let id3 = ZoneID::default();
         assert_ne!(id1, id3);
@@ -81,10 +96,10 @@ mod tests {
     fn test_record_id_creation() {
         let id1 = RecordID::new();
         let id2 = RecordID::new();
-        
+
         // Each ID should be unique
         assert_ne!(id1, id2);
-        
+
         // Default should create a new ID
         let id3 = RecordID::default();
         assert_ne!(id1, id3);
@@ -94,7 +109,7 @@ mod tests {
     fn test_zone_id_ordering() {
         let id1 = ZoneID::new();
         let id2 = ZoneID::new();
-        
+
         // Should be orderable
         assert!(id1.cmp(&id2) != std::cmp::Ordering::Equal);
         assert_eq!(id1.partial_cmp(&id1), Some(std::cmp::Ordering::Equal));
@@ -104,7 +119,7 @@ mod tests {
     fn test_record_id_display() {
         let id = RecordID::new();
         let display_str = format!("{}", id);
-        
+
         // Should be a valid UUID string with hyphens
         assert!(display_str.len() == 36);
         assert!(display_str.contains('-'));
@@ -114,7 +129,7 @@ mod tests {
     fn test_zone_id_from_str() {
         let uuid_str = "550e8400-e29b-41d4-a716-446655440000";
         let id = ZoneID::from_str(uuid_str).unwrap();
-        
+
         // Converting back to string should match
         assert_eq!(format!("{}", id), uuid_str);
     }
@@ -123,7 +138,7 @@ mod tests {
     fn test_record_id_from_str_invalid() {
         let invalid_uuid = "not-a-uuid";
         let result = RecordID::from_str(invalid_uuid);
-        
+
         // Should fail for invalid UUID
         assert!(result.is_err());
     }
@@ -131,14 +146,14 @@ mod tests {
     #[test]
     fn test_zone_id_hash() {
         use std::collections::HashMap;
-        
+
         let id1 = ZoneID::new();
         let id2 = ZoneID::new();
-        
+
         let mut map = HashMap::new();
         map.insert(id1, "zone1");
         map.insert(id2, "zone2");
-        
+
         // Should be able to use as hash keys
         assert_eq!(map.get(&id1), Some(&"zone1"));
         assert_eq!(map.get(&id2), Some(&"zone2"));

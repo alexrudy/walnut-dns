@@ -1,23 +1,11 @@
-use std::sync::Once;
-
 use hickory_proto::rr::rdata;
 use walnut_dns::ZoneInfo as _;
 use walnut_dns::catalog::CatalogStore;
 use walnut_dns::rr::{LowerName, Name, NameExt, Record, Zone};
 use walnut_dns::{database::SqliteStore, rr::ZoneType};
 
-/// Registers a global default tracing subscriber when called for the first time. This is intended
-/// for use in tests.
-pub fn subscribe() {
-    static INSTALL_TRACING_SUBSCRIBER: Once = Once::new();
-    INSTALL_TRACING_SUBSCRIBER.call_once(|| {
-        let subscriber = tracing_subscriber::FmtSubscriber::builder()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .with_test_writer()
-            .finish();
-        tracing::subscriber::set_global_default(subscriber).unwrap();
-    });
-}
+mod support;
+use support::subscribe;
 
 fn soa(primary: Name, email: Name) -> rdata::SOA {
     rdata::SOA::new(primary.into(), email.into(), 0, 60, 60, 60, 60)
@@ -227,4 +215,24 @@ fn get_insert_delete() {
         .unwrap();
 
     assert_eq!(zones.len(), 3);
+}
+
+#[test]
+fn read_zone_to_db() {
+    subscribe();
+    let catalog = SqliteStore::new_in_memory().unwrap();
+    let zone = Zone::read_from_file(
+        Name::root(),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/zones/root.zone"),
+        ZoneType::External,
+    )
+    .unwrap();
+    catalog.insert(&zone).unwrap();
+
+    let zones = catalog
+        .find(&"www.example.com.".parse().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(zones.len(), 1);
+    assert!(zones[0].name().is_root());
 }

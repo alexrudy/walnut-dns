@@ -8,6 +8,7 @@ async-trait = "0.1"
 arc-swap = "1"
 camino = "1"
 chrono = "0.4"
+clap = { version = "4", optional = true }
 data-encoding = { version = "2.2.0", default-features = false }
 hickory-proto = { version = "0.25", features = ["mdns", "dnssec-ring"] }
 hickory-server = { version = "0.25", features = ["dnssec-ring"] }
@@ -17,6 +18,7 @@ rustls = { version = "0.23", default-features = false, features = ["logging", "s
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tracing = "0.1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net"], optional = true }
 zeroize = "1"
 
 [dependencies.uuid]
@@ -30,6 +32,11 @@ features = [
 
 [dependencies.monarch-db]
 git = "https://github.com/alexrudy/monarch-db.git"
+
+[dependencies.tracing-subscriber]
+version = "^0.3"
+features = ["env-filter", "json", "fmt", "ansi", "std"]
+optional = true
 
 [dev-dependencies]
 futures = "0.3"
@@ -48,3 +55,9 @@ features = ["env-filter", "json", "fmt", "ansi", "std"]
 [features]
 default = []
 bundled = ["rusqlite/bundled"]
+cli = ["dep:clap", "dep:tokio", "dep:tracing-subscriber"]
+
+[[bin]]
+name = "walnut-dns"
+path = "src/bin/manage.rs"
+required-features = ["cli"]

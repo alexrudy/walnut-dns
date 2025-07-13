@@ -1,7 +1,11 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fs, io, path::Path};
 
-use hickory_proto::rr::{DNSClass, LowerName, RecordType, RrKey, rdata};
+use hickory_proto::{
+    rr::{DNSClass, LowerName, RecordType, RrKey, rdata},
+    serialize::txt::Parser,
+};
 use rusqlite::{ToSql, types::FromSql};
+use tracing::{debug, error, info};
 
 use crate::{
     authority::{Lookup, ZoneAuthority, ZoneInfo},
@@ -102,6 +106,28 @@ impl Zone {
             allow_axfr,
             dns_class: DNSClass::IN,
             records,
+        }
+    }
+
+    pub fn from_rrsets(
+        name: Name,
+        records: impl Iterator<Item = RecordSet>,
+        zone_type: ZoneType,
+    ) -> Self {
+        let mut rrsets = BTreeMap::new();
+        for record in records {
+            rrsets.insert(record.rrkey(), record);
+        }
+        let origin = (&name).into();
+
+        Self {
+            id: ZoneID::new(),
+            zone_type,
+            name,
+            origin,
+            allow_axfr: false,
+            dns_class: DNSClass::IN,
+            records: rrsets,
         }
     }
 }
@@ -336,6 +362,39 @@ impl Lookup for Zone {
 impl From<Zone> for ZoneAuthority<Zone> {
     fn from(value: Zone) -> Self {
         ZoneAuthority::new(value)
+    }
+}
+
+impl Zone {
+    pub fn read_from_file(
+        origin: Name,
+        path: impl AsRef<Path>,
+        zone_type: ZoneType,
+    ) -> io::Result<Self> {
+        let zone_path = path.as_ref();
+        info!("loading zone file: {:?}", zone_path);
+
+        let buf = fs::read_to_string(&zone_path).inspect_err(|e| {
+            error!("failed to read {}: {:?}", zone_path.display(), e);
+        })?;
+
+        let (origin, records) = Parser::new(buf, Some(zone_path.to_path_buf()), Some(origin))
+            .parse()
+            .map_err(|e| {
+                error!("failed to parse {}: {:?}", zone_path.display(), e);
+                io::Error::other(e)
+            })?;
+
+        info!(
+            "zone file loaded: {} with {} records",
+            origin,
+            records.len()
+        );
+        debug!("zone: {:#?}", records);
+
+        let records = records.into_values().map(Into::into);
+        let zone = Zone::from_rrsets(origin, records, zone_type);
+        Ok(zone)
     }
 }
 
