@@ -7,7 +7,7 @@ use hickory_proto::xfer::Protocol;
 
 use hickory_server::{authority::MessageRequest, server::Request};
 use walnut_dns::{Catalog, rr::ZoneType};
-use walnut_dns::{Lookup as _, SqliteCatalog};
+use walnut_dns::{Lookup as _, SqliteStore};
 use walnut_dns::{ZoneInfo as _, rr::Zone};
 
 mod support;
@@ -122,7 +122,7 @@ async fn test_catalog_lookup() {
     let origin = example.origin().clone();
     let test_origin = test.origin().clone();
 
-    let catalog = Catalog::new(SqliteCatalog::new_in_memory().unwrap());
+    let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
     catalog.insert(example.into()).unwrap();
     catalog.insert(test.into()).unwrap();
 
@@ -200,7 +200,7 @@ async fn test_catalog_lookup_soa() {
     let test = create_test();
     let origin = example.origin().clone();
 
-    let catalog = Catalog::new(SqliteCatalog::new_in_memory().unwrap());
+    let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
     catalog.insert(example.into()).unwrap();
     catalog.insert(test.into()).unwrap();
 
@@ -268,7 +268,7 @@ async fn test_catalog_nx_soa() {
 
     let example = create_example();
 
-    let catalog = Catalog::new(SqliteCatalog::new_in_memory().unwrap());
+    let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
     catalog.insert(example.into()).unwrap();
 
     let mut question: Message = Message::new();
@@ -319,7 +319,7 @@ async fn test_non_authoritive_nx_refused() {
 
     let example = create_example();
 
-    let catalog = Catalog::new(SqliteCatalog::new_in_memory().unwrap());
+    let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
     catalog.insert(example.into()).unwrap();
 
     let mut question: Message = Message::new();
@@ -376,7 +376,7 @@ async fn test_axfr() {
     .set_dns_class(DNSClass::IN)
     .clone();
 
-    let catalog = Catalog::new(SqliteCatalog::new_in_memory().unwrap());
+    let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
     catalog.insert(test).unwrap();
 
     let mut query: Query = Query::new();
@@ -495,7 +495,7 @@ async fn test_axfr_refused() {
 
     let origin = test.origin().clone();
 
-    let catalog = Catalog::new(SqliteCatalog::new_in_memory().unwrap());
+    let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
     catalog.insert(test).unwrap();
 
     let mut query: Query = Query::new();
@@ -535,7 +535,7 @@ async fn test_cname_additionals() {
 
     let example = create_example();
 
-    let catalog = Catalog::new(SqliteCatalog::new_in_memory().unwrap());
+    let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
     catalog.insert(example.into()).unwrap();
 
     let mut question: Message = Message::new();
@@ -583,7 +583,7 @@ async fn test_multiple_cname_additionals() {
 
     let example = create_example();
 
-    let catalog = Catalog::new(SqliteCatalog::new_in_memory().unwrap());
+    let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
     catalog.insert(example.into()).unwrap();
 
     let mut question: Message = Message::new();

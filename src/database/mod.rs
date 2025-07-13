@@ -42,11 +42,11 @@ pub struct SqliteConfiguration {
 
 /// SqliteCatalog is a catalog implementation that uses SQLite as the backend for DNS zones and records
 #[derive(Debug, Clone)]
-pub struct SqliteCatalog {
+pub struct SqliteStore {
     connection: Arc<Mutex<Connection>>,
 }
 
-impl SqliteCatalog {
+impl SqliteStore {
     pub fn new(connection: Connection) -> Self {
         Self {
             connection: Arc::new(Mutex::new(connection)),
@@ -91,7 +91,7 @@ impl From<rusqlite::Error> for CatalogError {
     }
 }
 
-impl SqliteCatalog {
+impl SqliteStore {
     #[tracing::instrument(skip_all, fields(zone=%id), level = "debug")]
     pub fn get(&self, id: ZoneID) -> Result<Zone, CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
@@ -125,7 +125,7 @@ impl SqliteCatalog {
     }
 }
 
-impl CatalogStore<ZoneAuthority<Zone>> for SqliteCatalog {
+impl CatalogStore<ZoneAuthority<Zone>> for SqliteStore {
     #[tracing::instrument(skip_all, fields(%origin), level = "debug")]
     fn find(&self, origin: &LowerName) -> Result<Option<Vec<ZoneAuthority<Zone>>>, CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
@@ -561,7 +561,7 @@ mod tests {
     #[test]
     fn test_sqlite_catalog_new() {
         let connection = rusqlite::Connection::open_in_memory().unwrap();
-        let catalog = SqliteCatalog::new(connection);
+        let catalog = SqliteStore::new(connection);
 
         // Should be created successfully
         assert!(catalog.connection.lock().is_ok());
@@ -569,7 +569,7 @@ mod tests {
 
     #[test]
     fn test_sqlite_catalog_new_in_memory() {
-        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let catalog = SqliteStore::new_in_memory().unwrap();
 
         // Should be created successfully with migrations applied
         assert!(catalog.connection.lock().is_ok());
@@ -578,7 +578,7 @@ mod tests {
     #[test]
     fn test_sqlite_catalog_new_from_config_in_memory() {
         let config = SqliteConfiguration { path: None };
-        let catalog = SqliteCatalog::new_from_config(&config).unwrap();
+        let catalog = SqliteStore::new_from_config(&config).unwrap();
 
         // Should be created successfully
         assert!(catalog.connection.lock().is_ok());
@@ -592,7 +592,7 @@ mod tests {
             path: Some(Utf8PathBuf::from_path_buf(db_path).unwrap()),
         };
 
-        let catalog = SqliteCatalog::new_from_config(&config).unwrap();
+        let catalog = SqliteStore::new_from_config(&config).unwrap();
 
         // Should be created successfully
         assert!(catalog.connection.lock().is_ok());
@@ -603,7 +603,7 @@ mod tests {
 
     #[test]
     fn test_catalog_upsert_and_get_zone() {
-        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let catalog = SqliteStore::new_in_memory().unwrap();
         let zone = create_test_zone();
         let zone_id = zone.id();
         let expected_name = zone.name().clone();
@@ -622,7 +622,7 @@ mod tests {
 
     #[test]
     fn test_catalog_find_zone() {
-        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let catalog = SqliteStore::new_in_memory().unwrap();
         let zone = create_test_zone();
         let zone_name = LowerName::from(zone.name().clone());
         let expected_name = zone.name().clone();
@@ -638,7 +638,7 @@ mod tests {
 
     #[test]
     fn test_catalog_find_nonexistent_zone() {
-        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let catalog = SqliteStore::new_in_memory().unwrap();
         let nonexistent_name = LowerName::from(Name::from_utf8("nonexistent.example.com").unwrap());
 
         // Find nonexistent zone
@@ -648,7 +648,7 @@ mod tests {
 
     #[test]
     fn test_catalog_delete_zone() {
-        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let catalog = SqliteStore::new_in_memory().unwrap();
         let zone = create_test_zone();
         let zone_id = zone.id();
 
@@ -668,7 +668,7 @@ mod tests {
 
     #[test]
     fn test_catalog_list_zones() {
-        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let catalog = SqliteStore::new_in_memory().unwrap();
 
         // Start with empty list
         let initial_list = catalog.list().unwrap();
@@ -687,7 +687,7 @@ mod tests {
 
     #[test]
     fn test_catalog_multiple_zones() {
-        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let catalog = SqliteStore::new_in_memory().unwrap();
 
         // Create multiple zones
         let zone1 = create_test_zone();
@@ -721,7 +721,7 @@ mod tests {
 
     #[test]
     fn test_catalog_chained_zones() {
-        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let catalog = SqliteStore::new_in_memory().unwrap();
 
         // Create multiple zones
         let zone1 = create_test_zone();
@@ -739,7 +739,7 @@ mod tests {
 
     #[test]
     fn test_catalog_zone_with_records() {
-        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let catalog = SqliteStore::new_in_memory().unwrap();
         let mut zone = create_test_zone();
         let a_record = create_test_a_record();
 
@@ -765,7 +765,7 @@ mod tests {
 
     #[test]
     fn test_catalog_concurrent_access() {
-        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let catalog = SqliteStore::new_in_memory().unwrap();
         let zone = create_test_zone();
         let zone_name = LowerName::from(zone.name().clone());
 
@@ -782,14 +782,14 @@ mod tests {
 
     #[test]
     fn test_catalog_debug_format() {
-        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let catalog = SqliteStore::new_in_memory().unwrap();
         let debug_string = format!("{:?}", catalog);
         assert!(debug_string.contains("SqliteCatalog"));
     }
 
     #[test]
     fn test_zone_update_serial_number() {
-        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let catalog = SqliteStore::new_in_memory().unwrap();
         let mut zone = create_test_zone();
         let a_record = create_test_a_record();
 
@@ -813,7 +813,7 @@ mod tests {
 
     #[test]
     fn test_zone_name_case_insensitive_search() {
-        let catalog = SqliteCatalog::new_in_memory().unwrap();
+        let catalog = SqliteStore::new_in_memory().unwrap();
         let zone = create_test_zone();
         let expected_name = zone.name().clone();
 

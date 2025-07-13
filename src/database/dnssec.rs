@@ -12,7 +12,7 @@ use crate::authority::{DNSSecZone, DnsSecZoneError};
 use crate::catalog::{CatalogError, CatalogStore};
 use crate::database::journal::SqliteJournal;
 use crate::rr::{TimeToLive, Zone};
-use crate::{SqliteCatalog, ZoneInfo as _};
+use crate::{SqliteStore, ZoneInfo as _};
 
 /// DNSSEC key builder
 #[derive(Clone)]
@@ -55,14 +55,14 @@ impl DNSKey {
 
 #[derive(Debug, Clone)]
 pub struct DNSSecStore {
-    catalog: SqliteCatalog,
+    catalog: SqliteStore,
     keys: Vec<Arc<DNSKey>>,
     allow_update: bool,
     dnssec_enabled: bool,
 }
 
 impl DNSSecStore {
-    pub fn new(catalog: SqliteCatalog) -> Self {
+    pub fn new(catalog: SqliteStore) -> Self {
         Self {
             catalog,
             keys: Vec::new(),

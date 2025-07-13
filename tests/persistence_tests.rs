@@ -4,7 +4,7 @@ use hickory_proto::rr::rdata;
 use walnut_dns::ZoneInfo as _;
 use walnut_dns::catalog::CatalogStore;
 use walnut_dns::rr::{LowerName, Name, NameExt, Record, Zone};
-use walnut_dns::{database::SqliteCatalog, rr::ZoneType};
+use walnut_dns::{database::SqliteStore, rr::ZoneType};
 
 /// Registers a global default tracing subscriber when called for the first time. This is intended
 /// for use in tests.
@@ -42,7 +42,7 @@ fn example_zone(name: &str) -> Zone {
 #[test]
 fn upsert_one() {
     subscribe();
-    let catalog = SqliteCatalog::new_in_memory().unwrap();
+    let catalog = SqliteStore::new_in_memory().unwrap();
 
     let example = example_zone("example.com.");
 
@@ -64,7 +64,7 @@ fn upsert_one() {
 #[test]
 fn upsert_multiple() {
     subscribe();
-    let catalog = SqliteCatalog::new_in_memory().unwrap();
+    let catalog = SqliteStore::new_in_memory().unwrap();
 
     let example1 = example_zone("example.com.");
     let example2 = example_zone("example.com.");
@@ -103,7 +103,7 @@ fn upsert_multiple() {
 #[test]
 fn find_heirarchical_name() {
     subscribe();
-    let catalog = SqliteCatalog::new_in_memory().unwrap();
+    let catalog = SqliteStore::new_in_memory().unwrap();
 
     let example1 = example_zone("example.com.");
     let example2 = example_zone("example.com.");
@@ -128,7 +128,7 @@ fn find_heirarchical_name() {
 #[test]
 fn remove_name() {
     subscribe();
-    let catalog = SqliteCatalog::new_in_memory().unwrap();
+    let catalog = SqliteStore::new_in_memory().unwrap();
 
     let example1 = example_zone("example.com.");
     let example2 = example_zone("example.com.");
@@ -166,7 +166,7 @@ fn remove_name() {
 #[test]
 fn get_insert_delete() {
     subscribe();
-    let catalog = SqliteCatalog::new_in_memory().unwrap();
+    let catalog = SqliteStore::new_in_memory().unwrap();
 
     let example1 = example_zone("example.com.");
     let example2 = example_zone("example.com.");

@@ -13,7 +13,7 @@ use hickory_server::dnssec::NxProofKind;
 use hickory_server::server::RequestInfo;
 
 use walnut_dns::Lookup as _;
-use walnut_dns::SqliteCatalog;
+use walnut_dns::SqliteStore;
 use walnut_dns::ZoneInfo as _;
 use walnut_dns::authority::DNSSecZone;
 use walnut_dns::authority::ZoneAuthority;
@@ -939,7 +939,7 @@ async fn test_journal() {
     subscribe();
     // test that this message can be inserted
     let catalog =
-        DNSSecStore::new(SqliteCatalog::new_in_memory().expect("could not create in memory DB"));
+        DNSSecStore::new(SqliteStore::new_in_memory().expect("could not create in memory DB"));
 
     let mut authority = DNSSecZone::new(create_example());
     authority.set_journal(catalog.journal());
@@ -1012,7 +1012,7 @@ async fn test_recovery() {
     subscribe();
     // test that this message can be inserted
     let catalog =
-        DNSSecStore::new(SqliteCatalog::new_in_memory().expect("could not create in memory DB"));
+        DNSSecStore::new(SqliteStore::new_in_memory().expect("could not create in memory DB"));
 
     let mut authority = DNSSecZone::new(create_example());
     authority.set_journal(catalog.journal());
