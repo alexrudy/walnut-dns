@@ -1,6 +1,8 @@
 pub mod authority;
+pub mod catalog;
 pub mod database;
 pub mod rr;
 
-pub use self::authority::{Catalog, Lookup, ZoneInfo};
+pub use self::authority::{Lookup, ZoneInfo};
+pub use self::catalog::Catalog;
 pub use self::database::{SqliteCatalog, SqliteConfiguration};

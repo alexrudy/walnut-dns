@@ -6,7 +6,7 @@ use hickory_server::{
     server::{Request, ResponseHandler, ResponseInfo},
 };
 
-pub(super) trait ResponseHandleExt {
+pub(crate) trait ResponseHandleExt {
     async fn send_error(&mut self, request: &Request, code: ResponseCode) -> ResponseInfo;
 }
 
@@ -23,7 +23,7 @@ where
     }
 }
 
-pub(super) trait ResponseResultExt {
+pub(crate) trait ResponseResultExt {
     fn into_info(self) -> ResponseInfo;
 }
 
@@ -36,18 +36,18 @@ where
             Ok(info) => info,
             Err(error) => {
                 tracing::error!("Sending DNS response failed: {error}");
-                ResponseInfo::serve_failed()
+                ResponseInfo::code_serve_failed()
             }
         }
     }
 }
 
-pub(super) trait ResponseInfoExt: Sized {
-    fn serve_failed() -> Self;
+pub(crate) trait ResponseInfoExt: Sized {
+    fn code_serve_failed() -> Self;
 }
 
 impl ResponseInfoExt for ResponseInfo {
-    fn serve_failed() -> Self {
+    fn code_serve_failed() -> Self {
         let mut header = Header::new();
         header.set_response_code(ResponseCode::ServFail);
         header.into()

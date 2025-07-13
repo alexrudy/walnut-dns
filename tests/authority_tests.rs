@@ -15,9 +15,9 @@ use hickory_server::server::RequestInfo;
 use walnut_dns::Lookup as _;
 use walnut_dns::SqliteCatalog;
 use walnut_dns::ZoneInfo as _;
-use walnut_dns::authority::CatalogStore;
 use walnut_dns::authority::DNSSecZone;
 use walnut_dns::authority::ZoneAuthority;
+use walnut_dns::catalog::CatalogStore;
 use walnut_dns::database::DNSSecStore;
 
 mod support;

@@ -14,7 +14,8 @@ use hickory_server::authority::{LookupObject, LookupOptions, LookupRecords};
 use hickory_server::authority::{MessageRequest, Nsec3QueryInfo, UpdateResult};
 use hickory_server::{dnssec::NxProofKind, server::RequestInfo};
 
-use super::{CatalogError, Lookup, ZoneAuthority, ZoneInfo};
+use super::{Lookup, ZoneAuthority, ZoneInfo};
+use crate::catalog::CatalogError;
 use crate::rr::{AsHickory as _, Mismatch, Name, Record, RecordSet, TimeToLive};
 
 mod authorize;

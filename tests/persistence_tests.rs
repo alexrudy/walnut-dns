@@ -2,7 +2,7 @@ use std::sync::Once;
 
 use hickory_proto::rr::rdata;
 use walnut_dns::ZoneInfo as _;
-use walnut_dns::authority::CatalogStore;
+use walnut_dns::catalog::CatalogStore;
 use walnut_dns::rr::{LowerName, Name, NameExt, Record, Zone};
 use walnut_dns::{database::SqliteCatalog, rr::ZoneType};
 

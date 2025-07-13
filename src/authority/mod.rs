@@ -15,14 +15,11 @@ use crate::rr::{
     AsHickory as _, Mismatch, Name, Record, RecordSet, SerialNumber, TimeToLive, ZoneType,
 };
 
-mod catalog;
-mod dnssec;
-mod edns;
-mod response;
+pub(crate) mod dnssec;
+pub(crate) mod edns;
+pub(crate) mod response;
 
-pub use self::catalog::{Catalog, CatalogError, CatalogStore};
 pub use self::dnssec::{DNSSecZone, DnsSecZoneError, Journal};
-use self::edns::EdnsResponse;
 
 pub(crate) type LookupChain<L, E = LookupError> = (LookupControlFlow<L, E>, Option<LookupRecords>);
 

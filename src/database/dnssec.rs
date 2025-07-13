@@ -8,8 +8,8 @@ use hickory_proto::rr::{LowerName, Name};
 use rustls_pki_types::PrivateKeyDer;
 use zeroize::Zeroizing;
 
-use crate::authority::{CatalogError, CatalogStore};
 use crate::authority::{DNSSecZone, DnsSecZoneError};
+use crate::catalog::{CatalogError, CatalogStore};
 use crate::database::journal::SqliteJournal;
 use crate::rr::{TimeToLive, Zone};
 use crate::{SqliteCatalog, ZoneInfo as _};

@@ -9,11 +9,14 @@ use monarch_db::{MonarchDB, StaticMonarchConfiguration};
 use rusqlite::{Connection, named_params};
 use serde::Deserialize;
 
-use crate::authority::{CatalogStore, Lookup as _, ZoneAuthority, ZoneInfo as _};
-use crate::rr::{LowerName, Name, Record, SerialNumber, SqlName, Zone, ZoneID};
-
 pub use self::dnssec::{DNSKey, DNSSecStore};
 use self::journal::SqliteJournal;
+use crate::catalog::CatalogStore;
+use crate::rr::{LowerName, Name, Record, SerialNumber, SqlName, Zone, ZoneID};
+use crate::{
+    authority::{Lookup as _, ZoneAuthority, ZoneInfo as _},
+    catalog::CatalogError,
+};
 
 pub mod dnssec;
 pub mod journal;
@@ -82,15 +85,15 @@ impl SqliteCatalog {
     }
 }
 
-impl From<rusqlite::Error> for crate::authority::CatalogError {
+impl From<rusqlite::Error> for CatalogError {
     fn from(err: rusqlite::Error) -> Self {
-        crate::authority::CatalogError::new(err)
+        CatalogError::new(err)
     }
 }
 
 impl SqliteCatalog {
     #[tracing::instrument(skip_all, fields(zone=%id), level = "debug")]
-    pub fn get(&self, id: ZoneID) -> Result<Zone, crate::authority::CatalogError> {
+    pub fn get(&self, id: ZoneID) -> Result<Zone, CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
         let zx = ZonePersistence::new(&tx);
@@ -100,7 +103,7 @@ impl SqliteCatalog {
     }
 
     #[tracing::instrument(skip_all, fields(zone=%id), level = "debug")]
-    pub fn delete(&self, id: ZoneID) -> Result<(), crate::authority::CatalogError> {
+    pub fn delete(&self, id: ZoneID) -> Result<(), CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
         let zx = ZonePersistence::new(&tx);
@@ -111,7 +114,7 @@ impl SqliteCatalog {
     }
 
     #[tracing::instrument(skip_all, fields(zone=%zone.name()), level = "debug")]
-    pub fn insert(&self, zone: &Zone) -> Result<usize, crate::authority::CatalogError> {
+    pub fn insert(&self, zone: &Zone) -> Result<usize, CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
         let zx = ZonePersistence::new(&tx);
@@ -124,10 +127,7 @@ impl SqliteCatalog {
 
 impl CatalogStore<ZoneAuthority<Zone>> for SqliteCatalog {
     #[tracing::instrument(skip_all, fields(%origin), level = "debug")]
-    fn find(
-        &self,
-        origin: &LowerName,
-    ) -> Result<Option<Vec<ZoneAuthority<Zone>>>, crate::authority::CatalogError> {
+    fn find(&self, origin: &LowerName) -> Result<Option<Vec<ZoneAuthority<Zone>>>, CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
         let zx = ZonePersistence::new(&tx);
@@ -141,11 +141,7 @@ impl CatalogStore<ZoneAuthority<Zone>> for SqliteCatalog {
     }
 
     #[tracing::instrument(skip_all, fields(zone=%name), level = "debug")]
-    fn upsert(
-        &self,
-        name: LowerName,
-        zones: &[ZoneAuthority<Zone>],
-    ) -> Result<(), crate::authority::CatalogError> {
+    fn upsert(&self, name: LowerName, zones: &[ZoneAuthority<Zone>]) -> Result<(), CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
         let zx = ZonePersistence::new(&tx);
@@ -162,7 +158,7 @@ impl CatalogStore<ZoneAuthority<Zone>> for SqliteCatalog {
     }
 
     #[tracing::instrument(skip_all, level = "debug")]
-    fn list(&self) -> Result<Vec<Name>, crate::authority::CatalogError> {
+    fn list(&self) -> Result<Vec<Name>, CatalogError> {
         let conn = self.connection.lock().expect("connection poisoned");
         let zx = ZonePersistence::new(&conn);
         let names = zx.list()?;
@@ -171,10 +167,7 @@ impl CatalogStore<ZoneAuthority<Zone>> for SqliteCatalog {
     }
 
     #[tracing::instrument(skip_all, fields(zone=%name), level = "debug")]
-    fn remove(
-        &self,
-        name: &LowerName,
-    ) -> Result<Option<Vec<ZoneAuthority<Zone>>>, crate::authority::CatalogError> {
+    fn remove(&self, name: &LowerName) -> Result<Option<Vec<ZoneAuthority<Zone>>>, CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
         let zx = ZonePersistence::new(&tx);

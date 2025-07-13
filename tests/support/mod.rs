@@ -18,7 +18,8 @@ use hickory_server::{
     authority::MessageResponse,
     server::{ResponseHandler, ResponseInfo},
 };
-use walnut_dns::authority::CatalogStore;
+use walnut_dns::catalog::CatalogError;
+use walnut_dns::catalog::CatalogStore;
 use walnut_dns::rr::{LowerName, Name};
 
 pub mod examples;
@@ -111,10 +112,7 @@ impl<Z> TestZoneStore<Z> {
 }
 
 impl<Z: Clone> CatalogStore<Z> for TestZoneStore<Z> {
-    fn find(
-        &self,
-        origin: &walnut_dns::rr::LowerName,
-    ) -> Result<Option<Vec<Z>>, walnut_dns::authority::CatalogError> {
+    fn find(&self, origin: &walnut_dns::rr::LowerName) -> Result<Option<Vec<Z>>, CatalogError> {
         let data = self.zones.lock().expect("poisoned");
         let mut name = origin.clone();
         loop {
@@ -130,25 +128,18 @@ impl<Z: Clone> CatalogStore<Z> for TestZoneStore<Z> {
         }
     }
 
-    fn upsert(
-        &self,
-        name: walnut_dns::rr::LowerName,
-        zones: &[Z],
-    ) -> Result<(), walnut_dns::authority::CatalogError> {
+    fn upsert(&self, name: walnut_dns::rr::LowerName, zones: &[Z]) -> Result<(), CatalogError> {
         let mut data = self.zones.lock().expect("poisoned");
         data.insert(name.into(), zones.to_vec());
         Ok(())
     }
 
-    fn list(&self) -> Result<Vec<Name>, walnut_dns::authority::CatalogError> {
+    fn list(&self) -> Result<Vec<Name>, CatalogError> {
         let data = self.zones.lock().expect("poisoned");
         Ok(data.keys().cloned().map(Into::into).collect())
     }
 
-    fn remove(
-        &self,
-        name: &walnut_dns::rr::LowerName,
-    ) -> Result<Option<Vec<Z>>, walnut_dns::authority::CatalogError> {
+    fn remove(&self, name: &walnut_dns::rr::LowerName) -> Result<Option<Vec<Z>>, CatalogError> {
         let mut data = self.zones.lock().expect("poisoned");
         Ok(data.remove(name.into()))
     }
