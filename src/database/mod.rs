@@ -11,12 +11,9 @@ use serde::Deserialize;
 
 pub use self::dnssec::{DNSKey, DNSSecStore};
 use self::journal::SqliteJournal;
-use crate::catalog::CatalogStore;
+use crate::authority::{Lookup as _, ZoneAuthority, ZoneInfo as _};
+use crate::catalog::{CatalogError, CatalogStore};
 use crate::rr::{LowerName, Name, Record, SerialNumber, SqlName, Zone, ZoneID};
-use crate::{
-    authority::{Lookup as _, ZoneAuthority, ZoneInfo as _},
-    catalog::CatalogError,
-};
 
 pub mod dnssec;
 pub mod journal;
