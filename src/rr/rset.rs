@@ -206,16 +206,17 @@ impl RecordSet {
                 if let Some(soa_record) = self.records.first() {
                     match soa_record.rdata() {
                         RData::SOA(existing_soa) => {
-                            if let RData::SOA(new_soa) = record.rdata()
-                                && SerialNumber::from(new_soa.serial())
+                            if let RData::SOA(new_soa) = record.rdata() {
+                                if SerialNumber::from(new_soa.serial())
                                     <= SerialNumber::from(existing_soa.serial())
-                            {
-                                tracing::debug!(
-                                    "update SOA ignored serial out of date: {:?} <= {:?}",
-                                    new_soa,
-                                    existing_soa
-                                );
-                                return Ok(false);
+                                {
+                                    tracing::debug!(
+                                        "update SOA ignored serial out of date: {:?} <= {:?}",
+                                        new_soa,
+                                        existing_soa
+                                    );
+                                    return Ok(false);
+                                }
                             }
                         }
                         _ => unreachable!("Wrong rdata, expected SOA rdata"),
