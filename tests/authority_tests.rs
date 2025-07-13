@@ -981,6 +981,7 @@ async fn test_journal() {
 
     let mut recovered_authority = catalog
         .find(authority.origin())
+        .await
         .unwrap()
         .unwrap()
         .pop()
@@ -1020,6 +1021,7 @@ async fn test_recovery() {
 
     let recovered_authority = catalog
         .find(authority.origin())
+        .await
         .unwrap()
         .unwrap()
         .pop()

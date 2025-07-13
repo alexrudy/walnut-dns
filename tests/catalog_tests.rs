@@ -123,8 +123,8 @@ async fn test_catalog_lookup() {
     let test_origin = test.origin().clone();
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
-    catalog.insert(example.into()).unwrap();
-    catalog.insert(test.into()).unwrap();
+    catalog.insert(example.into()).await.unwrap();
+    catalog.insert(test.into()).await.unwrap();
 
     let mut question: Message = Message::new();
 
@@ -201,8 +201,8 @@ async fn test_catalog_lookup_soa() {
     let origin = example.origin().clone();
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
-    catalog.insert(example.into()).unwrap();
-    catalog.insert(test.into()).unwrap();
+    catalog.insert(example.into()).await.unwrap();
+    catalog.insert(test.into()).await.unwrap();
 
     let mut question: Message = Message::new();
 
@@ -269,7 +269,7 @@ async fn test_catalog_nx_soa() {
     let example = create_example();
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
-    catalog.insert(example.into()).unwrap();
+    catalog.insert(example.into()).await.unwrap();
 
     let mut question: Message = Message::new();
 
@@ -320,7 +320,7 @@ async fn test_non_authoritive_nx_refused() {
     let example = create_example();
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
-    catalog.insert(example.into()).unwrap();
+    catalog.insert(example.into()).await.unwrap();
 
     let mut question: Message = Message::new();
 
@@ -377,7 +377,7 @@ async fn test_axfr() {
     .clone();
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
-    catalog.insert(test).unwrap();
+    catalog.insert(test).await.unwrap();
 
     let mut query: Query = Query::new();
     query.set_name(origin.clone().into());
@@ -496,7 +496,7 @@ async fn test_axfr_refused() {
     let origin = test.origin().clone();
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
-    catalog.insert(test).unwrap();
+    catalog.insert(test).await.unwrap();
 
     let mut query: Query = Query::new();
     query.set_name(origin.into());
@@ -536,7 +536,7 @@ async fn test_cname_additionals() {
     let example = create_example();
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
-    catalog.insert(example.into()).unwrap();
+    catalog.insert(example.into()).await.unwrap();
 
     let mut question: Message = Message::new();
 
@@ -584,7 +584,7 @@ async fn test_multiple_cname_additionals() {
     let example = create_example();
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
-    catalog.insert(example.into()).unwrap();
+    catalog.insert(example.into()).await.unwrap();
 
     let mut question: Message = Message::new();
 

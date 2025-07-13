@@ -98,7 +98,7 @@ impl From<rusqlite::Error> for CatalogError {
 
 impl SqliteStore {
     #[tracing::instrument(skip_all, fields(zone=%id), level = "debug")]
-    pub fn get(&self, id: ZoneID) -> Result<Zone, CatalogError> {
+    pub async fn get(&self, id: ZoneID) -> Result<Zone, CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
         let zx = ZonePersistence::new(&tx);
@@ -108,7 +108,7 @@ impl SqliteStore {
     }
 
     #[tracing::instrument(skip_all, fields(zone=%id), level = "debug")]
-    pub fn delete(&self, id: ZoneID) -> Result<(), CatalogError> {
+    pub async fn delete(&self, id: ZoneID) -> Result<(), CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
         let zx = ZonePersistence::new(&tx);
@@ -119,7 +119,7 @@ impl SqliteStore {
     }
 
     #[tracing::instrument(skip_all, fields(zone=%zone.name()), level = "debug")]
-    pub fn insert(&self, zone: &Zone) -> Result<usize, CatalogError> {
+    pub async fn insert(&self, zone: &Zone) -> Result<usize, CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
         let zx = ZonePersistence::new(&tx);
@@ -130,9 +130,13 @@ impl SqliteStore {
     }
 }
 
+#[async_trait::async_trait]
 impl CatalogStore<ZoneAuthority<Zone>> for SqliteStore {
     #[tracing::instrument(skip_all, fields(%origin), level = "debug")]
-    fn find(&self, origin: &LowerName) -> Result<Option<Vec<ZoneAuthority<Zone>>>, CatalogError> {
+    async fn find(
+        &self,
+        origin: &LowerName,
+    ) -> Result<Option<Vec<ZoneAuthority<Zone>>>, CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
         let zx = ZonePersistence::new(&tx);
@@ -146,7 +150,11 @@ impl CatalogStore<ZoneAuthority<Zone>> for SqliteStore {
     }
 
     #[tracing::instrument(skip_all, fields(zone=%name), level = "debug")]
-    fn upsert(&self, name: LowerName, zones: &[ZoneAuthority<Zone>]) -> Result<(), CatalogError> {
+    async fn upsert(
+        &self,
+        name: LowerName,
+        zones: &[ZoneAuthority<Zone>],
+    ) -> Result<(), CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
         let zx = ZonePersistence::new(&tx);
@@ -163,7 +171,7 @@ impl CatalogStore<ZoneAuthority<Zone>> for SqliteStore {
     }
 
     #[tracing::instrument(skip_all, level = "debug")]
-    fn list(&self) -> Result<Vec<Name>, CatalogError> {
+    async fn list(&self) -> Result<Vec<Name>, CatalogError> {
         let conn = self.connection.lock().expect("connection poisoned");
         let zx = ZonePersistence::new(&conn);
         let names = zx.list()?;
@@ -172,7 +180,10 @@ impl CatalogStore<ZoneAuthority<Zone>> for SqliteStore {
     }
 
     #[tracing::instrument(skip_all, fields(zone=%name), level = "debug")]
-    fn remove(&self, name: &LowerName) -> Result<Option<Vec<ZoneAuthority<Zone>>>, CatalogError> {
+    async fn remove(
+        &self,
+        name: &LowerName,
+    ) -> Result<Option<Vec<ZoneAuthority<Zone>>>, CatalogError> {
         let mut conn = self.connection.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
         let zx = ZonePersistence::new(&tx);
@@ -606,8 +617,8 @@ mod tests {
         assert!(Path::new(config.path.as_ref().unwrap()).exists());
     }
 
-    #[test]
-    fn test_catalog_upsert_and_get_zone() {
+    #[tokio::test]
+    async fn test_catalog_upsert_and_get_zone() {
         let catalog = SqliteStore::new_in_memory().unwrap();
         let zone = create_test_zone();
         let zone_id = zone.id();
@@ -615,83 +626,83 @@ mod tests {
         let expected_type = zone.zone_type();
 
         // Upsert zone
-        let result = catalog.insert(&zone);
+        let result = catalog.insert(&zone).await;
         assert!(result.is_ok());
 
         // Get zone back
-        let retrieved_zone = catalog.get(zone_id).unwrap();
+        let retrieved_zone = catalog.get(zone_id).await.unwrap();
         assert_eq!(retrieved_zone.id(), zone_id);
         assert_eq!(retrieved_zone.name(), &expected_name);
         assert_eq!(retrieved_zone.zone_type(), expected_type);
     }
 
-    #[test]
-    fn test_catalog_find_zone() {
+    #[tokio::test]
+    async fn test_catalog_find_zone() {
         let catalog = SqliteStore::new_in_memory().unwrap();
         let zone = create_test_zone();
         let zone_name = LowerName::from(zone.name().clone());
         let expected_name = zone.name().clone();
 
         // Upsert zone
-        catalog.insert(&zone).unwrap();
+        catalog.insert(&zone).await.unwrap();
 
         // Find zone by name
-        let found_zones = catalog.find(&zone_name).unwrap().unwrap();
+        let found_zones = catalog.find(&zone_name).await.unwrap().unwrap();
         assert_eq!(found_zones.len(), 1);
         assert_eq!(found_zones[0].name(), &expected_name);
     }
 
-    #[test]
-    fn test_catalog_find_nonexistent_zone() {
+    #[tokio::test]
+    async fn test_catalog_find_nonexistent_zone() {
         let catalog = SqliteStore::new_in_memory().unwrap();
         let nonexistent_name = LowerName::from(Name::from_utf8("nonexistent.example.com").unwrap());
 
         // Find nonexistent zone
-        let found_zones = catalog.find(&nonexistent_name).unwrap();
+        let found_zones = catalog.find(&nonexistent_name).await.unwrap();
         assert!(found_zones.is_none());
     }
 
-    #[test]
-    fn test_catalog_delete_zone() {
+    #[tokio::test]
+    async fn test_catalog_delete_zone() {
         let catalog = SqliteStore::new_in_memory().unwrap();
         let zone = create_test_zone();
         let zone_id = zone.id();
 
         // Upsert zone
-        catalog.insert(&zone).unwrap();
+        catalog.insert(&zone).await.unwrap();
 
         // Verify zone exists
-        assert!(catalog.get(zone_id).is_ok());
+        assert!(catalog.get(zone_id).await.is_ok());
 
         // Delete zone
-        let result = catalog.delete(zone_id);
+        let result = catalog.delete(zone_id).await;
         assert!(result.is_ok());
 
         // Verify zone no longer exists
-        assert!(catalog.get(zone_id).is_err());
+        assert!(catalog.get(zone_id).await.is_err());
     }
 
-    #[test]
-    fn test_catalog_list_zones() {
+    #[tokio::test]
+    async fn test_catalog_list_zones() {
         let catalog = SqliteStore::new_in_memory().unwrap();
 
         // Start with empty list
-        let initial_list = catalog.list().unwrap();
+        let initial_list = catalog.list().await.unwrap();
         assert!(initial_list.is_empty());
 
         // Add a zone
         let zone = create_test_zone();
         let zone_name = zone.name().clone();
-        catalog.insert(&zone).unwrap();
+        catalog.insert(&zone).await.unwrap();
 
         // List should contain the zone
-        let zone_list = catalog.list().unwrap();
+        let zone_list = catalog.list().await.unwrap();
         assert_eq!(zone_list.len(), 1);
         assert_eq!(zone_list[0], zone_name);
     }
 
-    #[test]
-    fn test_catalog_multiple_zones() {
+    #[tokio::test]
+    async fn test_catalog_multiple_zones() {
         let catalog = SqliteStore::new_in_memory().unwrap();
 
         // Create multiple zones
@@ -714,18 +725,18 @@ mod tests {
         let zone2_name = zone2.name().clone();
 
         // Upsert both zones
-        catalog.insert(&zone1).unwrap();
-        catalog.insert(&zone2).unwrap();
+        catalog.insert(&zone1).await.unwrap();
+        catalog.insert(&zone2).await.unwrap();
 
         // List should contain both zones
-        let zone_list = catalog.list().unwrap();
+        let zone_list = catalog.list().await.unwrap();
         assert_eq!(zone_list.len(), 2);
         assert!(zone_list.contains(&zone1_name));
         assert!(zone_list.contains(&zone2_name));
     }
 
-    #[test]
-    fn test_catalog_chained_zones() {
+    #[tokio::test]
+    async fn test_catalog_chained_zones() {
         let catalog = SqliteStore::new_in_memory().unwrap();
 
         // Create multiple zones
@@ -734,16 +745,17 @@ mod tests {
         let name = zone1.origin().clone();
         catalog
             .upsert(name.clone(), &vec![zone1.into(), zone2.into()])
+            .await
             .unwrap();
 
         // List should contain both zones
-        let zone_list = catalog.list().unwrap();
+        let zone_list = catalog.list().await.unwrap();
         assert_eq!(zone_list.len(), 1);
         assert!(zone_list.contains(&name.into()));
     }
 
-    #[test]
-    fn test_catalog_zone_with_records() {
+    #[tokio::test]
+    async fn test_catalog_zone_with_records() {
         let catalog = SqliteStore::new_in_memory().unwrap();
         let mut zone = create_test_zone();
         let a_record = create_test_a_record();
@@ -754,10 +766,10 @@ mod tests {
         let zone_id = zone.id();
 
         // Upsert zone with records
-        catalog.insert(&zone).unwrap();
+        catalog.insert(&zone).await.unwrap();
 
         // Retrieve zone and verify records
-        let retrieved_zone = catalog.get(zone_id).unwrap();
+        let retrieved_zone = catalog.get(zone_id).await.unwrap();
         assert_eq!(retrieved_zone.records().count(), 2); // SOA + A record
 
         // Verify A record exists
@@ -768,8 +780,8 @@ mod tests {
         assert_eq!(a_records.len(), 1);
     }
 
-    #[test]
-    fn test_catalog_concurrent_access() {
+    #[tokio::test]
+    async fn test_catalog_concurrent_access() {
         let catalog = SqliteStore::new_in_memory().unwrap();
         let zone = create_test_zone();
         let zone_name = LowerName::from(zone.name().clone());
@@ -778,10 +790,10 @@ mod tests {
         let catalog_clone = catalog.clone();
 
         // Upsert in original
-        catalog.insert(&zone).unwrap();
+        catalog.insert(&zone).await.unwrap();
 
         // Read from clone
-        let found_zones = catalog_clone.find(&zone_name).unwrap().unwrap();
+        let found_zones = catalog_clone.find(&zone_name).await.unwrap().unwrap();
         assert_eq!(found_zones.len(), 1);
     }
 
@@ -792,8 +804,8 @@ mod tests {
         assert!(debug_string.contains("Sqlite"));
     }
 
-    #[test]
-    fn test_zone_update_serial_number() {
+    #[tokio::test]
+    async fn test_zone_update_serial_number() {
         let catalog = SqliteStore::new_in_memory().unwrap();
         let mut zone = create_test_zone();
         let a_record = create_test_a_record();
@@ -802,31 +814,31 @@ mod tests {
         zone.upsert(a_record.clone(), SerialNumber::from(1))
             .unwrap();
         let zone_id = zone.id();
-        catalog.insert(&zone).unwrap();
+        catalog.insert(&zone).await.unwrap();
 
         // Retrieve zone and add same record with serial 2 (simulating an update)
-        let mut retrieved_zone = catalog.get(zone_id).unwrap();
+        let mut retrieved_zone = catalog.get(zone_id).await.unwrap();
         retrieved_zone
             .upsert(a_record, SerialNumber::from(2))
             .unwrap();
-        catalog.insert(&retrieved_zone).unwrap();
+        catalog.insert(&retrieved_zone).await.unwrap();
 
         // Retrieve and verify the zone was updated
-        let final_zone = catalog.get(zone_id).unwrap();
+        let final_zone = catalog.get(zone_id).await.unwrap();
         assert_eq!(final_zone.records().count(), 2); // SOA + A record (not duplicated)
     }
 
-    #[test]
-    fn test_zone_name_case_insensitive_search() {
+    #[tokio::test]
+    async fn test_zone_name_case_insensitive_search() {
         let catalog = SqliteStore::new_in_memory().unwrap();
         let zone = create_test_zone();
         let expected_name = zone.name().clone();
 
-        catalog.insert(&zone).unwrap();
+        catalog.insert(&zone).await.unwrap();
 
         // Search with different case
         let upper_name = LowerName::from(Name::from_utf8("TEST.EXAMPLE.COM").unwrap());
-        let found_zones = catalog.find(&upper_name).unwrap().unwrap();
+        let found_zones = catalog.find(&upper_name).await.unwrap().unwrap();
         assert_eq!(found_zones.len(), 1);
         assert_eq!(found_zones[0].name(), &expected_name);
     }

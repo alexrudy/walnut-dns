@@ -100,13 +100,19 @@ fn load_zone_to_db(
     zone_file: &Path,
     origin: &Name,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let connection = rusqlite::Connection::open(db)?;
-    let catalog = SqliteStore::try_from(connection)?;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
 
-    let zone = Zone::read_from_file(origin.clone(), zone_file, ZoneType::External)?;
-    catalog.insert(&zone)?;
-    println!("Zone '{}' loaded successfully", zone.name());
-    Ok(())
+    rt.block_on(async {
+        let connection = rusqlite::Connection::open(db)?;
+        let catalog = SqliteStore::try_from(connection)?;
+
+        let zone = Zone::read_from_file(origin.clone(), zone_file, ZoneType::External)?;
+        catalog.insert(&zone).await?;
+        println!("Zone '{}' loaded successfully", zone.name());
+        Ok(())
+    })
 }
 
 fn serve_dns(address: IpAddr, port: u16, db: &Path) -> Result<(), Box<dyn std::error::Error>> {

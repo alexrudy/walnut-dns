@@ -345,7 +345,7 @@ async fn client_thread_www(future: impl Future<Output = Client>) {
     }
 }
 
-fn new_catalog() -> Catalog<ZoneAuthority<Zone>> {
+async fn new_catalog() -> Catalog<ZoneAuthority<Zone>> {
     let example = create_example();
     let origin = example.origin().clone();
 
@@ -353,12 +353,13 @@ fn new_catalog() -> Catalog<ZoneAuthority<Zone>> {
 
     catalog
         .upsert(origin, vec![ZoneAuthority::new(example)])
+        .await
         .unwrap();
     catalog
 }
 
 async fn server_thread_udp(udp_socket: UdpSocket, server_continue: Arc<AtomicBool>) {
-    let catalog = new_catalog();
+    let catalog = new_catalog().await;
     let mut server = ServerFuture::new(catalog);
     server.register_socket(udp_socket);
 
@@ -370,7 +371,7 @@ async fn server_thread_udp(udp_socket: UdpSocket, server_continue: Arc<AtomicBoo
 }
 
 async fn server_thread_tcp(tcp_listener: TcpListener, server_continue: Arc<AtomicBool>) {
-    let catalog = new_catalog();
+    let catalog = new_catalog().await;
     let mut server = ServerFuture::new(catalog);
     server.register_listener(tcp_listener, Duration::from_secs(30));
 
@@ -390,7 +391,7 @@ async fn server_thread_tls(
 ) {
     use std::path::Path;
 
-    let catalog = new_catalog();
+    let catalog = new_catalog().await;
     let mut server = ServerFuture::new(catalog);
 
     // let pkcs12 = Pkcs12::from_der(&pkcs12_der)

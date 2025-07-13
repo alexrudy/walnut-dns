@@ -114,10 +114,14 @@ impl DNSSecStore {
     }
 }
 
+#[async_trait::async_trait]
 impl CatalogStore<DNSSecZone<Zone>> for DNSSecStore {
     #[tracing::instrument(skip_all, fields(%origin), level = "debug")]
-    fn find(&self, origin: &LowerName) -> Result<Option<Vec<DNSSecZone<Zone>>>, CatalogError> {
-        let zones = self.catalog.find(origin)?;
+    async fn find(
+        &self,
+        origin: &LowerName,
+    ) -> Result<Option<Vec<DNSSecZone<Zone>>>, CatalogError> {
+        let zones = self.catalog.find(origin).await?;
         if let Some(zones) = zones {
             Ok(Some(
                 zones
@@ -131,7 +135,11 @@ impl CatalogStore<DNSSecZone<Zone>> for DNSSecStore {
         }
     }
 
-    fn upsert(&self, name: LowerName, zones: &[DNSSecZone<Zone>]) -> Result<(), CatalogError> {
+    async fn upsert(
+        &self,
+        name: LowerName,
+        zones: &[DNSSecZone<Zone>],
+    ) -> Result<(), CatalogError> {
         let cc = self.catalog.connection();
         let mut conn = cc.lock().expect("connection poisoned");
         let tx = conn.transaction()?;
@@ -148,12 +156,15 @@ impl CatalogStore<DNSSecZone<Zone>> for DNSSecStore {
         Ok(())
     }
 
-    fn list(&self) -> Result<Vec<Name>, CatalogError> {
-        self.catalog.list()
+    async fn list(&self) -> Result<Vec<Name>, CatalogError> {
+        self.catalog.list().await
     }
 
-    fn remove(&self, name: &LowerName) -> Result<Option<Vec<DNSSecZone<Zone>>>, CatalogError> {
-        self.catalog.remove(name).map(|dz| {
+    async fn remove(
+        &self,
+        name: &LowerName,
+    ) -> Result<Option<Vec<DNSSecZone<Zone>>>, CatalogError> {
+        self.catalog.remove(name).await.map(|dz| {
             dz.map(|zs| {
                 zs.into_iter()
                     .map(|z| DNSSecZone::new(z.into_inner()))

@@ -123,6 +123,7 @@ async fn chained_authority_test() {
             primary_authority.origin().clone(),
             vec![Arc::new(primary_authority), Arc::new(secondary_authority)],
         )
+        .await
         .unwrap();
 
     // First test - the record only exists in the primary authority

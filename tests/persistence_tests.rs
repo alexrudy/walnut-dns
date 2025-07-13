@@ -27,8 +27,8 @@ fn example_zone(name: &str) -> Zone {
     )
 }
 
-#[test]
-fn upsert_one() {
+#[tokio::test]
+async fn upsert_one() {
     subscribe();
     let catalog = SqliteStore::new_in_memory().unwrap();
 
@@ -36,12 +36,14 @@ fn upsert_one() {
 
     catalog
         .upsert(example.origin().clone(), &vec![example.into()])
+        .await
         .unwrap();
 
     let zone = catalog
         .find(&hickory_proto::rr::LowerName::new(
             &"example.com.".parse().unwrap(),
         ))
+        .await
         .unwrap()
         .unwrap()
         .pop()
@@ -49,8 +51,8 @@ fn upsert_one() {
     assert_eq!(zone.records().count(), 1);
 }
 
-#[test]
-fn upsert_multiple() {
+#[tokio::test]
+async fn upsert_multiple() {
     subscribe();
     let catalog = SqliteStore::new_in_memory().unwrap();
 
@@ -63,12 +65,14 @@ fn upsert_multiple() {
             example1.origin().clone(),
             &vec![example1.into(), example2.into()],
         )
+        .await
         .unwrap();
 
     let zones = catalog
         .find(&hickory_proto::rr::LowerName::new(
             &"example.com.".parse().unwrap(),
         ))
+        .await
         .unwrap()
         .unwrap();
 
@@ -76,20 +80,22 @@ fn upsert_multiple() {
 
     catalog
         .upsert(example3.origin().clone(), &vec![example3.into()])
+        .await
         .unwrap();
 
     let zones = catalog
         .find(&hickory_proto::rr::LowerName::new(
             &"example.com.".parse().unwrap(),
         ))
+        .await
         .unwrap()
         .unwrap();
 
     assert_eq!(zones.len(), 1, "Expected upsert to replace zones");
 }
 
-#[test]
-fn find_heirarchical_name() {
+#[tokio::test]
+async fn find_heirarchical_name() {
     subscribe();
     let catalog = SqliteStore::new_in_memory().unwrap();
 
@@ -101,20 +107,22 @@ fn find_heirarchical_name() {
             example1.origin().clone(),
             &vec![example1.into(), example2.into()],
         )
+        .await
         .unwrap();
 
     let zones = catalog
         .find(&hickory_proto::rr::LowerName::new(
             &"www.example.com.".parse().unwrap(),
         ))
+        .await
         .unwrap()
         .unwrap();
 
     assert_eq!(zones.len(), 2);
 }
 
-#[test]
-fn remove_name() {
+#[tokio::test]
+async fn remove_name() {
     subscribe();
     let catalog = SqliteStore::new_in_memory().unwrap();
 
@@ -126,12 +134,14 @@ fn remove_name() {
             example1.origin().clone(),
             &vec![example1.into(), example2.into()],
         )
+        .await
         .unwrap();
 
     let zones = catalog
         .find(&hickory_proto::rr::LowerName::new(
             &"www.example.com.".parse().unwrap(),
         ))
+        .await
         .unwrap()
         .unwrap();
 
@@ -139,6 +149,7 @@ fn remove_name() {
 
     catalog
         .remove(&LowerName::new(&"example.com.".parse().unwrap()))
+        .await
         .unwrap();
 
     assert!(
@@ -146,13 +157,14 @@ fn remove_name() {
             .find(&hickory_proto::rr::LowerName::new(
                 &"www.example.com.".parse().unwrap(),
             ))
+            .await
             .unwrap()
             .is_none()
     )
 }
 
-#[test]
-fn get_insert_delete() {
+#[tokio::test]
+async fn get_insert_delete() {
     subscribe();
     let catalog = SqliteStore::new_in_memory().unwrap();
 
@@ -164,26 +176,29 @@ fn get_insert_delete() {
             example1.origin().clone(),
             &vec![example1.into(), example2.into()],
         )
+        .await
         .unwrap();
 
     let zones = catalog
         .find(&hickory_proto::rr::LowerName::new(
             &"www.example.com.".parse().unwrap(),
         ))
+        .await
         .unwrap()
         .unwrap();
 
     assert_eq!(zones.len(), 2);
 
     let zone_id = zones[0].id();
-    let zone = catalog.get(zone_id).unwrap();
+    let zone = catalog.get(zone_id).await.unwrap();
 
-    catalog.delete(zone_id).unwrap();
+    catalog.delete(zone_id).await.unwrap();
 
     let mut zones = catalog
         .find(&hickory_proto::rr::LowerName::new(
             &"www.example.com.".parse().unwrap(),
         ))
+        .await
         .unwrap()
         .unwrap();
 
@@ -192,33 +207,35 @@ fn get_insert_delete() {
 
     let example3 = example_zone("example.com.");
 
-    assert_eq!(catalog.insert(&zone).unwrap(), 1);
-    assert_eq!(catalog.insert(&example3).unwrap(), 1);
+    assert_eq!(catalog.insert(&zone).await.unwrap(), 1);
+    assert_eq!(catalog.insert(&example3).await.unwrap(), 1);
 
     let zones = catalog
         .find(&hickory_proto::rr::LowerName::new(
             &"www.example.com.".parse().unwrap(),
         ))
+        .await
         .unwrap()
         .unwrap();
 
     assert_eq!(zones.len(), 3);
 
     // Already exists in the database, gets upserted.
-    assert_eq!(catalog.insert(&example1.into_inner()).unwrap(), 1);
+    assert_eq!(catalog.insert(&example1.into_inner()).await.unwrap(), 1);
 
     let zones = catalog
         .find(&hickory_proto::rr::LowerName::new(
             &"www.example.com.".parse().unwrap(),
         ))
+        .await
         .unwrap()
         .unwrap();
 
     assert_eq!(zones.len(), 3);
 }
 
-#[test]
-fn read_zone_to_db() {
+#[tokio::test]
+async fn read_zone_to_db() {
     subscribe();
     let catalog = SqliteStore::new_in_memory().unwrap();
     let zone = Zone::read_from_file(
@@ -227,10 +244,11 @@ fn read_zone_to_db() {
         ZoneType::External,
     )
     .unwrap();
-    catalog.insert(&zone).unwrap();
+    catalog.insert(&zone).await.unwrap();
 
     let zones = catalog
         .find(&"www.example.com.".parse().unwrap())
+        .await
         .unwrap()
         .unwrap();
     assert_eq!(zones.len(), 1);

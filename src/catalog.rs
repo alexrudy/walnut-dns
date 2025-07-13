@@ -27,11 +27,12 @@ impl CatalogError {
     }
 }
 
+#[async_trait::async_trait]
 pub trait CatalogStore<A> {
-    fn find(&self, origin: &LowerName) -> Result<Option<Vec<A>>, CatalogError>;
-    fn upsert(&self, name: LowerName, zones: &[A]) -> Result<(), CatalogError>;
-    fn list(&self) -> Result<Vec<Name>, CatalogError>;
-    fn remove(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError>;
+    async fn find(&self, origin: &LowerName) -> Result<Option<Vec<A>>, CatalogError>;
+    async fn upsert(&self, name: LowerName, zones: &[A]) -> Result<(), CatalogError>;
+    async fn list(&self) -> Result<Vec<Name>, CatalogError>;
+    async fn remove(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError>;
 }
 
 pub struct Catalog<A> {
@@ -421,17 +422,17 @@ impl<A> Catalog<A> {
         }
     }
 
-    pub fn upsert(&self, name: LowerName, zones: Vec<A>) -> Result<(), CatalogError> {
-        (*self.zones).upsert(name, &zones)
+    pub async fn upsert(&self, name: LowerName, zones: Vec<A>) -> Result<(), CatalogError> {
+        (*self.zones).upsert(name, &zones).await
     }
 
-    pub fn remove(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError> {
-        (*self.zones).remove(name)
+    pub async fn remove(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError> {
+        (*self.zones).remove(name).await
     }
 
-    fn find(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError> {
+    pub async fn find(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError> {
         tracing::debug!("searching for {}", name);
-        (*self.zones).find(name)
+        (*self.zones).find(name).await
     }
 }
 
@@ -453,7 +454,7 @@ where
                 .await;
         };
 
-        let authorities: Vec<A> = match self.find(request_info.query.name()) {
+        let authorities: Vec<A> = match self.find(request_info.query.name()).await {
             Ok(Some(zones)) => zones,
             Ok(None) => {
                 tracing::trace!("No authorities found for {}", request_info.query.name());
@@ -492,9 +493,9 @@ impl<A> Catalog<A>
 where
     A: AsRef<dyn AuthorityObject>,
 {
-    pub fn insert(&self, zone: A) -> Result<(), CatalogError> {
+    pub async fn insert(&self, zone: A) -> Result<(), CatalogError> {
         let name = LowerName::new(zone.as_ref().origin());
-        (*self.zones).upsert(name, &[zone])
+        (*self.zones).upsert(name, &[zone]).await
     }
 
     async fn update<R: ResponseHandler>(
@@ -518,7 +519,7 @@ where
                 .await;
         }
 
-        let authorities = match self.find(request_info.query.name()) {
+        let authorities = match self.find(request_info.query.name()).await {
             Ok(Some(zones)) => zones,
             Ok(None) => {
                 return response_handle
