@@ -2,6 +2,7 @@
 name = "walnut-dns"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 async-trait = "0.1"
@@ -14,11 +15,19 @@ hickory-proto = { version = "0.25", features = ["mdns", "dnssec-ring"] }
 hickory-server = { version = "0.25", features = ["dnssec-ring"] }
 rusqlite = { version = "0.37", features = ["blob", "chrono", "uuid", "trace"] }
 rustls-pki-types = "1.10"
-rustls = { version = "0.23", default-features = false, features = ["logging", "std", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = [
+    "logging",
+    "std",
+    "tls12",
+] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tracing = "0.1"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "net"], optional = true }
+tokio = { version = "1", features = [
+    "rt",
+    "rt-multi-thread",
+    "net",
+], optional = true }
 zeroize = "1"
 
 [dependencies.uuid]
