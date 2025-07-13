@@ -199,7 +199,7 @@ pub fn create_secure_example() -> DNSSecZone<Zone> {
         DNSKEY::from_key(&key.to_public_key().unwrap()),
         Box::new(key),
         authority.origin().clone().into(),
-        Duration::from_secs(86400 * 7).try_into().unwrap(),
+        Duration::from_secs(86400 * 7),
     );
 
     authority.add_zone_signing_key(signer);
