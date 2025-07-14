@@ -11,6 +11,7 @@
 //! - EDNS support
 //! - DNSSEC awareness
 //! - Authoritative and recursive lookups
+use std::fmt;
 use std::{borrow::Borrow, sync::Arc};
 
 use hickory_proto::op::{Edns, Header, LowerQuery, MessageType, OpCode, ResponseCode};
@@ -145,6 +146,12 @@ pub trait CatalogStore<A> {
 /// - Multiple zone authorities per name
 pub struct Catalog<A> {
     zones: Arc<dyn CatalogStore<A> + Send + Sync + 'static>,
+}
+
+impl<A> fmt::Debug for Catalog<A> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Catalog").finish()
+    }
 }
 
 impl<A> Clone for Catalog<A> {
