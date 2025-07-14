@@ -59,7 +59,7 @@ struct ConnectionOptions {
 
 impl ConnectionOptions {
     fn open(&self) -> rusqlite::Result<rusqlite::Connection> {
-        if let Some(flags) = self.flags.clone() {
+        if let Some(flags) = self.flags {
             rusqlite::Connection::open_with_flags(&self.path, flags)
         } else {
             rusqlite::Connection::open(&self.path)

@@ -74,7 +74,7 @@ impl From<self::pool::Pool> for ConnectionManager {
 }
 
 impl ConnectionManager {
-    async fn get(&self) -> Result<Connection> {
+    async fn get(&self) -> Result<Connection<'_>> {
         match &self.inner {
             #[cfg(feature = "pool")]
             InnerConnectionManager::Pool(pool) => pool.get().await.map(Connection::pool),
@@ -207,7 +207,7 @@ impl From<rusqlite::Error> for CatalogError {
 }
 
 impl SqliteStore {
-    pub async fn connection(&self) -> Result<Connection, CatalogError> {
+    pub async fn connection(&self) -> Result<Connection<'_>, CatalogError> {
         self.manager.get().await.map_err(Into::into)
     }
 
