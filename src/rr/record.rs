@@ -92,18 +92,18 @@ impl<R: RecordData> fmt::Display for Record<R> {
 
 impl<R: RecordData> Record<R> {
     /// Create a new DNS record from resource data
-    /// 
+    ///
     /// Creates a new DNS record with the specified name, TTL, and resource data.
     /// The record is assigned a new unique ID and defaults to the IN class.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `name` - The DNS name for this record
     /// * `ttl` - Time To Live for this record
     /// * `rdata` - The resource data for this record
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A new DNS record instance
     pub fn from_rdata(name: Name, ttl: TimeToLive, rdata: R) -> Self {
         Record {
@@ -121,18 +121,18 @@ impl<R: RecordData> Record<R> {
 
 impl Record {
     /// Create a DNS UPDATE record for deletion (type 0)
-    /// 
+    ///
     /// Creates a special DNS record used in DNS UPDATE operations to indicate
     /// that all records of the specified type should be deleted.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `name` - The DNS name for the update record
     /// * `ttl` - Time To Live for the update record
     /// * `rr_type` - The record type to delete
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A new DNS UPDATE record for deletion
     pub fn update0(name: Name, ttl: TimeToLive, rr_type: RecordType) -> Record {
         Record {
@@ -150,12 +150,12 @@ impl Record {
 
 impl<R: RecordData> Record<R> {
     /// Convert this record to use generic RData
-    /// 
+    ///
     /// Converts a typed record into a record with generic RData, which can hold
     /// any type of DNS resource record data.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A new record with the same data but using generic RData
     pub fn into_record_rdata(self) -> Record<RData> {
         Record {
@@ -171,16 +171,16 @@ impl<R: RecordData> Record<R> {
     }
 
     /// Set the Time To Live for this record
-    /// 
+    ///
     /// Updates the TTL value for this record, which determines how long
     /// DNS resolvers should cache this record.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `ttl` - The new TTL value
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A mutable reference to this record for method chaining
     pub fn set_ttl(&mut self, ttl: TimeToLive) -> &mut Self {
         self.ttl = ttl;
@@ -188,15 +188,15 @@ impl<R: RecordData> Record<R> {
     }
 
     /// Set the DNS class for this record
-    /// 
+    ///
     /// Updates the DNS class (typically IN for Internet) for this record.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `dns_class` - The new DNS class
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A mutable reference to this record for method chaining
     pub fn set_dns_class(&mut self, dns_class: DNSClass) -> &mut Self {
         self.dns_class = dns_class;
@@ -204,16 +204,16 @@ impl<R: RecordData> Record<R> {
     }
 
     /// Set an expiration time for this record
-    /// 
+    ///
     /// Sets when this record should be automatically deleted from the zone.
     /// This is used for temporary records that should not persist indefinitely.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `expires` - The UTC timestamp when this record should expire
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A mutable reference to this record for method chaining
     pub fn set_expires(&mut self, expires: DateTime<Utc>) -> &mut Self {
         self.expires = Some(expires);
@@ -221,12 +221,12 @@ impl<R: RecordData> Record<R> {
     }
 
     /// Clear the expiration time for this record
-    /// 
+    ///
     /// Removes any expiration time, making this record permanent until
     /// explicitly deleted.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A mutable reference to this record for method chaining
     pub fn clear_expires(&mut self) -> &mut Self {
         self.expires = None;
@@ -234,18 +234,29 @@ impl<R: RecordData> Record<R> {
     }
 
     /// Check if this record has expired
-    /// 
+    ///
     /// Returns true if the record has an expiration time set and that time
     /// has passed.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// `true` if the record has expired, `false` otherwise
     pub fn expired(&self) -> bool {
         self.expires.is_some_and(|expires| expires < Utc::now())
     }
 
-    pub(crate) fn set_data(&mut self, rdata: R) -> &mut Self {
+    /// Set the data for this record
+    ///
+    /// Updates the data associated with this record.
+    ///
+    /// # Parameters
+    ///
+    /// - `rdata`: The new data to associate with this record
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to this record for method chaining
+    pub fn set_data(&mut self, rdata: R) -> &mut Self {
         self.rdata = rdata;
         self
     }
@@ -253,76 +264,76 @@ impl<R: RecordData> Record<R> {
 
 impl<R: RecordData> Record<R> {
     /// Get the unique database identifier for this record
-    /// 
+    ///
     /// Returns the unique ID assigned to this record when it was created.
     /// This ID is used internally for database operations.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The unique record identifier
     pub fn id(&self) -> RecordID {
         self.id
     }
 
     /// Record Lookup Key for this Record Set
-    pub(crate) fn rrkey(&self) -> RrKey {
+    pub fn rrkey(&self) -> RrKey {
         RrKey::new(self.name().into(), self.record_type())
     }
 
     /// Get the DNS name for this record
-    /// 
+    ///
     /// Returns the fully qualified domain name that this record applies to.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A reference to the DNS name
     pub fn name(&self) -> &Name {
         &self.name_labels
     }
 
     /// Get the DNS class for this record
-    /// 
+    ///
     /// Returns the DNS class (typically IN for Internet) for this record.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The DNS class
     pub fn dns_class(&self) -> DNSClass {
         self.dns_class
     }
 
     /// Get the Time To Live for this record
-    /// 
+    ///
     /// Returns the TTL value which determines how long DNS resolvers
     /// should cache this record.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The TTL value
     pub fn ttl(&self) -> TimeToLive {
         self.ttl
     }
 
     /// Get the resource data for this record
-    /// 
+    ///
     /// Returns a reference to the resource data, which contains the
     /// actual DNS record content (IP address, CNAME target, etc.).
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A reference to the resource data
     pub fn rdata(&self) -> &R {
         &self.rdata
     }
 
     /// Get the resource data for this record (alias for rdata)
-    /// 
+    ///
     /// Returns a reference to the resource data, which contains the
     /// actual DNS record content (IP address, CNAME target, etc.).
     /// This is an alias for the `rdata()` method.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A reference to the resource data
     pub fn data(&self) -> &R {
         &self.rdata
@@ -333,46 +344,46 @@ impl<R: RecordData> Record<R> {
     }
 
     /// Get the record type for this record
-    /// 
+    ///
     /// Returns the DNS record type (A, AAAA, CNAME, MX, etc.) that
     /// determines the format and meaning of the resource data.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The DNS record type
     pub fn record_type(&self) -> RecordType {
         self.rdata.record_type()
     }
 
     /// Get the mDNS cache flush flag
-    /// 
+    ///
     /// Returns whether this record should trigger cache flushing in mDNS.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// `true` if cache flushing should be triggered
     pub fn mdns_cache_flush(&self) -> bool {
         self.mdns_cache_flush
     }
 
     /// Set the mDNS cache flush flag
-    /// 
+    ///
     /// Sets whether this record should trigger cache flushing in mDNS.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `mdns_cache_flush` - Whether to enable cache flushing
     pub fn set_mdns_cache_flush(&mut self, mdns_cache_flush: bool) {
         self.mdns_cache_flush = mdns_cache_flush;
     }
 
     /// Get the expiration time for this record
-    /// 
+    ///
     /// Returns the UTC timestamp when this record should be automatically
     /// deleted, or None if the record doesn't expire.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The expiration timestamp, or None if no expiration is set
     pub fn expires(&self) -> Option<DateTime<Utc>> {
         self.expires

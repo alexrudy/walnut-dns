@@ -196,7 +196,7 @@ impl RecordSet {
 
 impl RecordSet {
     /// Record Lookup Key for this Record Set
-    pub(crate) fn rrkey(&self) -> RrKey {
+    pub fn rrkey(&self) -> RrKey {
         RrKey::new(self.name().into(), self.record_type())
     }
 

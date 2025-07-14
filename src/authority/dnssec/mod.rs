@@ -23,52 +23,52 @@ mod prerequisites;
 mod update;
 
 /// Trait for journaling DNS zone operations
-/// 
+///
 /// The Journal trait provides an interface for recording DNS operations
 /// such as record insertions and zone updates. This is useful for auditing,
 /// replication, and maintaining operation history.
 #[async_trait::async_trait]
 pub trait Journal<Z> {
     /// Record the insertion of DNS records
-    /// 
+    ///
     /// Logs the insertion of one or more DNS records into the specified zone.
     /// This is typically called during DNS UPDATE operations.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `zone` - The zone where records are being inserted
     /// * `records` - The records being inserted
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Success or an error if the operation cannot be journaled
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Returns an error if the journal backend fails
     async fn insert_records(&self, zone: &Z, records: &[Record]) -> Result<(), CatalogError>;
-    
+
     /// Record the update of a DNS zone
-    /// 
+    ///
     /// Logs the complete state of a zone after an update operation.
     /// This creates a checkpoint that can be used for recovery.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `zone` - The zone being updated
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Success or an error if the operation cannot be journaled
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Returns an error if the journal backend fails
     async fn upsert_zone(&self, zone: &Z) -> Result<(), CatalogError>;
 }
 
 /// Error type for DNSSEC zone operations
-/// 
+///
 /// This error type unifies various errors that can occur during DNSSEC zone
 /// operations, including record mismatches and cryptographic errors.
 #[derive(Debug, thiserror::Error)]
@@ -76,18 +76,18 @@ pub enum DnsSecZoneError {
     /// Record mismatch error (e.g., name/type mismatch)
     #[error(transparent)]
     Mismatch(#[from] Mismatch),
-    
+
     /// DNSSEC cryptographic error
     #[error(transparent)]
     DnsSec(#[from] DnsSecError),
 }
 
 /// DNSSEC-enabled DNS zone authority
-/// 
+///
 /// DNSSecZone wraps a regular zone authority and adds DNSSEC capabilities,
 /// including automatic zone signing, NSEC/NSEC3 generation, and DNS UPDATE
 /// authorization using cryptographic signatures.
-/// 
+///
 /// The zone supports:
 /// - Automatic DNSSEC signing with configured keys
 /// - NSEC and NSEC3 non-existence proofs
@@ -148,16 +148,16 @@ where
     Z: ZoneInfo,
 {
     /// Create a new DNSSEC zone from a regular zone
-    /// 
+    ///
     /// Wraps an existing zone with DNSSEC capabilities. The zone starts
     /// with DNSSEC enabled but no signing keys configured.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `zone` - The zone to wrap with DNSSEC capabilities
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A new DNSSEC-enabled zone
     pub fn new(zone: Z) -> Self {
         Self {
@@ -171,29 +171,29 @@ where
     }
 
     /// Get the non-existence proof type for this zone
-    /// 
+    ///
     /// Returns the type of non-existence proof (NSEC or NSEC3) used by this zone,
     /// or None if no non-existence proofs are configured.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The non-existence proof configuration
     pub fn nx_proof_kind(&self) -> Option<&NxProofKind> {
         self.nx_proof_kind.as_ref()
     }
 
     /// Set the non-existence proof type for this zone
-    /// 
+    ///
     /// Configures the type of non-existence proof to use. NSEC provides
     /// simple non-existence proofs, while NSEC3 provides hashed proofs
     /// that don't reveal zone contents.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `kind` - The non-existence proof type to use
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A mutable reference to this zone for method chaining
     pub fn set_nx_proof_kind(&mut self, kind: Option<NxProofKind>) -> &mut Self {
         self.nx_proof_kind = kind;
@@ -201,28 +201,28 @@ where
     }
 
     /// Check if DNSSEC is enabled for this zone
-    /// 
+    ///
     /// Returns whether DNSSEC signing and validation is enabled.
     /// When disabled, the zone behaves like a regular DNS zone.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// `true` if DNSSEC is enabled
     pub fn dnssec_enabled(&self) -> bool {
         self.is_dnssec_enabled
     }
 
     /// Enable or disable DNSSEC for this zone
-    /// 
+    ///
     /// Controls whether the zone performs DNSSEC signing and validation.
     /// When disabled, the zone operates as a regular DNS zone.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `enabled` - Whether to enable DNSSEC
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A mutable reference to this zone for method chaining
     pub fn set_dnssec_enabled(&mut self, enabled: bool) -> &mut Self {
         self.is_dnssec_enabled = enabled;
@@ -230,29 +230,29 @@ where
     }
 
     /// Check if DNS updates are allowed for this zone
-    /// 
+    ///
     /// Returns whether this zone accepts DNS UPDATE requests.
     /// Updates must be cryptographically authenticated when enabled.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// `true` if updates are allowed
     pub fn allow_update(&self) -> bool {
         self.allow_update
     }
 
     /// Enable or disable DNS updates for this zone
-    /// 
+    ///
     /// Controls whether the zone accepts DNS UPDATE requests.
     /// When enabled, updates must be cryptographically authenticated
     /// using SIG(0) signatures.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `allow_update` - Whether to allow updates
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A mutable reference to this zone for method chaining
     pub fn set_allow_update(&mut self, allow_update: bool) -> &mut Self {
         self.allow_update = allow_update;
@@ -260,17 +260,17 @@ where
     }
 
     /// Set a journal for recording DNS operations
-    /// 
+    ///
     /// Configures a journal to record DNS operations for auditing
     /// and recovery purposes. The journal will log all record insertions
     /// and zone updates.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `journal` - The journal implementation to use
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A mutable reference to this zone for method chaining
     pub fn set_journal<J>(&mut self, journal: J) -> &mut Self
     where
@@ -281,28 +281,28 @@ where
     }
 
     /// Get the signing keys configured for this zone
-    /// 
+    ///
     /// Returns a slice of all DNSSEC signing keys that have been
     /// added to this zone. These keys are used for zone signing.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A slice of signing keys
     pub fn secure_keys(&self) -> &[Arc<SigSigner>] {
         &self.secure_keys
     }
 
     /// Persist the current zone state to the journal
-    /// 
+    ///
     /// Records the complete current state of the zone to the journal
     /// if one is configured. This creates a checkpoint for recovery.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Success or an error if journaling fails
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Returns an error if the journal backend fails
     pub async fn persist_to_journal(&self) -> Result<(), CatalogError> {
         if let Some(journal) = self.journal.as_ref() {
@@ -807,22 +807,22 @@ where
     Z: ZoneInfo + Lookup,
 {
     /// Add an authentication key for DNS updates
-    /// 
+    ///
     /// Adds a DNSSEC KEY record that can be used to authenticate
     /// DNS UPDATE requests using SIG(0) signatures.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `name` - The name for the KEY record
     /// * `key` - The DNSSEC KEY record data
     /// * `ttl` - Time To Live for the KEY record
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// `true` if the key was added successfully
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Returns an error if the key cannot be added due to name/type mismatch
     pub fn add_update_auth_key(
         &mut self,
@@ -838,21 +838,21 @@ where
     }
 
     /// Add a zone signing key for DNSSEC
-    /// 
+    ///
     /// Adds a cryptographic key that will be used to sign all records
     /// in this zone. The key is also added as a DNSKEY record in the zone.
     /// Multiple keys can be added for key rollover scenarios.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `signer` - The signing key to add
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Success or an error if the key cannot be processed
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Returns an error if the key is invalid or cannot be added to the zone
     pub fn add_zone_signing_key(&mut self, signer: SigSigner) -> Result<(), DnsSecZoneError> {
         let zone_ttl = self.minimum_ttl();
@@ -871,21 +871,21 @@ where
     }
 
     /// Secure the zone with DNSSEC
-    /// 
+    ///
     /// Performs a complete DNSSEC operation on the zone:
     /// 1. Generates NSEC or NSEC3 records for non-existence proofs
     /// 2. Increments the SOA serial number
     /// 3. Signs all records in the zone with configured keys
-    /// 
+    ///
     /// This should be called after any zone modifications to maintain
     /// DNSSEC validity.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Success or a DNSSEC error if the operation fails
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Returns an error if signing fails or NSEC generation fails
     #[tracing::instrument(skip_all, level = "trace")]
     pub fn secure_zone(&mut self) -> DnsSecResult<()> {
