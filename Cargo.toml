@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 async-trait = "0.1"
 arc-swap = "1"
+bb8 = { version = "0.8", optional = true }
 camino = "1"
 chrono = "0.4"
 clap = { version = "4", optional = true }
@@ -41,7 +42,7 @@ features = [
 
 [dependencies.monarch-db]
 version = "0.1"
-# git = "https://github.com/alexrudy/monarch-db.git"
+git = "https://github.com/alexrudy/monarch-db.git"
 
 [dependencies.tracing-subscriber]
 version = "^0.3"
@@ -64,6 +65,7 @@ features = ["env-filter", "json", "fmt", "ansi", "std"]
 
 [features]
 default = []
+pool = ["dep:bb8"]
 bundled = ["rusqlite/bundled"]
 cli = ["dep:clap", "dep:tokio", "dep:tracing-subscriber"]
 

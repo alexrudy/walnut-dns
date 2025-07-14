@@ -1,40 +1,46 @@
-use rusqlite::Connection;
-use std::sync::{Arc, Mutex};
-
-use super::{RecordPersistence, ZonePersistence};
+use super::{ConnectionManager, RecordPersistence, ZonePersistence};
 use crate::{authority::Journal, catalog::CatalogError, rr::Zone};
 
 pub struct SqliteJournal {
-    connection: Arc<Mutex<Connection>>,
+    manager: ConnectionManager,
 }
 
 impl SqliteJournal {
-    pub(super) fn new(connection: Arc<Mutex<Connection>>) -> Self {
-        Self { connection }
+    pub(super) fn new(manager: ConnectionManager) -> Self {
+        Self { manager }
     }
 }
 
+#[async_trait::async_trait]
 impl<Z> Journal<Z> for SqliteJournal
 where
-    Z: AsRef<Zone>,
+    Z: AsRef<Zone> + Sync + 'static,
 {
-    fn insert_records(&self, zone: &Z, records: &[crate::rr::Record]) -> Result<(), CatalogError> {
-        let mut conn = self.connection.lock().expect("poisoned");
-        let tx = conn.transaction()?;
-        let rx = RecordPersistence::new(&tx);
-        let zone = zone.as_ref();
-        rx.insert_records(zone, records.iter())?;
-        tx.commit()?;
-        Ok(())
+    async fn insert_records(
+        &self,
+        zone: &Z,
+        records: &[crate::rr::Record],
+    ) -> Result<(), CatalogError> {
+        let mut conn = self.manager.get().await?;
+        crate::block_in_place(|| {
+            let tx = conn.transaction()?;
+            let rx = RecordPersistence::new(&tx);
+            let zone = zone.as_ref();
+            rx.insert_records(zone, records.iter())?;
+            tx.commit()?;
+            Ok(())
+        })
     }
 
-    fn upsert_zone(&self, zone: &Z) -> Result<(), CatalogError> {
-        let mut conn = self.connection.lock().expect("poisoned");
-        let tx = conn.transaction()?;
-        let zx = ZonePersistence::new(&tx);
-        let zone = zone.as_ref();
-        zx.upsert(zone)?;
-        tx.commit()?;
-        Ok(())
+    async fn upsert_zone(&self, zone: &Z) -> Result<(), CatalogError> {
+        let mut conn = self.manager.get().await?;
+        crate::block_in_place(|| {
+            let tx = conn.transaction()?;
+            let zx = ZonePersistence::new(&tx);
+            let zone = zone.as_ref();
+            zx.upsert(zone)?;
+            tx.commit()?;
+            Ok(())
+        })
     }
 }

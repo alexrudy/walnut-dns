@@ -349,7 +349,7 @@ async fn new_catalog() -> Catalog<ZoneAuthority<Zone>> {
     let example = create_example();
     let origin = example.origin().clone();
 
-    let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
+    let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
 
     catalog
         .upsert(origin, vec![ZoneAuthority::new(example)])

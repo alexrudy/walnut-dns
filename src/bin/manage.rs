@@ -106,7 +106,7 @@ fn load_zone_to_db(
 
     rt.block_on(async {
         let connection = rusqlite::Connection::open(db)?;
-        let catalog = SqliteStore::try_from(connection)?;
+        let catalog = SqliteStore::new(connection.into()).await?;
 
         let zone = Zone::read_from_file(origin.clone(), zone_file, ZoneType::External)?;
         catalog.insert(&zone).await?;
@@ -124,7 +124,7 @@ fn serve_dns(address: IpAddr, port: u16, db: &Path) -> Result<(), Box<dyn std::e
 
 async fn serve(address: IpAddr, port: u16, db: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let connection = rusqlite::Connection::open(db)?;
-    let store = SqliteStore::try_from(connection)?;
+    let store = SqliteStore::new(connection.into()).await?;
     let catalog = Catalog::new(store);
 
     let mut server = hickory_server::ServerFuture::new(catalog);

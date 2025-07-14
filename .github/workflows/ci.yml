@@ -19,6 +19,9 @@ jobs:
           - stable
           - beta
           - nightly
+        features:
+          - ""
+          - pool
     steps:
       - uses: actions/checkout@v4
 
@@ -39,7 +42,7 @@ jobs:
             ${{ runner.os }}-cargo-${{ matrix.rust }}-
 
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test --features=${{ matrix.rust }} --verbose
 
   fmt:
     name: Rustfmt

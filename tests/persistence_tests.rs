@@ -30,7 +30,7 @@ fn example_zone(name: &str) -> Zone {
 #[tokio::test]
 async fn upsert_one() {
     subscribe();
-    let catalog = SqliteStore::new_in_memory().unwrap();
+    let catalog = SqliteStore::new_in_memory().await.unwrap();
 
     let example = example_zone("example.com.");
 
@@ -54,7 +54,7 @@ async fn upsert_one() {
 #[tokio::test]
 async fn upsert_multiple() {
     subscribe();
-    let catalog = SqliteStore::new_in_memory().unwrap();
+    let catalog = SqliteStore::new_in_memory().await.unwrap();
 
     let example1 = example_zone("example.com.");
     let example2 = example_zone("example.com.");
@@ -97,7 +97,7 @@ async fn upsert_multiple() {
 #[tokio::test]
 async fn find_heirarchical_name() {
     subscribe();
-    let catalog = SqliteStore::new_in_memory().unwrap();
+    let catalog = SqliteStore::new_in_memory().await.unwrap();
 
     let example1 = example_zone("example.com.");
     let example2 = example_zone("example.com.");
@@ -124,7 +124,7 @@ async fn find_heirarchical_name() {
 #[tokio::test]
 async fn remove_name() {
     subscribe();
-    let catalog = SqliteStore::new_in_memory().unwrap();
+    let catalog = SqliteStore::new_in_memory().await.unwrap();
 
     let example1 = example_zone("example.com.");
     let example2 = example_zone("example.com.");
@@ -166,7 +166,7 @@ async fn remove_name() {
 #[tokio::test]
 async fn get_insert_delete() {
     subscribe();
-    let catalog = SqliteStore::new_in_memory().unwrap();
+    let catalog = SqliteStore::new_in_memory().await.unwrap();
 
     let example1 = example_zone("example.com.");
     let example2 = example_zone("example.com.");
@@ -237,7 +237,7 @@ async fn get_insert_delete() {
 #[tokio::test]
 async fn read_zone_to_db() {
     subscribe();
-    let catalog = SqliteStore::new_in_memory().unwrap();
+    let catalog = SqliteStore::new_in_memory().await.unwrap();
     let zone = Zone::read_from_file(
         Name::root(),
         concat!(env!("CARGO_MANIFEST_DIR"), "/zones/root.zone"),

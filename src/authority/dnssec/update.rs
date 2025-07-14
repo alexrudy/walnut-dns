@@ -46,7 +46,7 @@ where
         //  subsequent to a failure of the server.
         if let Some(journal) = self.journal.as_ref() {
             let records = records.iter().cloned().map(Into::into).collect::<Vec<_>>();
-            if let Err(error) = journal.insert_records(self, &records) {
+            if let Err(error) = journal.insert_records(self, &records).await {
                 error!("could not persist update records: {}", error);
                 return Err(ResponseCode::ServFail);
             }
@@ -201,7 +201,7 @@ where
         }
 
         if let Some(journal) = self.journal.as_ref() {
-            if let Err(error) = journal.upsert_zone(self) {
+            if let Err(error) = journal.upsert_zone(self).await {
                 error!("could not persist updated zone: {}", error);
                 return Err(ResponseCode::ServFail);
             }

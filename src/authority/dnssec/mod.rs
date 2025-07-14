@@ -22,9 +22,10 @@ mod authorize;
 mod prerequisites;
 mod update;
 
+#[async_trait::async_trait]
 pub trait Journal<Z> {
-    fn insert_records(&self, zone: &Z, records: &[Record]) -> Result<(), CatalogError>;
-    fn upsert_zone(&self, zone: &Z) -> Result<(), CatalogError>;
+    async fn insert_records(&self, zone: &Z, records: &[Record]) -> Result<(), CatalogError>;
+    async fn upsert_zone(&self, zone: &Z) -> Result<(), CatalogError>;
 }
 
 /// Error type to unify Mismatch errors and generic DNSSEC errors
@@ -131,9 +132,9 @@ where
         &self.secure_keys
     }
 
-    pub fn persist_to_journal(&self) -> Result<(), CatalogError> {
+    pub async fn persist_to_journal(&self) -> Result<(), CatalogError> {
         if let Some(journal) = self.journal.as_ref() {
-            journal.upsert_zone(self)?;
+            journal.upsert_zone(self).await?;
         }
 
         Ok(())

@@ -140,20 +140,21 @@ impl CatalogStore<DNSSecZone<Zone>> for DNSSecStore {
         name: LowerName,
         zones: &[DNSSecZone<Zone>],
     ) -> Result<(), CatalogError> {
-        let cc = self.catalog.connection();
-        let mut conn = cc.lock().expect("connection poisoned");
-        let tx = conn.transaction()?;
-        let zx = crate::database::ZonePersistence::new(&tx);
+        let mut conn = self.catalog.connection().await?;
+        crate::block_in_place(|| {
+            let tx = conn.transaction()?;
+            let zx = crate::database::ZonePersistence::new(&tx);
 
-        // First clear existing name
-        zx.clear(&name)?;
-        let mut n = 0;
-        for zone in zones {
-            n += zx.upsert(zone)?;
-        }
-        tx.commit()?;
-        tracing::debug!("upsert {n} zones");
-        Ok(())
+            // First clear existing name
+            zx.clear(&name)?;
+            let mut n = 0;
+            for zone in zones {
+                n += zx.upsert(zone)?;
+            }
+            tx.commit()?;
+            tracing::debug!("upsert {n} zones");
+            Ok(())
+        })
     }
 
     async fn list(&self) -> Result<Vec<Name>, CatalogError> {

@@ -122,7 +122,7 @@ async fn test_catalog_lookup() {
     let origin = example.origin().clone();
     let test_origin = test.origin().clone();
 
-    let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
+    let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
     catalog.insert(example.into()).await.unwrap();
     catalog.insert(test.into()).await.unwrap();
 
@@ -200,7 +200,7 @@ async fn test_catalog_lookup_soa() {
     let test = create_test();
     let origin = example.origin().clone();
 
-    let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
+    let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
     catalog.insert(example.into()).await.unwrap();
     catalog.insert(test.into()).await.unwrap();
 
@@ -268,7 +268,7 @@ async fn test_catalog_nx_soa() {
 
     let example = create_example();
 
-    let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
+    let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
     catalog.insert(example.into()).await.unwrap();
 
     let mut question: Message = Message::new();
@@ -319,7 +319,7 @@ async fn test_non_authoritive_nx_refused() {
 
     let example = create_example();
 
-    let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
+    let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
     catalog.insert(example.into()).await.unwrap();
 
     let mut question: Message = Message::new();
@@ -535,7 +535,7 @@ async fn test_cname_additionals() {
 
     let example = create_example();
 
-    let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
+    let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
     catalog.insert(example.into()).await.unwrap();
 
     let mut question: Message = Message::new();
@@ -583,7 +583,7 @@ async fn test_multiple_cname_additionals() {
 
     let example = create_example();
 
-    let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
+    let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
     catalog.insert(example.into()).await.unwrap();
 
     let mut question: Message = Message::new();
