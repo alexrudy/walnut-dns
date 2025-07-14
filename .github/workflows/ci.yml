@@ -42,7 +42,7 @@ jobs:
             ${{ runner.os }}-cargo-${{ matrix.rust }}-
 
       - name: Run tests
-        run: cargo test --features=${{ matrix.rust }} --verbose
+        run: cargo test --features=${{ matrix.features }} --verbose
 
   fmt:
     name: Rustfmt
