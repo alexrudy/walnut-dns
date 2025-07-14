@@ -48,6 +48,15 @@ pub struct DNSSecZone<Z> {
     journal: Option<Arc<dyn Journal<Self> + Send + Sync + 'static>>,
 }
 
+impl<Z> From<Z> for DNSSecZone<Z>
+where
+    Z: ZoneInfo,
+{
+    fn from(value: Z) -> Self {
+        DNSSecZone::new(value)
+    }
+}
+
 impl<Z> Deref for DNSSecZone<Z> {
     type Target = ZoneAuthority<Z>;
 
