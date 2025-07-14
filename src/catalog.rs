@@ -603,6 +603,20 @@ impl<A> Catalog<A> {
         (*self.zones).find(name).await
     }
 
+    /// Lists zones that match the given name. This is used internally
+    /// during DNS query processing to locate the appropriate authority.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The zone name to search for
+    ///
+    /// # Returns
+    ///
+    /// A vector of zones matching the name, or None if no matches are found
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying storage fails
     pub async fn list(&self, name: &LowerName) -> Result<Vec<Name>, CatalogError> {
         (*self.zones).list(name).await
     }
