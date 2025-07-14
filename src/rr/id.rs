@@ -1,5 +1,15 @@
+//! SQLite Database Identifires
+//!
+//! For Walnut-DNS, all identifiers are UUID-v4 IDs stored as BASE64-url encoded strings
+//! in the databse. (This makes them more readable than when they are stored as Blobs, as the rusqlite
+//! UUID feature chooses to do).
+
 macro_rules! impl_id {
-    ($name:ident) => {
+    (
+    $(#[$outer:meta])*
+    pub struct $name:ident
+   ) => {
+       $(#[$outer])*
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub struct $name(::uuid::Uuid);
 
@@ -10,6 +20,13 @@ macro_rules! impl_id {
         }
 
         impl $name {
+            /// Create a new unique identifier
+            ///
+            /// Generates a new UUID v4 for use as a unique identifier in the database.
+            ///
+            /// # Returns
+            ///
+            /// A new unique identifier instance
             pub fn new() -> $name {
                 $name(::uuid::Uuid::new_v4())
             }
@@ -71,8 +88,15 @@ macro_rules! impl_id {
     };
 }
 
-impl_id!(ZoneID);
-impl_id!(RecordID);
+impl_id! {
+    #[doc="DNS Zone ID for the SQLite Database"]
+    pub struct ZoneID
+}
+
+impl_id! {
+    #[doc="DNS Record ID for the SQLite Database"]
+    pub struct RecordID
+}
 
 #[cfg(test)]
 mod tests {

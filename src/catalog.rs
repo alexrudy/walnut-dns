@@ -1,4 +1,16 @@
-//! Hickory-dns Catalog integration
+//! DNS Zone Catalog System
+//!
+//! This module provides a catalog system for managing DNS zones and handling DNS requests.
+//! It integrates with the hickory-dns library to provide a complete DNS server implementation
+//! that can handle multiple zones and route requests to the appropriate authority.
+//!
+//! The catalog system supports:
+//! - Zone storage and retrieval
+//! - DNS query processing (A, AAAA, CNAME, etc.)
+//! - DNS UPDATE operations
+//! - EDNS support
+//! - DNSSEC awareness
+//! - Authoritative and recursive lookups
 use std::{borrow::Borrow, sync::Arc};
 
 use hickory_proto::op::{Edns, Header, LowerQuery, MessageType, OpCode, ResponseCode};
@@ -14,11 +26,27 @@ use crate::authority::edns::lookup_options_for_edns;
 use crate::authority::response::{ResponseHandleExt, ResponseInfoExt, ResponseResultExt};
 use crate::rr::Name;
 
+/// Error type for catalog operations
+///
+/// This error type wraps any error that can occur during catalog operations
+/// such as zone storage, retrieval, or DNS processing.
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
 pub struct CatalogError(Box<dyn std::error::Error + Send + Sync>);
 
 impl CatalogError {
+    /// Create a new catalog error from any error type
+    ///
+    /// Wraps the provided error in a CatalogError for consistent error handling
+    /// throughout the catalog system.
+    ///
+    /// # Arguments
+    ///
+    /// * `error` - The error to wrap
+    ///
+    /// # Returns
+    ///
+    /// A new CatalogError instance
     pub(crate) fn new<E>(error: E) -> Self
     where
         E: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -27,14 +55,94 @@ impl CatalogError {
     }
 }
 
+/// Trait for storing and retrieving DNS zones
+///
+/// This trait defines the interface for a zone storage backend that can persist
+/// and retrieve DNS zones. Implementations might use databases, files, or other
+/// storage mechanisms.
 #[async_trait::async_trait]
 pub trait CatalogStore<A> {
+    /// Find zones by origin name
+    ///
+    /// Searches for zones that match the given origin name. This is used during
+    /// DNS query processing to locate the appropriate authority for a request.
+    ///
+    /// # Arguments
+    ///
+    /// * `origin` - The origin name to search for
+    ///
+    /// # Returns
+    ///
+    /// A vector of zones matching the origin, or None if no matches are found
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the storage backend fails
     async fn find(&self, origin: &LowerName) -> Result<Option<Vec<A>>, CatalogError>;
+
+    /// Insert or update zones for a given name
+    ///
+    /// Stores zones in the catalog, replacing any existing zones with the same name.
+    /// This is used when zones are loaded or updated.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The zone name
+    /// * `zones` - The zones to store
+    ///
+    /// # Returns
+    ///
+    /// Success or an error if the operation fails
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the storage backend fails
     async fn upsert(&self, name: LowerName, zones: &[A]) -> Result<(), CatalogError>;
-    async fn list(&self) -> Result<Vec<Name>, CatalogError>;
+
+    /// List all zone names in the catalog
+    ///
+    /// Returns a list of all zone names currently stored in the catalog.
+    /// This is useful for administrative operations and zone management.
+    ///
+    /// # Returns
+    ///
+    /// A vector of all zone names
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the storage backend fails
+    async fn list(&self, origin: &LowerName) -> Result<Vec<Name>, CatalogError>;
+
+    /// Remove a zone from the catalog
+    ///
+    /// Removes all zones with the given name from the catalog.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The zone name to remove
+    ///
+    /// # Returns
+    ///
+    /// The removed zones, or None if no zones were found
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the storage backend fails
     async fn remove(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError>;
 }
 
+/// DNS Zone Catalog
+///
+/// A catalog manages a collection of DNS zones and provides the main interface
+/// for DNS query processing. It acts as a dispatcher that routes DNS requests
+/// to the appropriate zone authorities.
+///
+/// The catalog supports:
+/// - Zone storage and retrieval
+/// - DNS query processing
+/// - DNS UPDATE operations
+/// - EDNS handling
+/// - Multiple zone authorities per name
 pub struct Catalog<A> {
     zones: Arc<dyn CatalogStore<A> + Send + Sync + 'static>,
 }
@@ -413,6 +521,18 @@ async fn lookup<R: ResponseHandler + Unpin>(
 }
 
 impl<A> Catalog<A> {
+    /// Create a new catalog with the specified zone store
+    ///
+    /// Creates a new catalog instance that uses the provided zone store
+    /// for persisting and retrieving DNS zones.
+    ///
+    /// # Arguments
+    ///
+    /// * `zones` - The zone store implementation to use
+    ///
+    /// # Returns
+    ///
+    /// A new catalog instance
     pub fn new<T>(zones: T) -> Self
     where
         T: CatalogStore<A> + Send + Sync + 'static,
@@ -422,17 +542,69 @@ impl<A> Catalog<A> {
         }
     }
 
+    /// Insert or update zones for a given name
+    ///
+    /// Stores zones in the catalog, replacing any existing zones with the same name.
+    /// This is the primary method for adding zones to the catalog.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The zone name
+    /// * `zones` - The zones to store
+    ///
+    /// # Returns
+    ///
+    /// Success or an error if the operation fails
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying storage fails
     pub async fn upsert(&self, name: LowerName, zones: Vec<A>) -> Result<(), CatalogError> {
         (*self.zones).upsert(name, &zones).await
     }
 
+    /// Remove a zone from the catalog
+    ///
+    /// Removes all zones with the given name from the catalog.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The zone name to remove
+    ///
+    /// # Returns
+    ///
+    /// The removed zones, or None if no zones were found
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying storage fails
     pub async fn remove(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError> {
         (*self.zones).remove(name).await
     }
 
+    /// Find zones by name
+    ///
+    /// Searches for zones that match the given name. This is used internally
+    /// during DNS query processing to locate the appropriate authority.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The zone name to search for
+    ///
+    /// # Returns
+    ///
+    /// A vector of zones matching the name, or None if no matches are found
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying storage fails
     pub async fn find(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError> {
         tracing::debug!("searching for {}", name);
         (*self.zones).find(name).await
+    }
+
+    pub async fn list(&self, name: &LowerName) -> Result<Vec<Name>, CatalogError> {
+        (*self.zones).list(name).await
     }
 }
 
@@ -440,6 +612,21 @@ impl<A> Catalog<A>
 where
     A: AsRef<dyn AuthorityObject>,
 {
+    /// Process a DNS lookup request
+    ///
+    /// Handles DNS queries by finding the appropriate zone authority and
+    /// delegating the lookup to that authority. This is the main entry point
+    /// for DNS query processing.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The DNS request to process
+    /// * `edns` - Optional EDNS information from the request
+    /// * `response_handle` - Handler for sending the response
+    ///
+    /// # Returns
+    ///
+    /// Information about the response that was sent
     #[tracing::instrument(skip_all, level = "trace")]
     pub async fn lookup<R: ResponseHandler>(
         &self,
@@ -493,6 +680,22 @@ impl<A> Catalog<A>
 where
     A: AsRef<dyn AuthorityObject>,
 {
+    /// Insert a single zone into the catalog
+    ///
+    /// Convenience method for inserting a single zone authority into the catalog.
+    /// The zone name is automatically derived from the zone's origin.
+    ///
+    /// # Arguments
+    ///
+    /// * `zone` - The zone authority to insert
+    ///
+    /// # Returns
+    ///
+    /// Success or an error if the operation fails
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying storage fails
     pub async fn insert(&self, zone: A) -> Result<(), CatalogError> {
         let name = LowerName::new(zone.as_ref().origin());
         (*self.zones).upsert(name, &[zone]).await
@@ -626,11 +829,28 @@ where
     }
 }
 
+/// Implementation of RequestHandler for the Catalog
+///
+/// This makes the catalog compatible with the hickory-dns server framework,
+/// allowing it to be used as a request handler for DNS servers.
 #[async_trait::async_trait]
 impl<A> RequestHandler for Catalog<A>
 where
     A: AsRef<dyn AuthorityObject> + Send + 'static,
 {
+    /// Handle incoming DNS requests
+    ///
+    /// This is the main entry point for DNS request processing. It handles
+    /// both queries and updates, with proper EDNS support and error handling.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The DNS request to process
+    /// * `response_handle` - Handler for sending the response
+    ///
+    /// # Returns
+    ///
+    /// Information about the response that was sent
     #[tracing::instrument("dns", skip_all, fields(id=%request.id()), level="debug")]
     async fn handle_request<R: ResponseHandler>(
         &self,

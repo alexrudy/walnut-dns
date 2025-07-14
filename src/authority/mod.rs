@@ -1,3 +1,25 @@
+//! DNS Authority implementation
+//!
+//! This module provides the core DNS authority functionality for the walnut-dns server.
+//! It defines traits and structures for DNS zone management, record lookup, and query
+//! processing that integrate with the hickory-dns server framework.
+//!
+//! # Core Components
+//!
+//! - [`ZoneInfo`] - Trait providing basic zone metadata and configuration
+//! - [`Lookup`] - Trait for DNS record lookup and zone modification operations
+//! - [`ZoneAuthority`] - Wrapper providing hickory-dns Authority trait implementation
+//! - [`DNSSecZone`] - DNSSEC-enabled zone authority with cryptographic capabilities
+//!
+//! # Features
+//!
+//! - Complete DNS query processing with CNAME resolution and wildcard support
+//! - AXFR (zone transfer) support for zone replication
+//! - DNS UPDATE operations with proper authorization
+//! - DNSSEC signing and validation
+//! - Flexible zone storage backends through trait abstraction
+//! - Integration with hickory-dns server framework
+
 use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::ops::{Deref, DerefMut, RangeBounds};
@@ -23,34 +45,250 @@ pub use self::dnssec::{DNSSecZone, DnsSecZoneError, Journal};
 
 pub(crate) type LookupChain<L, E = LookupError> = (LookupControlFlow<L, E>, Option<LookupRecords>);
 
-/// Provides basic information about a DNS Zone that can be used for lookups.
+/// Provides basic information about a DNS Zone that can be used for lookups
+///
+/// This trait defines the essential metadata and properties of a DNS zone
+/// that are required for DNS query processing and zone management operations.
+/// It provides access to zone configuration, SOA records, and administrative
+/// settings without exposing the internal zone data structure.
 pub trait ZoneInfo {
+    /// Get the zone name
+    ///
+    /// Returns the full domain name of this DNS zone.
+    ///
+    /// # Returns
+    ///
+    /// The zone's domain name
     fn name(&self) -> &Name;
+
+    /// Get the zone origin name in lowercase
+    ///
+    /// Returns the zone origin as a LowerName, which is used for efficient
+    /// DNS name comparisons and lookups.
+    ///
+    /// # Returns
+    ///
+    /// The zone's origin name in lowercase format
     fn origin(&self) -> &LowerName;
+
+    /// Get the zone type
+    ///
+    /// Returns the type of this zone (Primary, Secondary, etc.) which
+    /// determines how the zone behaves and what operations are allowed.
+    ///
+    /// # Returns
+    ///
+    /// The zone type (Primary, Secondary, Forward, etc.)
     fn zone_type(&self) -> ZoneType;
+
+    /// Check if AXFR (zone transfer) is allowed
+    ///
+    /// Returns whether this zone permits AXFR requests, which allow
+    /// clients to download the entire zone contents.
+    ///
+    /// # Returns
+    ///
+    /// `true` if AXFR is permitted, `false` otherwise
     fn is_axfr_allowed(&self) -> bool;
+
+    /// Get the DNS class for this zone
+    ///
+    /// Returns the DNS class (typically IN for Internet) that this
+    /// zone belongs to.
+    ///
+    /// # Returns
+    ///
+    /// The DNS class for this zone
     fn dns_class(&self) -> DNSClass;
+
+    /// Get the current SOA serial number
+    ///
+    /// Returns the serial number from the zone's SOA record, which
+    /// is used for change tracking and replication.
+    ///
+    /// # Returns
+    ///
+    /// The current SOA serial number
     fn serial(&self) -> SerialNumber;
+
+    /// Get the SOA record for this zone
+    ///
+    /// Returns the Start of Authority record that contains essential
+    /// zone metadata like serial number, refresh intervals, and
+    /// responsible party information.
+    ///
+    /// # Returns
+    ///
+    /// The SOA record if present, None otherwise
     fn soa(&self) -> Option<&Record>;
+
+    /// Increment the SOA serial number
+    ///
+    /// Increases the SOA serial number to indicate that the zone
+    /// has been modified. This is essential for proper DNS replication
+    /// and caching behavior.
+    ///
+    /// # Returns
+    ///
+    /// The new serial number after incrementing
     fn increment_soa_serial(&mut self) -> SerialNumber;
+
+    /// Get the minimum TTL for this zone
+    ///
+    /// Returns the minimum time-to-live value that should be used
+    /// for negative caching and other DNS operations in this zone.
+    ///
+    /// # Returns
+    ///
+    /// The minimum TTL value
     fn minimum_ttl(&self) -> TimeToLive;
 }
 
+/// Provides DNS record lookup and modification capabilities for a zone
+///
+/// This trait extends ZoneInfo to provide the core functionality needed for
+/// DNS query processing and zone updates. It defines methods for retrieving,
+/// modifying, and managing DNS records within a zone.
+///
+/// The trait supports:
+/// - Direct record access by name and type
+/// - Record iteration and traversal
+/// - Record insertion and deletion
+/// - DNS query processing with CNAME resolution and wildcard support
 pub trait Lookup: ZoneInfo {
+    /// Get a record set by its key
+    ///
+    /// Retrieves a record set matching the specified name and type.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The record key (name + type) to look up
+    ///
+    /// # Returns
+    ///
+    /// The record set if found, None otherwise
     fn get(&self, key: &RrKey) -> Option<&RecordSet>;
+
+    /// Get a mutable reference to a record set by its key
+    ///
+    /// Retrieves a mutable record set matching the specified name and type,
+    /// allowing for modifications to the record set.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The record key (name + type) to look up
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to the record set if found, None otherwise
     fn get_mut(&mut self, key: &RrKey) -> Option<&mut RecordSet>;
+
+    /// Get an iterator over all record keys in the zone
+    ///
+    /// Returns an iterator that yields all record keys (name + type pairs)
+    /// stored in this zone.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over record keys
     fn keys(&self) -> impl Iterator<Item = &RrKey>;
+
+    /// Get an iterator over all record sets in the zone
+    ///
+    /// Returns an iterator that yields all record sets stored in this zone.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over record sets
     fn records(&self) -> impl Iterator<Item = &RecordSet>;
+
+    /// Get a reverse iterator over all record sets in the zone
+    ///
+    /// Returns a reverse iterator that yields all record sets stored in this zone,
+    /// useful for AXFR operations that require specific ordering.
+    ///
+    /// # Returns
+    ///
+    /// A reverse iterator over record sets
     fn records_reversed(&self) -> impl Iterator<Item = &RecordSet>;
+
+    /// Get a mutable iterator over all record sets in the zone
+    ///
+    /// Returns a mutable iterator that yields all record sets stored in this zone,
+    /// allowing for batch modifications.
+    ///
+    /// # Returns
+    ///
+    /// A mutable iterator over record sets
     fn records_mut(&mut self) -> impl Iterator<Item = &mut RecordSet>;
+
+    /// Insert or update a record in the zone
+    ///
+    /// Adds a new record to the zone or updates an existing record set.
+    /// The operation respects DNS semantics for record replacement and
+    /// CNAME exclusivity rules.
+    ///
+    /// # Arguments
+    ///
+    /// * `record` - The record to insert or update
+    /// * `serial` - The serial number for this update operation
+    ///
+    /// # Returns
+    ///
+    /// `Ok(true)` if the record was modified, `Ok(false)` if no change was made
+    ///
+    /// # Errors
+    ///
+    /// Returns `Mismatch` if the record conflicts with existing records
+    /// (e.g., CNAME with other record types)
     fn upsert(&mut self, record: Record, serial: SerialNumber) -> Result<bool, Mismatch>;
+
+    /// Remove a record set from the zone
+    ///
+    /// Removes all records matching the specified name and type.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The record key (name + type) to remove
+    ///
+    /// # Returns
+    ///
+    /// The removed record set if it existed, None otherwise
     fn remove(&mut self, key: &RrKey) -> Option<RecordSet>;
+
+    /// Get records within a specified range
+    ///
+    /// Returns an iterator over record keys and sets that fall within
+    /// the specified range, useful for efficient range queries.
+    ///
+    /// # Arguments
+    ///
+    /// * `range` - The range bounds to search within
+    ///
+    /// # Returns
+    ///
+    /// An iterator over (key, record set) pairs within the range
     fn range<T, R>(&self, range: R) -> impl Iterator<Item = (&RrKey, &RecordSet)>
     where
         T: Ord + ?Sized,
         RrKey: Borrow<T> + Ord,
         R: RangeBounds<T>;
 
+    /// Perform a DNS lookup against this zone
+    ///
+    /// Processes a DNS query by searching for matching records, handling
+    /// CNAME resolution, wildcard expansion, and additional record lookup.
+    /// This is the main entry point for DNS query processing.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The domain name to look up
+    /// * `query_type` - The record type to search for
+    /// * `lookup_options` - Query options (DNSSEC, recursion, etc.)
+    ///
+    /// # Returns
+    ///
+    /// A lookup control flow indicating how the query should be processed
     fn lookup(
         &self,
         name: &LowerName,
@@ -361,14 +599,46 @@ where
     }
 }
 
+/// DNS Zone Authority wrapper
+///
+/// ZoneAuthority is a wrapper that provides the Authority trait implementation
+/// for any type that implements the Lookup and ZoneInfo traits. This allows
+/// different zone storage backends to be used interchangeably within the
+/// hickory-dns server framework.
+///
+/// The wrapper handles the integration between the zone storage interface
+/// and the DNS server's authority interface, providing features like:
+/// - DNS query processing
+/// - AXFR (zone transfer) support
+/// - DNS UPDATE operations
+/// - SOA record management
+/// - DNSSEC integration points
 #[derive(Debug, Clone)]
 pub struct ZoneAuthority<Z>(Z);
 
 impl<Z> ZoneAuthority<Z> {
+    /// Create a new zone authority
+    ///
+    /// Wraps a zone implementation to provide DNS authority functionality.
+    ///
+    /// # Arguments
+    ///
+    /// * `zone` - The zone implementation to wrap
+    ///
+    /// # Returns
+    ///
+    /// A new ZoneAuthority instance
     pub fn new(zone: Z) -> Self {
         Self(zone)
     }
 
+    /// Extract the inner zone implementation
+    ///
+    /// Unwraps the authority to return the underlying zone implementation.
+    ///
+    /// # Returns
+    ///
+    /// The wrapped zone implementation
     pub fn into_inner(self) -> Z {
         self.0
     }
@@ -416,6 +686,18 @@ where
 
     /// Takes the UpdateMessage, extracts the Records, and applies the changes to the record set.
     ///
+    /// # Arguments
+    ///
+    /// * `update` - The `UpdateMessage` records will be extracted and used to perform the update
+    ///              actions as specified in the above RFC.
+    ///
+    /// # Return value
+    ///
+    /// true if any of additions, updates or deletes were made to the zone, false otherwise. Err is
+    ///  returned in the case of bad data, etc.
+    ///
+    /// # Specification
+    ///
     /// [RFC 2136](https://tools.ietf.org/html/rfc2136), DNS Update, April 1997
     ///
     /// ```text
@@ -461,16 +743,6 @@ where
     ///
     /// 3.4.2.5. Signal NOERROR to the requestor.
     /// ```
-    ///
-    /// # Arguments
-    ///
-    /// * `update` - The `UpdateMessage` records will be extracted and used to perform the update
-    ///              actions as specified in the above RFC.
-    ///
-    /// # Return value
-    ///
-    /// true if any of additions, updates or deletes were made to the zone, false otherwise. Err is
-    ///  returned in the case of bad data, etc.
     async fn update(&self, _update: &MessageRequest) -> UpdateResult<bool> {
         // No update for non-DNSSEC Zone
         Err(ResponseCode::NotImp)

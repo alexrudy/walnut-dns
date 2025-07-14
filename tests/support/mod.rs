@@ -142,9 +142,14 @@ impl<Z: Clone + Send + Sync> CatalogStore<Z> for TestZoneStore<Z> {
         Ok(())
     }
 
-    async fn list(&self) -> Result<Vec<Name>, CatalogError> {
+    async fn list(&self, name: &LowerName) -> Result<Vec<Name>, CatalogError> {
         let data = self.zones.lock().expect("poisoned");
-        Ok(data.keys().cloned().map(Into::into).collect())
+        Ok(data
+            .keys()
+            .filter(|k| name.zone_of(k))
+            .cloned()
+            .map(Into::into)
+            .collect())
     }
 
     async fn remove(

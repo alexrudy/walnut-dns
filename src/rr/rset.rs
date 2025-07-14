@@ -3,6 +3,13 @@ use hickory_proto::rr::{DNSClass, LowerName, RData, RecordData, RecordType, RrKe
 use super::{AsHickory, SerialNumber, record::Record, ttl::TimeToLive};
 use hickory_proto::rr::Name;
 
+/// A collection of like resource records.
+///
+/// The collection consists of a list of resource records of the same type, and
+/// a separate list of the singing records which secure these resource recrods.
+///
+/// The entire record set has a common TTL, and tracks the SOA Serial Number when
+/// it was last updated.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordSet {
     name: Name,
@@ -15,6 +22,19 @@ pub struct RecordSet {
 }
 
 impl RecordSet {
+    /// Create a new empty record set
+    ///
+    /// Creates a new record set for the specified name and record type.
+    /// Records can be added later using the insert method.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The DNS name for this record set
+    /// * `record_type` - The DNS record type (A, AAAA, CNAME, etc.)
+    ///
+    /// # Returns
+    ///
+    /// A new empty record set
     pub fn new(name: Name, record_type: RecordType) -> Self {
         Self {
             name,
@@ -27,6 +47,18 @@ impl RecordSet {
         }
     }
 
+    /// Create a record set from a single record
+    ///
+    /// Creates a new record set containing the specified record.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The DNS name for this record set
+    /// * `record` - The initial record to include
+    ///
+    /// # Returns
+    ///
+    /// A new record set containing the specified record
     pub fn from_record<R: RecordData>(name: Name, record: Record<R>) -> Self {
         let record = record.into_record_rdata();
         let mut rrset = Self {
@@ -43,30 +75,69 @@ impl RecordSet {
         rrset
     }
 
-    /// Label of the Resource Record Set
+    /// Get the DNS name for this record set
+    ///
+    /// Returns the fully qualified domain name that all records in this set apply to.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the DNS name
     pub fn name(&self) -> &Name {
         &self.name
     }
 
-    /// `RecordType` of the Resource Record Set
+    /// Get the record type for this record set
+    ///
+    /// Returns the DNS record type (A, AAAA, CNAME, etc.) that all records
+    /// in this set share.
+    ///
+    /// # Returns
+    ///
+    /// The DNS record type
     pub fn record_type(&self) -> RecordType {
         self.record_type
     }
 
-    /// `DNSClass` of the RecordSet
+    /// Get the DNS class for this record set
+    ///
+    /// Returns the DNS class (typically IN for Internet) that all records
+    /// in this set share.
+    ///
+    /// # Returns
+    ///
+    /// The DNS class
     pub fn dns_class(&self) -> DNSClass {
         self.dns_class
     }
 
-    /// Sets the `DNSClass` of the RecordSet
+    /// Set the DNS class for this record set
+    ///
+    /// Updates the DNS class for all records in this set.
+    ///
+    /// # Arguments
+    ///
+    /// * `dns_class` - The new DNS class
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to this record set for method chaining
     pub fn set_dns_class(&mut self, dns_class: DNSClass) -> &mut Self {
         self.dns_class = dns_class;
         self
     }
 
-    /// Sets the TTL, in seconds, to the specified value
+    /// Set the Time To Live for all records in this set
     ///
-    /// This will traverse every record and associate with it the specified ttl
+    /// Updates the TTL value for all records in this set, which determines
+    /// how long DNS resolvers should cache these records.
+    ///
+    /// # Arguments
+    ///
+    /// * `ttl` - The new TTL value
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to this record set for method chaining
     pub fn set_ttl(&mut self, ttl: TimeToLive) -> &mut Self {
         self.ttl = ttl;
         for r in &mut self.records {
@@ -75,7 +146,18 @@ impl RecordSet {
         self
     }
 
-    /// Make a copy of this record set with a new name
+    /// Create a copy of this record set with a different name
+    ///
+    /// Creates a new record set with the same records but a different DNS name.
+    /// RRSIG signatures are cleared since they would be invalid for the new name.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The new DNS name for the copied record set
+    ///
+    /// # Returns
+    ///
+    /// A new record set with the specified name
     pub fn with_name(&self, name: Name) -> Self {
         RecordSet {
             name: name.clone(),
@@ -88,12 +170,25 @@ impl RecordSet {
         }
     }
 
-    /// Time to Live for this RecordSet
+    /// Get the Time To Live for this record set
+    ///
+    /// Returns the TTL value which determines how long DNS resolvers
+    /// should cache records from this set.
+    ///
+    /// # Returns
+    ///
+    /// The TTL value
     pub fn ttl(&self) -> TimeToLive {
         self.ttl
     }
 
-    /// Serial number for updates to this RecordSet
+    /// Get the serial number for this record set
+    ///
+    /// Returns the serial number that tracks the last update to this record set.
+    ///
+    /// # Returns
+    ///
+    /// The serial number
     pub fn serial(&self) -> SerialNumber {
         self.serial
     }
@@ -105,7 +200,14 @@ impl RecordSet {
         RrKey::new(self.name().into(), self.record_type())
     }
 
-    /// Returns an iterator over all records in the set, without any RRSIGs.
+    /// Get an iterator over all records in this set
+    ///
+    /// Returns an iterator that yields all DNS records in the set,
+    /// excluding any RRSIG signatures.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over the records
     pub fn records(&self) -> impl Iterator<Item = &Record> {
         self.records.iter()
     }
@@ -114,32 +216,74 @@ impl RecordSet {
         self.records.iter_mut()
     }
 
-    /// Returns an IntoIterator over all records in the set, without any RRSIGs.
+    /// Convert this record set into an iterator over its records
+    ///
+    /// Consumes the record set and returns an iterator over all DNS records,
+    /// excluding any RRSIG signatures.
+    ///
+    /// # Returns
+    ///
+    /// An iterator that takes ownership of the records
     pub fn into_records(self) -> impl Iterator<Item = Record> {
         self.records.into_iter()
     }
 
-    /// Returns an IntoIterator over all records and signatures in the set.
+    /// Convert this record set into an iterator over all records and signatures
+    ///
+    /// Consumes the record set and returns an iterator over all DNS records
+    /// and their RRSIG signatures.
+    ///
+    /// # Returns
+    ///
+    /// An iterator that takes ownership of all records and signatures
     pub fn into_signed_records(self) -> impl Iterator<Item = Record> {
         self.records.into_iter().chain(self.rrsigs)
     }
 
-    /// Returns an iterator over all records in the set, with RRSIGs, if present.
+    /// Get an iterator over all records and signatures in this set
+    ///
+    /// Returns an iterator that yields all DNS records in the set along
+    /// with any RRSIG signatures.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over all records and signatures
     pub fn signed_records(&self) -> impl Iterator<Item = &Record> {
         self.records.iter().chain(self.rrsigs.iter())
     }
 
-    /// Returns true if there are no records in this set
+    /// Check if this record set is empty
+    ///
+    /// Returns true if the record set contains no DNS records.
+    /// RRSIG signatures are not counted.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the record set contains no records
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
 
-    /// Number of records in this set
+    /// Get the number of records in this set
+    ///
+    /// Returns the count of DNS records in the set.
+    /// RRSIG signatures are not counted.
+    ///
+    /// # Returns
+    ///
+    /// The number of records
     pub fn len(&self) -> usize {
         self.records.len()
     }
 
-    /// Returns a slice of all the Records signatures in the RecordSet
+    /// Get all RRSIG signatures for this record set
+    ///
+    /// Returns a slice containing all RRSIG records that provide
+    /// DNSSEC signatures for the records in this set.
+    ///
+    /// # Returns
+    ///
+    /// A slice of RRSIG records
     pub fn rrsigs(&self) -> &[Record] {
         &self.rrsigs
     }
@@ -149,9 +293,22 @@ impl RecordSet {
         &mut self.rrsigs
     }
 
-    /// Inserts a Signature for the Record set
+    /// Insert an RRSIG signature for this record set
     ///
-    /// Many can be associated with the RecordSet. Once added, the RecordSet should not be changed
+    /// Adds a DNSSEC signature (RRSIG) to this record set. The signature must
+    /// cover the correct record type. Multiple signatures can be added.
+    ///
+    /// # Arguments
+    ///
+    /// * `rrsig` - The RRSIG record to add
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on success, or an error if the signature is invalid
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the RRSIG doesn't cover the correct record type
     pub fn insert_rrsig(&mut self, rrsig: Record) -> Result<(), Mismatch> {
         if rrsig
             .rdata()
@@ -167,11 +324,31 @@ impl RecordSet {
         Ok(())
     }
 
-    /// Useful for clearing all signatures when the RecordSet is updated, or keys are rotated.
+    /// Clear all RRSIG signatures from this record set
+    ///
+    /// Removes all DNSSEC signatures. This is useful when the record set
+    /// is updated or when cryptographic keys are rotated.
     pub fn clear_rrsigs(&mut self) {
         self.rrsigs.clear()
     }
 
+    /// Add a new record to this record set
+    ///
+    /// Creates a new record with the specified resource data and adds it
+    /// to this record set. The record will use the set's name and TTL.
+    ///
+    /// # Arguments
+    ///
+    /// * `rdata` - The resource data for the new record
+    ///
+    /// # Returns
+    ///
+    /// `Ok(true)` if the record was added, `Ok(false)` if it was a duplicate,
+    /// or an error if the record is incompatible with this set
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the record type doesn't match this set
     pub fn push(&mut self, rdata: RData) -> Result<bool, Mismatch> {
         let record = Record::from_rdata(self.name.clone(), self.ttl, rdata);
         self.insert(record, SerialNumber::ZERO)
@@ -182,6 +359,25 @@ impl RecordSet {
         self.rrsigs.clear(); // on updates, the rrsigs are invalid
     }
 
+    /// Insert a record into this record set
+    ///
+    /// Adds a record to this set, handling deduplication and special rules
+    /// for different record types (SOA, CNAME, etc.). Updates the serial number
+    /// if the record set is modified.
+    ///
+    /// # Arguments
+    ///
+    /// * `record` - The record to insert
+    /// * `serial` - The serial number for this update
+    ///
+    /// # Returns
+    ///
+    /// `Ok(true)` if the record set was modified, `Ok(false)` if no change occurred,
+    /// or an error if the record is incompatible
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the record's name or type doesn't match this set
     pub fn insert(&mut self, record: Record, serial: SerialNumber) -> Result<bool, Mismatch> {
         if record.name() != self.name() {
             return Err(Mismatch("name"));
@@ -272,6 +468,24 @@ impl RecordSet {
         Ok(false)
     }
 
+    /// Remove a record from this record set
+    ///
+    /// Removes records matching the specified record's resource data.
+    /// Some record types (SOA, last NS) have special protection against removal.
+    ///
+    /// # Arguments
+    ///
+    /// * `record` - The record to remove (matched by resource data)
+    /// * `serial` - The serial number for this update
+    ///
+    /// # Returns
+    ///
+    /// `Ok(true)` if the record set was modified, `Ok(false)` if no change occurred,
+    /// or an error if the record is incompatible
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the record's name or type doesn't match this set
     pub fn remove(&mut self, record: &Record, serial: SerialNumber) -> Result<bool, Mismatch> {
         if record.name() != self.name() {
             return Err(Mismatch("name"));
@@ -414,6 +628,10 @@ impl AsHickory for RecordSet {
     }
 }
 
+/// Mismatch between record and recordset properties
+///
+/// An error that indicates a record is incompatible with an existing
+/// record set.
 #[derive(Debug, Clone, Copy, thiserror::Error)]
 #[error("Mismatched {0} between new record and record set")]
 pub struct Mismatch(pub(super) &'static str);

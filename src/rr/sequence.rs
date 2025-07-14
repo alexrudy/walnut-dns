@@ -2,12 +2,23 @@ use std::{cmp::Ordering, ops::Add};
 
 use rusqlite::{ToSql, types::FromSql};
 
+/// An RFC 1982 number indicating when something changed
+///
+/// This type wraps an inner u32 to provide the proper
+/// wrapping and comparison semantics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SerialNumber(u32);
 
 impl SerialNumber {
     pub const ZERO: SerialNumber = SerialNumber(0);
 
+    /// Get the raw u32 value of this serial number
+    ///
+    /// Returns the underlying 32-bit unsigned integer value.
+    ///
+    /// # Returns
+    ///
+    /// The raw serial number value
     pub fn get(&self) -> u32 {
         self.0
     }

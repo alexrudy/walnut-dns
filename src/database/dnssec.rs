@@ -14,7 +14,11 @@ use crate::database::journal::SqliteJournal;
 use crate::rr::{TimeToLive, Zone};
 use crate::{SqliteStore, ZoneInfo as _};
 
-/// DNSSEC key builder
+/// DNSSEC cryptographic key for zone signing
+///
+/// DNSKey wraps cryptographic key material and provides the ability to create
+/// DNSSEC signers for zone signing operations. It securely stores private key
+/// data using zeroization to prevent key material from remaining in memory.
 #[derive(Clone)]
 pub struct DNSKey {
     key_data: Zeroizing<Box<[u8]>>,
@@ -32,6 +36,20 @@ impl fmt::Debug for DNSKey {
 }
 
 impl DNSKey {
+    /// Create a new DNSSEC key
+    ///
+    /// Creates a new DNSSEC key from the provided key material, algorithm,
+    /// and TTL. The key data should be in DER format.
+    ///
+    /// # Arguments
+    ///
+    /// * `key_data` - The private key data in DER format
+    /// * `algorithm` - The DNSSEC algorithm to use
+    /// * `ttl` - TTL for DNSKEY records created from this key
+    ///
+    /// # Returns
+    ///
+    /// A new DNSKey instance
     pub fn new(key_data: impl Into<Box<[u8]>>, algorithm: Algorithm, ttl: TimeToLive) -> Self {
         Self {
             key_data: Zeroizing::new(key_data.into()),
@@ -53,6 +71,11 @@ impl DNSKey {
     }
 }
 
+/// DNSSEC-enabled DNS zone storage
+///
+/// DNSSecStore wraps a regular SqliteStore and adds DNSSEC capabilities,
+/// including key management and automatic zone signing. It provides the same
+/// storage interface as SqliteStore but returns DNSSEC-enabled zones.
 #[derive(Debug, Clone)]
 pub struct DNSSecStore {
     catalog: SqliteStore,
@@ -62,6 +85,18 @@ pub struct DNSSecStore {
 }
 
 impl DNSSecStore {
+    /// Create a new DNSSEC store from a regular SQLite store
+    ///
+    /// Wraps an existing SqliteStore to provide DNSSEC functionality.
+    /// The store starts with DNSSEC disabled and no keys configured.
+    ///
+    /// # Arguments
+    ///
+    /// * `catalog` - The underlying SQLite store
+    ///
+    /// # Returns
+    ///
+    /// A new DNSSecStore instance
     pub fn new(catalog: SqliteStore) -> Self {
         Self {
             catalog,
@@ -71,6 +106,22 @@ impl DNSSecStore {
         }
     }
 
+    /// Add a zone signing key to this store
+    ///
+    /// Adds a DNSSEC key that will be used to sign all zones managed by
+    /// this store. Multiple keys can be added for key rollover scenarios.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The DNSSEC key to add
+    ///
+    /// # Returns
+    ///
+    /// Success or an error if the key cannot be added
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the key is invalid or cannot be processed
     pub fn add_zone_signing_key(
         &mut self,
         key: impl Into<Arc<DNSKey>>,
@@ -79,24 +130,69 @@ impl DNSSecStore {
         Ok(())
     }
 
+    /// Check if DNS updates are allowed
+    ///
+    /// Returns whether this store allows DNS UPDATE operations.
+    ///
+    /// # Returns
+    ///
+    /// `true` if updates are allowed
     pub fn allow_update(&self) -> bool {
         self.allow_update
     }
 
+    /// Set whether to allow DNS updates
+    ///
+    /// Enables or disables DNS UPDATE operations for zones managed by this store.
+    ///
+    /// # Arguments
+    ///
+    /// * `allow_update` - Whether to allow updates
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to this store for method chaining
     pub fn set_allow_update(&mut self, allow_update: bool) -> &mut Self {
         self.allow_update = allow_update;
         self
     }
 
+    /// Check if DNSSEC is enabled
+    ///
+    /// Returns whether DNSSEC signing is enabled for zones managed by this store.
+    ///
+    /// # Returns
+    ///
+    /// `true` if DNSSEC is enabled
     pub fn dnssec_enabled(&self) -> bool {
         self.dnssec_enabled
     }
 
+    /// Set whether to enable DNSSEC
+    ///
+    /// Enables or disables DNSSEC signing for zones managed by this store.
+    /// When enabled, zones will be automatically signed with configured keys.
+    ///
+    /// # Arguments
+    ///
+    /// * `dnssec_enabled` - Whether to enable DNSSEC
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to this store for method chaining
     pub fn set_dnssec_enabled(&mut self, dnssec_enabled: bool) -> &mut Self {
         self.dnssec_enabled = dnssec_enabled;
         self
     }
 
+    /// Get a journal for recording DNS operations
+    ///
+    /// Returns a journal that can be used to record DNS operations
+    /// for zones managed by this store.
+    ///
+    /// # Returns
+    ///
+    /// A SqliteJournal instance
     pub fn journal(&self) -> SqliteJournal {
         self.catalog.journal()
     }
@@ -157,8 +253,8 @@ impl CatalogStore<DNSSecZone<Zone>> for DNSSecStore {
         })
     }
 
-    async fn list(&self) -> Result<Vec<Name>, CatalogError> {
-        self.catalog.list().await
+    async fn list(&self, name: &LowerName) -> Result<Vec<Name>, CatalogError> {
+        self.catalog.list(name).await
     }
 
     async fn remove(

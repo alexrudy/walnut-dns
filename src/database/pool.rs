@@ -6,6 +6,23 @@ use std::{
 
 pub(crate) type Pool = bb8::Pool<RusqliteConnectionManager>;
 
+/// Create a new SQLite connection pool
+/// 
+/// Creates a bb8 connection pool for SQLite databases with the specified
+/// configuration. This enables concurrent access to the database.
+/// 
+/// # Arguments
+/// 
+/// * `path` - Path to the SQLite database file
+/// * `timeout` - Busy timeout for database operations
+/// 
+/// # Returns
+/// 
+/// A new connection pool
+/// 
+/// # Errors
+/// 
+/// Returns an error if the pool cannot be created
 pub(crate) async fn pool(
     path: impl AsRef<Path>,
     timeout: Duration,
@@ -18,17 +35,42 @@ pub(crate) async fn pool(
         .await
 }
 
+/// Connection manager for SQLite databases
+/// 
+/// This manager handles the creation and lifecycle of SQLite database connections
+/// for use with the bb8 connection pool. It provides configuration options for
+/// database flags and timeouts.
 #[derive(Debug, Clone)]
 pub struct RusqliteConnectionManager {
     connection_options: Arc<ConnectionOptions>,
 }
 
 impl RusqliteConnectionManager {
+    /// Set the busy timeout for database connections
+    /// 
+    /// Configures how long database operations will wait when the database
+    /// is locked before timing out.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `timeout` - The timeout duration
     pub fn set_timeout(&mut self, timeout: Duration) {
         let config = Arc::make_mut(&mut self.connection_options);
         config.busy_timeout = timeout;
     }
 
+    /// Create a new connection manager for the specified database path
+    /// 
+    /// Creates a connection manager that will open SQLite databases at the
+    /// specified path with default flags and a 500ms busy timeout.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `path` - Path to the SQLite database file
+    /// 
+    /// # Returns
+    /// 
+    /// A new connection manager
     pub fn new(path: impl AsRef<Path>) -> Self {
         Self {
             connection_options: Arc::new(ConnectionOptions {
@@ -39,6 +81,19 @@ impl RusqliteConnectionManager {
         }
     }
 
+    /// Create a new connection manager with custom SQLite flags
+    /// 
+    /// Creates a connection manager with custom SQLite open flags,
+    /// allowing fine-grained control over database behavior.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `path` - Path to the SQLite database file
+    /// * `flags` - SQLite open flags to use
+    /// 
+    /// # Returns
+    /// 
+    /// A new connection manager with custom flags
     pub fn new_with_flags(path: impl AsRef<Path>, flags: rusqlite::OpenFlags) -> Self {
         Self {
             connection_options: Arc::new(ConnectionOptions {

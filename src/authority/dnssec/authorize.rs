@@ -14,6 +14,33 @@ impl<Z> DNSSecZone<Z>
 where
     Z: Lookup,
 {
+    /// Authorize a DNS UPDATE request using cryptographic authentication
+    ///
+    /// Verifies that the UPDATE request is properly authenticated using SIG(0)
+    /// signatures. The signature must be created with a key that exists in the zone
+    /// as a KEY record.
+    ///
+    /// This implements RFC 2136 section 3.3 for authentication of UPDATE requests.
+    ///
+    /// # Arguments
+    ///
+    /// * `update_message` - The DNS UPDATE message to authorize
+    ///
+    ///  # Returns
+    ///
+    /// Success if the request is authorized, or a response code indicating failure
+    ///
+    /// # Errors
+    ///
+    /// * `ResponseCode::Refused` - If updates are not allowed or authentication fails
+    /// * `ResponseCode::FormErr` - If the request format is invalid
+    ///
+    /// # Security
+    ///
+    /// This method performs cryptographic signature verification to ensure that
+    ///  only authorized parties can modify the zone.
+    ///
+    /// # Specification
     /// [RFC 2136](https://tools.ietf.org/html/rfc2136), DNS Update, April 1997
     ///
     /// ```text
@@ -37,7 +64,6 @@ where
     ///   requestor.
     /// ```
     ///
-    #[allow(clippy::blocks_in_conditions)]
     pub async fn authorize(&self, update_message: &MessageRequest) -> UpdateResult<()> {
         use tracing::debug;
 

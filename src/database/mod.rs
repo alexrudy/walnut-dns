@@ -1,3 +1,5 @@
+//! Database Catalogs for DNS
+
 use std::{
     collections::BTreeMap,
     ops::{Deref, DerefMut},
@@ -32,7 +34,28 @@ mod pool;
 #[cfg(feature = "pool")]
 pub use pool::RusqliteConnectionManager;
 
+/// Trait for deserializing objects from SQLite rows
+///
+/// This trait provides a way to construct objects from SQLite query results.
+/// It's used throughout the database layer to convert raw row data into
+/// strongly-typed Rust structures.
 pub(crate) trait FromRow {
+    /// Create an instance from a SQLite row
+    ///
+    /// Extracts the necessary data from the provided row and constructs
+    /// a new instance of the implementing type.
+    ///
+    /// # Arguments
+    ///
+    /// * `row` - The SQLite row containing the data
+    ///
+    /// # Returns
+    ///
+    /// A new instance of the implementing type
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the row data cannot be converted to the expected type
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self>
     where
         Self: Sized;
@@ -44,6 +67,7 @@ const MONARCH: StaticMonarchConfiguration<1> = StaticMonarchConfiguration {
     migrations: [include_str!("../migrations/01.zone.sql")],
 };
 
+/// Provides access to a (possibly) pooled connection
 #[derive(Debug, Clone)]
 pub struct ConnectionManager {
     inner: InnerConnectionManager,
@@ -74,7 +98,8 @@ impl From<self::pool::Pool> for ConnectionManager {
 }
 
 impl ConnectionManager {
-    async fn get(&self) -> Result<Connection<'_>> {
+    /// Get the underlying conneciton
+    pub async fn get(&self) -> Result<Connection<'_>> {
         match &self.inner {
             #[cfg(feature = "pool")]
             InnerConnectionManager::Pool(pool) => pool.get().await.map(Connection::pool),
@@ -92,6 +117,8 @@ enum InnerConnection<'c> {
     Single(std::sync::MutexGuard<'c, rusqlite::Connection>),
 }
 
+/// A unified connection which is either derived from a
+/// single connection in a Mutex, or a proper connection pool.
 #[derive(Debug)]
 pub struct Connection<'c> {
     inner: InnerConnection<'c>,
@@ -134,22 +161,61 @@ impl<'c> DerefMut for Connection<'c> {
     }
 }
 
-/// Configuration for the SQLite backend.
+/// Configuration for the SQLite database backend
+///
+/// This structure contains all the configuration options needed to set up
+/// a SQLite database connection for the DNS server.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct SqliteConfiguration {
+    /// Path to the SQLite database file
+    ///
+    /// If None, an in-memory database will be used. For persistent storage,
+    /// provide a path to where the database file should be created or opened.
     #[serde(default)]
     path: Option<Utf8PathBuf>,
+
+    /// Busy timeout in milliseconds
+    ///
+    /// How long to wait when the database is locked by another connection
+    /// before giving up. Only used when connection pooling is enabled.
     #[allow(dead_code)]
     busy_timeout: Option<u64>,
 }
 
-/// SqliteCatalog is a catalog implementation that uses SQLite as the backend for DNS zones and records
+/// SQLite-based DNS zone and record storage
+///
+/// SqliteStore provides a complete implementation of DNS zone storage using SQLite
+/// as the backend database. It supports both in-memory and file-based databases,
+/// with optional connection pooling for improved concurrency.
+///
+/// The store handles:
+/// - Zone metadata storage and retrieval
+/// - DNS record persistence with proper indexing
+/// - Transaction-based operations for consistency
+/// - Automatic database schema migrations
+/// - Connection pooling (when enabled)
 #[derive(Debug, Clone)]
 pub struct SqliteStore {
     manager: ConnectionManager,
 }
 
 impl SqliteStore {
+    /// Create a new SQLite store with an existing connection manager
+    ///
+    /// Initializes the SQLite store with the provided connection manager
+    /// and applies any necessary database migrations.
+    ///
+    /// # Arguments
+    ///
+    /// * `manager` - The connection manager to use for database access
+    ///
+    /// # Returns
+    ///
+    /// A new SqliteStore instance
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database cannot be accessed or migrations fail
     pub async fn new(manager: ConnectionManager) -> Result<Self> {
         let db = MonarchDB::from(MONARCH);
         {
@@ -159,7 +225,23 @@ impl SqliteStore {
         Ok(Self { manager })
     }
 
-    /// Creates a new SqliteCatalog instance from a configuration.
+    /// Create a new SQLite store from configuration
+    ///
+    /// Creates a new SQLite store using the provided configuration.
+    /// The configuration determines whether to use a file-based or in-memory database,
+    /// and whether to enable connection pooling.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The SQLite configuration
+    ///
+    /// # Returns
+    ///
+    /// A new SqliteStore instance
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database cannot be created or accessed
     pub async fn new_from_config(config: &SqliteConfiguration) -> Result<Self> {
         let manager = if let Some(path) = &config.path {
             #[cfg(not(feature = "pool"))]
@@ -182,12 +264,32 @@ impl SqliteStore {
         Self::new(manager).await
     }
 
-    /// Creates a new SqliteCatalog instance from an in-memory database.
+    /// Create a new SQLite store using an in-memory database
+    ///
+    /// Creates a new store that uses an in-memory SQLite database.
+    /// This is useful for testing or temporary storage where persistence
+    /// is not required.
+    ///
+    /// # Returns
+    ///
+    /// A new SqliteStore instance with in-memory storage
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the in-memory database cannot be created
     pub async fn new_in_memory() -> Result<Self> {
         let connection = rusqlite::Connection::open_in_memory()?;
         Self::new(connection.into()).await
     }
 
+    /// Get a journal for recording DNS operations
+    ///
+    /// Returns a journal that can be used to record DNS update operations
+    /// for this store. The journal uses the same connection manager as the store.
+    ///
+    /// # Returns
+    ///
+    /// A SqliteJournal instance for this store
     pub fn journal(&self) -> SqliteJournal {
         SqliteJournal::new(self.manager.clone())
     }
@@ -207,10 +309,39 @@ impl From<rusqlite::Error> for CatalogError {
 }
 
 impl SqliteStore {
+    /// Get a database connection from the connection manager
+    ///
+    /// Returns a database connection that can be used for direct SQL operations.
+    /// The connection is automatically managed and will be returned to the pool
+    /// when dropped (if pooling is enabled).
+    ///
+    /// # Returns
+    ///
+    /// A database connection
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no connection is available
     pub async fn connection(&self) -> Result<Connection<'_>, CatalogError> {
         self.manager.get().await.map_err(Into::into)
     }
 
+    /// Get a zone by its unique identifier
+    ///
+    /// Retrieves a complete zone (including all its records) from the database
+    /// using the zone's unique ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The unique identifier of the zone to retrieve
+    ///
+    /// # Returns
+    ///
+    /// The zone with all its records
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the zone is not found or cannot be loaded
     #[tracing::instrument(skip_all, fields(zone=%id), level = "debug")]
     pub async fn get(&self, id: ZoneID) -> Result<Zone, CatalogError> {
         let mut conn = self.manager.get().await?;
@@ -223,6 +354,22 @@ impl SqliteStore {
         })
     }
 
+    /// Delete a zone and all its records
+    ///
+    /// Removes a zone and all associated records from the database.
+    /// This operation is permanent and cannot be undone.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The unique identifier of the zone to delete
+    ///
+    /// # Returns
+    ///
+    /// Success if the zone was deleted
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the zone cannot be deleted
     #[tracing::instrument(skip_all, fields(zone=%id), level = "debug")]
     pub async fn delete(&self, id: ZoneID) -> Result<(), CatalogError> {
         let mut conn = self.manager.get().await?;
@@ -236,6 +383,22 @@ impl SqliteStore {
         })
     }
 
+    /// Insert or update a zone and all its records
+    ///
+    /// Stores a zone and all its records in the database. If the zone already
+    /// exists, it will be updated with the new data.
+    ///
+    /// # Arguments
+    ///
+    /// * `zone` - The zone to insert or update
+    ///
+    /// # Returns
+    ///
+    /// The number of zones affected (typically 1)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the zone cannot be stored
     #[tracing::instrument(skip_all, fields(zone=%zone.name()), level = "debug")]
     pub async fn insert(&self, zone: &Zone) -> Result<usize, CatalogError> {
         let mut conn = self.manager.get().await?;
@@ -295,11 +458,11 @@ impl CatalogStore<ZoneAuthority<Zone>> for SqliteStore {
     }
 
     #[tracing::instrument(skip_all, level = "debug")]
-    async fn list(&self) -> Result<Vec<Name>, CatalogError> {
+    async fn list(&self, name: &LowerName) -> Result<Vec<Name>, CatalogError> {
         let conn = self.manager.get().await?;
         crate::block_in_place(|| {
             let zx = ZonePersistence::new(&conn);
-            let names = zx.list()?;
+            let names = zx.list(name)?;
             tracing::debug!("list {n} zones", n = names.len());
             Ok(names)
         })
@@ -490,13 +653,19 @@ impl<'c> ZonePersistence<'c> {
     }
 
     #[tracing::instrument(skip_all, level = "trace")]
-    pub(crate) fn list(&self) -> rusqlite::Result<Vec<Name>> {
+    pub(crate) fn list(&self, root: &LowerName) -> rusqlite::Result<Vec<Name>> {
         let mut stmt = self.connection.prepare(&format!(
-            "SELECT DISTINCT name FROM {table}",
+            "SELECT DISTINCT name FROM {table} WHERE lower(name) LIKE :name",
             table = Self::TABLE.table
         ))?;
+
+        let name = format!("%{root}");
+        tracing::trace!("Listing records for root: {}", name);
+
         let names = stmt
-            .query_map([], |row| Ok(row.get::<_, SqlName>("name")?.into()))?
+            .query_map(named_params! {":name": name}, |row| {
+                Ok(row.get::<_, SqlName>("name")?.into())
+            })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(names)
     }
@@ -667,8 +836,8 @@ mod tests {
     use std::path::Path;
     use tempfile::TempDir;
 
-    fn create_test_zone() -> Zone {
-        let name = Name::from_utf8("test.example.com").unwrap();
+    fn create_test_zone(name: &str) -> Zone {
+        let name = Name::from_utf8(name).unwrap();
         let soa = rdata::SOA::new(
             name.clone(),
             Name::from_utf8("admin.example.com").unwrap(),
@@ -752,7 +921,7 @@ mod tests {
     #[tokio::test]
     async fn test_catalog_upsert_and_get_zone() {
         let catalog = SqliteStore::new_in_memory().await.unwrap();
-        let zone = create_test_zone();
+        let zone = create_test_zone("test.example.com");
         let zone_id = zone.id();
         let expected_name = zone.name().clone();
         let expected_type = zone.zone_type();
@@ -771,7 +940,7 @@ mod tests {
     #[tokio::test]
     async fn test_catalog_find_zone() {
         let catalog = SqliteStore::new_in_memory().await.unwrap();
-        let zone = create_test_zone();
+        let zone = create_test_zone("test.example.com");
         let zone_name = LowerName::from(zone.name().clone());
         let expected_name = zone.name().clone();
 
@@ -797,7 +966,7 @@ mod tests {
     #[tokio::test]
     async fn test_catalog_delete_zone() {
         let catalog = SqliteStore::new_in_memory().await.unwrap();
-        let zone = create_test_zone();
+        let zone = create_test_zone("test.example.com");
         let zone_id = zone.id();
 
         // Upsert zone
@@ -819,16 +988,18 @@ mod tests {
         let catalog = SqliteStore::new_in_memory().await.unwrap();
 
         // Start with empty list
-        let initial_list = catalog.list().await.unwrap();
+        let root = LowerName::new(&Name::root());
+        let initial_list = catalog.list(&root).await.unwrap();
         assert!(initial_list.is_empty());
 
         // Add a zone
-        let zone = create_test_zone();
+        let zone = create_test_zone("test.example.com");
         let zone_name = zone.name().clone();
         catalog.insert(&zone).await.unwrap();
 
+        let root = LowerName::new(&Name::root());
         // List should contain the zone
-        let zone_list = catalog.list().await.unwrap();
+        let zone_list = catalog.list(&root).await.unwrap();
         assert_eq!(zone_list.len(), 1);
         assert_eq!(zone_list[0], zone_name);
     }
@@ -838,7 +1009,7 @@ mod tests {
         let catalog = SqliteStore::new_in_memory().await.unwrap();
 
         // Create multiple zones
-        let zone1 = create_test_zone();
+        let zone1 = create_test_zone("test.example.org");
         let zone1_name = zone1.name().clone();
         let zone2 = {
             let name = Name::from_utf8("another.example.com").unwrap();
@@ -861,10 +1032,16 @@ mod tests {
         catalog.insert(&zone2).await.unwrap();
 
         // List should contain both zones
-        let zone_list = catalog.list().await.unwrap();
+        let root = LowerName::new(&Name::root());
+        let zone_list = catalog.list(&root).await.unwrap();
         assert_eq!(zone_list.len(), 2);
         assert!(zone_list.contains(&zone1_name));
         assert!(zone_list.contains(&zone2_name));
+
+        let zone_list = catalog.list(&zone1_name.clone().into()).await.unwrap();
+        assert_eq!(zone_list.len(), 1);
+        assert!(zone_list.contains(&zone1_name));
+        assert!(!zone_list.contains(&zone2_name));
     }
 
     #[tokio::test]
@@ -872,8 +1049,8 @@ mod tests {
         let catalog = SqliteStore::new_in_memory().await.unwrap();
 
         // Create multiple zones
-        let zone1 = create_test_zone();
-        let zone2 = create_test_zone();
+        let zone1 = create_test_zone("test.exmaple.com");
+        let zone2 = create_test_zone("test.example.org");
         let name = zone1.origin().clone();
         catalog
             .upsert(name.clone(), &vec![zone1.into(), zone2.into()])
@@ -881,7 +1058,8 @@ mod tests {
             .unwrap();
 
         // List should contain both zones
-        let zone_list = catalog.list().await.unwrap();
+        let root = LowerName::new(&Name::root());
+        let zone_list = catalog.list(&root).await.unwrap();
         assert_eq!(zone_list.len(), 1);
         assert!(zone_list.contains(&name.into()));
     }
@@ -889,7 +1067,7 @@ mod tests {
     #[tokio::test]
     async fn test_catalog_zone_with_records() {
         let catalog = SqliteStore::new_in_memory().await.unwrap();
-        let mut zone = create_test_zone();
+        let mut zone = create_test_zone("test.example.com");
         let a_record = create_test_a_record();
 
         // Add record to zone
@@ -915,7 +1093,7 @@ mod tests {
     #[tokio::test]
     async fn test_catalog_concurrent_access() {
         let catalog = SqliteStore::new_in_memory().await.unwrap();
-        let zone = create_test_zone();
+        let zone = create_test_zone("test.example.com");
         let zone_name = LowerName::from(zone.name().clone());
 
         // Test that the catalog can handle concurrent access via Arc<Mutex<Connection>>
@@ -939,7 +1117,7 @@ mod tests {
     #[tokio::test]
     async fn test_zone_update_serial_number() {
         let catalog = SqliteStore::new_in_memory().await.unwrap();
-        let mut zone = create_test_zone();
+        let mut zone = create_test_zone("test.example.com");
         let a_record = create_test_a_record();
 
         // Add record with serial 1
@@ -963,7 +1141,7 @@ mod tests {
     #[tokio::test]
     async fn test_zone_name_case_insensitive_search() {
         let catalog = SqliteStore::new_in_memory().await.unwrap();
-        let zone = create_test_zone();
+        let zone = create_test_zone("test.example.com");
         let expected_name = zone.name().clone();
 
         catalog.insert(&zone).await.unwrap();

@@ -5,6 +5,7 @@ use chrono::Utc;
 
 use rusqlite::types::{FromSql, ToSql};
 
+/// DNS Cache Time-to-live, in seconds
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TimeToLive(u32);
 
@@ -13,10 +14,29 @@ impl TimeToLive {
     pub const MIN: TimeToLive = TimeToLive(u32::MIN);
     pub const ZERO: TimeToLive = TimeToLive(0u32);
 
+    /// Create a TimeToLive from seconds
+    ///
+    /// Creates a new TimeToLive value from the specified number of seconds.
+    ///
+    /// # Arguments
+    ///
+    /// * `secs` - The TTL value in seconds
+    ///
+    /// # Returns
+    ///
+    /// A new TimeToLive instance
     pub fn from_secs(secs: u32) -> Self {
         TimeToLive(secs)
     }
 
+    /// Calculate the deadline for this TTL
+    ///
+    /// Returns the UTC timestamp when a record with this TTL would expire
+    /// if cached now.
+    ///
+    /// # Returns
+    ///
+    /// The expiration timestamp
     pub fn deadline(&self) -> chrono::DateTime<Utc> {
         Utc::now() + Duration::from(*self)
     }

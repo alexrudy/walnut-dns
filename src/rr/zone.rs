@@ -17,10 +17,14 @@ use super::{
     rset::{Mismatch, RecordSet},
 };
 
+/// The authoratative nature of this zone.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 pub enum ZoneType {
+    /// This is a primary nameserver, and holds the zone files of record.
     Primary = 1,
+    /// This nameserver replicates the zone files of recrod.
     Secondary = 2,
+    /// This nameserver provides exteranal zone data
     External = 3,
 }
 
@@ -75,6 +79,7 @@ impl FromSql for ZoneType {
     }
 }
 
+/// Represents a DNS Zone/Authority and associated records
 #[derive(Debug, Clone)]
 pub struct Zone {
     id: ZoneID,
@@ -87,7 +92,21 @@ pub struct Zone {
 }
 
 impl Zone {
-    /// Create a new empty Zone file with only a SOA record (which is required)
+    /// Create a new empty zone with only a SOA record
+    ///
+    /// Creates a new DNS zone containing only the required SOA record.
+    /// Additional records can be added later using the zone's methods.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The zone name (e.g., "example.com")
+    /// * `soa` - The Start of Authority record for this zone
+    /// * `zone_type` - The type of zone (Primary, Secondary, External)
+    /// * `allow_axfr` - Whether to allow zone transfers (AXFR)
+    ///
+    /// # Returns
+    ///
+    /// A new zone instance
     pub fn empty(
         name: Name,
         soa: Record<rdata::SOA>,
@@ -109,6 +128,20 @@ impl Zone {
         }
     }
 
+    /// Create a zone from an iterator of record sets
+    ///
+    /// Creates a new DNS zone from a collection of record sets. This is useful
+    /// when loading a zone from a file or database.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The zone name
+    /// * `records` - An iterator of record sets to include in the zone
+    /// * `zone_type` - The type of zone (Primary, Secondary, External)
+    ///
+    /// # Returns
+    ///
+    /// A new zone instance containing the provided records
     pub fn from_rrsets(
         name: Name,
         records: impl Iterator<Item = RecordSet>,
@@ -133,49 +166,123 @@ impl Zone {
 }
 
 impl Zone {
-    /// Database ID
+    /// Get the unique database identifier for this zone
+    ///
+    /// Returns the unique ID assigned to this zone when it was created.
+    /// This ID is used internally for database operations.
+    ///
+    /// # Returns
+    ///
+    /// The unique zone identifier
     pub fn id(&self) -> ZoneID {
         self.id
     }
 
-    /// The name of this zone.
+    /// Get the name of this zone
+    ///
+    /// Returns the fully qualified domain name that this zone is authoritative for.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the zone name
     pub fn name(&self) -> &Name {
         &self.name
     }
 
-    /// The type of this zone, (Primary / Secondary / External)
+    /// Get the type of this zone
+    ///
+    /// Returns whether this zone is Primary (authoritative), Secondary (slave),
+    /// or External (forwarding).
+    ///
+    /// # Returns
+    ///
+    /// The zone type
     pub fn zone_type(&self) -> ZoneType {
         self.zone_type
     }
 
-    /// Whether to allow zone transfers
+    /// Check if zone transfers are allowed
+    ///
+    /// Returns whether this zone permits AXFR (zone transfer) requests.
+    ///
+    /// # Returns
+    ///
+    /// `true` if zone transfers are allowed
     pub fn allow_axfr(&self) -> bool {
         self.allow_axfr
     }
 
     /// Set whether to allow zone transfers
+    ///
+    /// Enables or disables AXFR (zone transfer) requests for this zone.
+    ///
+    /// # Arguments
+    ///
+    /// * `allow_axfr` - Whether to allow zone transfers
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to this zone for method chaining
     pub fn set_allow_axfr(&mut self, allow_axfr: bool) -> &mut Self {
         self.allow_axfr = allow_axfr;
         self
     }
 
-    /// Set the DNS class of this zone.
+    /// Set the DNS class of this zone
+    ///
+    /// Updates the DNS class (typically IN for Internet) for this zone.
+    ///
+    /// # Arguments
+    ///
+    /// * `dns_class` - The new DNS class
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to this zone for method chaining
     pub fn set_dns_class(&mut self, dns_class: DNSClass) -> &mut Self {
         self.dns_class = dns_class;
         self
     }
 
+    /// Get an iterator over all records in this zone
+    ///
+    /// Returns an iterator that yields all DNS records in the zone,
+    /// including signed records (with RRSIG signatures).
+    ///
+    /// # Returns
+    ///
+    /// An iterator over all records in the zone
     pub fn records(&self) -> impl Iterator<Item = &Record> {
         self.records
             .values()
             .flat_map(|rrset| rrset.signed_records())
     }
 
+    /// Replace a record set in this zone
+    ///
+    /// Replaces an existing record set with a new one, or inserts the new
+    /// record set if no matching one exists.
+    ///
+    /// # Arguments
+    ///
+    /// * `rrset` - The record set to insert or replace
+    ///
+    /// # Returns
+    ///
+    /// The previously existing record set, or None if this is a new insertion
     pub fn replace(&mut self, rrset: RecordSet) -> Option<RecordSet> {
         let key = rrset.rrkey();
         self.records.insert(key, rrset)
     }
 
+    /// Check if this zone is empty
+    ///
+    /// Returns true if the zone contains no record sets. Note that a zone
+    /// with only a SOA record is not considered empty.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the zone contains no record sets
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
@@ -366,6 +473,24 @@ impl From<Zone> for ZoneAuthority<Zone> {
 }
 
 impl Zone {
+    /// Load a zone from a DNS zone file
+    ///
+    /// Reads and parses a DNS zone file, creating a new zone instance
+    /// with the records found in the file.
+    ///
+    /// # Arguments
+    ///
+    /// * `origin` - The zone origin (root name for the zone)
+    /// * `path` - Path to the zone file to read
+    /// * `zone_type` - The type of zone to create
+    ///
+    /// # Returns
+    ///
+    /// A new zone instance loaded from the file
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read or parsed
     pub fn read_from_file(
         origin: Name,
         path: impl AsRef<Path>,

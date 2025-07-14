@@ -13,7 +13,42 @@ impl<Z> DNSSecZone<Z>
 where
     Z: Lookup,
 {
-    /// Updates the specified records according to the update section.
+    /// Process DNS UPDATE records to modify the zone
+    ///
+    /// Processes a set of DNS UPDATE operations to add, modify, or delete records
+    /// in the zone. This implements RFC 2136 section 3.4.2 for update processing.
+    ///
+    /// The method supports all standard DNS UPDATE operations:
+    /// - Adding records to RRSets (zone class)
+    /// - Deleting entire RRSets (ANY class)
+    /// - Deleting specific records (NONE class)
+    /// - Protecting critical records (SOA, NS at origin)
+    ///
+    /// After successful updates, the zone can be automatically signed with DNSSEC
+    /// and the SOA serial number incremented. Changes are journaled for auditing
+    /// and recovery purposes.
+    ///
+    /// # Arguments
+    ///
+    /// * `records` - The UPDATE records specifying the operations to perform
+    /// * `auto_signing_and_increment` - Whether to automatically sign the zone with DNSSEC
+    ///   and increment the SOA serial after updates. Should be disabled during recovery.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(true)` if any records were modified, `Ok(false)` if no changes were made
+    ///
+    /// # Errors
+    ///
+    /// * `ResponseCode::FormErr` - If record format is invalid
+    /// * `ResponseCode::ServFail` - If journaling or DNSSEC signing fails
+    ///
+    /// # Security
+    ///
+    /// This method protects critical zone records (SOA and NS at the zone origin)
+    /// from deletion to maintain zone integrity.
+    ///
+    /// # Specification
     ///
     /// [RFC 2136](https://tools.ietf.org/html/rfc2136), DNS Update, April 1997
     ///
@@ -28,12 +63,6 @@ where
     ///   NONE     rrset    rr       Delete an RR from an RRset
     ///   zone     rrset    rr       Add to an RRset
     /// ```
-    ///
-    /// # Arguments
-    ///
-    /// * `records` - set of record instructions for update following above rules
-    /// * `auto_signing_and_increment` - if true, the zone will sign and increment the SOA, this
-    ///   should be disabled during recovery.
     pub async fn update_records(
         &mut self,
         records: &[Record],

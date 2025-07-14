@@ -13,6 +13,36 @@ impl<Z> DNSSecZone<Z>
 where
     Z: Lookup,
 {
+    /// Verify DNS UPDATE prerequisites
+    ///
+    /// Validates that all prerequisite conditions specified in the UPDATE request
+    /// are satisfied by the current state of the zone. This implements RFC 2136
+    /// section 3.2 for prerequisite processing.
+    ///
+    /// Prerequisites can specify:
+    /// - Name exists/doesn't exist in the zone
+    /// - RRSet exists/doesn't exist
+    /// - Specific records exist with exact values
+    ///
+    /// # Arguments
+    ///
+    /// * `pre_requisites` - The prerequisite records to verify
+    ///
+    /// # Returns
+    ///
+    /// Success if all prerequisites are satisfied
+    ///
+    /// # Errors
+    ///
+    /// * `ResponseCode::FormErr` - If prerequisite format is invalid
+    /// * `ResponseCode::NotZone` - If record name is not in this zone
+    /// * `ResponseCode::NXDomain` - If required name doesn't exist
+    /// * `ResponseCode::YXDomain` - If name exists when it shouldn't
+    /// * `ResponseCode::NXRRSet` - If required RRSet doesn't exist
+    /// * `ResponseCode::YXRRSet` - If RRSet exists when it shouldn't
+    ///
+    /// # Specification
+    ///
     /// [RFC 2136](https://tools.ietf.org/html/rfc2136), DNS Update, April 1997
     ///
     /// ```text
@@ -212,6 +242,32 @@ where
         Ok(())
     }
 
+    /// Pre-scan DNS UPDATE records for validity
+    ///
+    /// Validates the format and structure of UPDATE records before processing.
+    /// This implements RFC 2136 section 3.4.1 for update section validation.
+    ///
+    /// The pre-scan verifies:
+    /// - All record names are within this zone
+    /// - Record classes are valid (zone class, ANY, or NONE)
+    /// - TTL values are appropriate for the operation
+    /// - Record types are valid for the operation
+    ///
+    /// # Arguments
+    ///
+    /// * `records` - The update records to validate
+    ///
+    /// # Returns
+    ///
+    /// Success if all records are valid for processing
+    ///
+    /// # Errors
+    ///
+    /// * `ResponseCode::FormErr` - If record format is invalid
+    /// * `ResponseCode::NotZone` - If record name is not in this zone
+    ///
+    /// # Specification
+    ///
     /// [RFC 2136](https://tools.ietf.org/html/rfc2136), DNS Update, April 1997
     ///
     /// ```text

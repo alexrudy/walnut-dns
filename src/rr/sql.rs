@@ -56,6 +56,23 @@ impl FromSql for SqlName {
 
 /// Extension trait to add utility methods for Name
 pub trait NameExt {
+    /// Parse an email address for use in SOA records
+    /// 
+    /// Converts an email address (e.g., "admin@example.com") into the DNS name
+    /// format used in SOA records (e.g., "admin.example.com"). Dots in the
+    /// local part are escaped with backslashes.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `email` - The email address to parse
+    /// 
+    /// # Returns
+    /// 
+    /// A DNS name suitable for use in SOA records
+    /// 
+    /// # Errors
+    /// 
+    /// Returns an error if the email address is invalid or cannot be parsed
     fn parse_soa_email(email: impl AsRef<str>) -> Result<Self, ProtoError>
     where
         Self: Sized;
