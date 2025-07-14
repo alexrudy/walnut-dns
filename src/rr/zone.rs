@@ -464,6 +464,10 @@ impl Lookup for Zone {
     fn remove(&mut self, key: &RrKey) -> Option<RecordSet> {
         self.records.remove(key)
     }
+
+    fn replace(&mut self, rrset: RecordSet) -> Option<RecordSet> {
+        self.records.insert(rrset.rrkey(), rrset)
+    }
 }
 
 impl From<Zone> for ZoneAuthority<Zone> {

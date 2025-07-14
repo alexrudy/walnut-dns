@@ -256,6 +256,21 @@ pub trait Lookup: ZoneInfo {
     /// The removed record set if it existed, None otherwise
     fn remove(&mut self, key: &RrKey) -> Option<RecordSet>;
 
+    /// Replace a record set with a new one, returning the previous one if found.
+    ///
+    /// If the new record set has the same name and type as an existing record set,
+    /// the existing record set is replaced with the new one and returned.
+    /// If no matching record set is found, the new record set is inserted and None is returned.
+    ///
+    /// # Arguments
+    ///
+    /// * `rrset` - The new record set to replace the existing one
+    ///
+    /// # Returns
+    ///
+    /// The previous record set if it existed, None otherwise
+    fn replace(&mut self, rrset: RecordSet) -> Option<RecordSet>;
+
     /// Get records within a specified range
     ///
     /// Returns an iterator over record keys and sets that fall within
