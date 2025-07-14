@@ -4,6 +4,16 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.87"
+description = "Additions and helpers for flexible hickory-dns servers"
+repository = "https://github.com/alexrudy/walnut-dns"
+documentation = "https://docs.rs/walnut-dns"
+readme = "README.md"
+authors = ["Alex Rudy <opensource@alexrudy.net>"]
+categories = [
+    "network-programming",
+    "web-programming",
+]
+keywords = ["dns", "server", "async"]
 
 [dependencies]
 async-trait = "0.1"
@@ -42,8 +52,8 @@ features = [
 ]
 
 [dependencies.monarch-db]
-version = "0.1"
-git = "https://github.com/alexrudy/monarch-db.git"
+version = ">=0.1.1"
+# git = "https://github.com/alexrudy/monarch-db.git"
 
 [dependencies.tracing-subscriber]
 version = "^0.3"
