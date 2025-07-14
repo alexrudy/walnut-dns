@@ -147,6 +147,14 @@ pub struct Catalog<A> {
     zones: Arc<dyn CatalogStore<A> + Send + Sync + 'static>,
 }
 
+impl<A> Clone for Catalog<A> {
+    fn clone(&self) -> Self {
+        Self {
+            zones: self.zones.clone(),
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument("send", skip_all, level = "trace")]
 async fn send_lookup_response<R: ResponseHandler>(
