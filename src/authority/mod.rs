@@ -668,6 +668,15 @@ where
     }
 }
 
+impl<Z> AsRef<Z> for ZoneAuthority<Z>
+where
+    Z: Lookup + ZoneInfo + Send + Sync + 'static,
+{
+    fn as_ref(&self) -> &Z {
+        &self.0
+    }
+}
+
 impl<Z> Deref for ZoneAuthority<Z> {
     type Target = Z;
 
