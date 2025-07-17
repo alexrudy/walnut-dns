@@ -11,6 +11,8 @@ use hickory_proto::xfer::SerialMessage;
 
 use crate::error::HickoryError;
 
+use super::request::SerializedRequest;
+
 #[derive(Debug, Clone, Default)]
 pub struct UdpProtocol {
     _priv: (),
@@ -22,9 +24,9 @@ impl UdpProtocol {
     }
 }
 
-impl<S> Protocol<S, UdpConnection, SerialMessage> for UdpProtocol
+impl<S> Protocol<S, UdpConnection, SerializedRequest> for UdpProtocol
 where
-    S: tower::Service<SerialMessage, Response = SerialMessage, Error = HickoryError> + 'static,
+    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError> + 'static,
 {
     type Response = SerialMessage;
 
@@ -43,24 +45,27 @@ where
 #[pin_project::pin_project]
 pub struct DnsUdpResponder<S>
 where
-    S: tower::Service<SerialMessage, Response = SerialMessage, Error = HickoryError>,
+    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
 {
     cancelled: bool,
 
     #[pin]
-    oneshot: tower::util::Oneshot<S, SerialMessage>,
+    oneshot: tower::util::Oneshot<S, SerializedRequest>,
 
     responder: Option<UdpResponder>,
 }
 
 impl<S> DnsUdpResponder<S>
 where
-    S: tower::Service<SerialMessage, Response = SerialMessage, Error = HickoryError>,
+    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
 {
     pub fn new(service: S, msg: SerialMessage, responder: UdpResponder) -> Self {
         Self {
             cancelled: false,
-            oneshot: tower::util::Oneshot::new(service, msg),
+            oneshot: tower::util::Oneshot::new(
+                service,
+                SerializedRequest::new(msg, hickory_proto::xfer::Protocol::Udp),
+            ),
             responder: Some(responder),
         }
     }
@@ -68,7 +73,7 @@ where
 
 impl<S> Future for DnsUdpResponder<S>
 where
-    S: tower::Service<SerialMessage, Response = SerialMessage, Error = HickoryError>,
+    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
 {
     type Output = Result<(), HickoryError>;
 
@@ -92,7 +97,7 @@ where
 
 impl<S> Connection for DnsUdpResponder<S>
 where
-    S: tower::Service<SerialMessage, Response = SerialMessage, Error = HickoryError>,
+    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
 {
     fn graceful_shutdown(self: Pin<&mut Self>) {
         *self.project().cancelled = true;

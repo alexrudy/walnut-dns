@@ -915,11 +915,7 @@ where
                 MessageType::Query => catalog.handle_query(&request, edns).await,
                 MessageType::Response => {
                     tracing::warn!("got a response as a request from id: {}", request.id());
-                    Ok(Message::error_msg(
-                        request.id(),
-                        request.op_code(),
-                        ResponseCode::FormErr,
-                    ))
+                    Err(HickoryError::ResponseAsRequest)
                 }
             }
         })
@@ -1000,7 +996,7 @@ mod future {
     use crate::error::HickoryError;
 
     pub struct CatalogFuture {
-        inner: Pin<Box<dyn Future<Output = Result<Message, HickoryError>>>>,
+        inner: Pin<Box<dyn Future<Output = Result<Message, HickoryError>> + Send + 'static>>,
     }
 
     impl fmt::Debug for CatalogFuture {
@@ -1012,7 +1008,7 @@ mod future {
     impl CatalogFuture {
         pub(super) fn new<F>(future: F) -> Self
         where
-            F: Future<Output = Result<Message, HickoryError>> + 'static,
+            F: Future<Output = Result<Message, HickoryError>> + Send + 'static,
         {
             Self {
                 inner: Box::pin(future),

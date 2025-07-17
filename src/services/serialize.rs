@@ -1,4 +1,4 @@
-use hickory_proto::op::Message;
+use hickory_proto::op::{Header, Message, ResponseCode};
 use hickory_proto::serialize::binary::{BinDecodable as _, BinDecoder};
 use hickory_proto::xfer::SerialMessage;
 use hickory_server::{authority::MessageRequest, server::Request};
@@ -67,7 +67,18 @@ where
             Ok(mr) => mr,
             Err(error) => {
                 trace!("Error decoding incoming message: {error}");
-                return self::future::SerializerFuture::error(error);
+
+                let header = match Header::read(&mut decoder.clone(0)) {
+                    Ok(header) => header,
+                    Err(error) => {
+                        // Don't send a response in this case, this isn't a proper message.
+                        trace!("Fatal error decoding header: {error}");
+                        return self::future::SerializerFuture::error(error);
+                    }
+                };
+
+                let msg = Message::error_msg(header.id(), header.op_code(), ResponseCode::FormErr);
+                return self::future::SerializerFuture::response(msg, addr, protocl);
             }
         };
         let request = Request::new(message, addr, req.protocol());
@@ -98,6 +109,11 @@ mod future {
             dst: SocketAddr,
             protocol: Protocol,
         },
+        Response {
+            message: Option<Message>,
+            dst: SocketAddr,
+            protocol: Protocol,
+        },
         Error(Option<HickoryError>),
     }
 
@@ -121,7 +137,16 @@ mod future {
                 _error: PhantomData,
             }
         }
-
+        pub(super) fn response(message: Message, dst: SocketAddr, protocol: Protocol) -> Self {
+            Self {
+                state: SerializerFutureState::Response {
+                    message: Some(message),
+                    dst,
+                    protocol,
+                },
+                _error: PhantomData,
+            }
+        }
         pub(super) fn error<G: Into<HickoryError>>(error: G) -> Self {
             Self {
                 state: SerializerFutureState::Error(Some(error.into())),
@@ -141,7 +166,15 @@ mod future {
             let this = self.as_mut().project();
             match this.state.project() {
                 SerializerFutureStateProj::Error(error) => {
-                    Poll::Ready(Err(error.take().expect("future polled after ready")))
+                    Poll::Ready(Err(error.take().expect("future polled after ready (err)")))
+                }
+                SerializerFutureStateProj::Response {
+                    message,
+                    dst,
+                    protocol,
+                } => {
+                    let response = message.take().expect("future polled after ready (msg)");
+                    Poll::Ready(encode_response(response, *protocol, *dst).map_err(Into::into))
                 }
                 SerializerFutureStateProj::Future {
                     future,

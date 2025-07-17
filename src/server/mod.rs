@@ -1,7 +1,6 @@
 use chateau::server::{NeedsAcceptor, NeedsProtocol};
 use chateau::stream::udp::UdpListener;
 use chateau::{rt::TokioExecutor, server::Server};
-use hickory_proto::xfer::SerialMessage;
 use tokio::net::UdpSocket;
 use tower::Layer;
 use tower::make::Shared;
@@ -9,6 +8,7 @@ use tower::make::Shared;
 use crate::Catalog;
 use crate::services::serialize::{DNSEncoderDecoder, DNSEncoderDecoderLayer};
 
+use self::request::SerializedRequest;
 use self::udp::UdpProtocol;
 
 const DEFAULT_RECV_BUFFER_SIZE: usize = 4096;
@@ -18,13 +18,13 @@ pub mod request;
 pub mod response;
 pub mod udp;
 
-pub fn server<A>(
+pub fn catalog_server<A>(
     catalog: Catalog<A>,
 ) -> Server<
     NeedsAcceptor,
     NeedsProtocol,
     Shared<DNSEncoderDecoder<Catalog<A>>>,
-    SerialMessage,
+    SerializedRequest,
     TokioExecutor,
 > {
     Server::builder()
@@ -32,23 +32,29 @@ pub fn server<A>(
         .with_tokio()
 }
 
-pub trait UdpServerExt<S, E> {
+pub trait UdpServerExt<S, E>: Sized {
     fn with_default_udp(
         self,
         socket: UdpSocket,
-    ) -> Server<UdpListener, UdpProtocol, S, SerialMessage, E>;
+    ) -> Server<UdpListener, UdpProtocol, S, SerializedRequest, E> {
+        self.with_udp(socket, DEFAULT_RECV_BUFFER_SIZE, DEFAULT_SEND_QUEUE_SIZE)
+    }
+    fn with_udp(
+        self,
+        socket: UdpSocket,
+        recv_buffer_size: usize,
+        send_queue_size: usize,
+    ) -> Server<UdpListener, UdpProtocol, S, SerializedRequest, E>;
 }
 
-impl<S, E> UdpServerExt<S, E> for Server<NeedsAcceptor, NeedsProtocol, S, SerialMessage, E> {
-    fn with_default_udp(
+impl<S, E> UdpServerExt<S, E> for Server<NeedsAcceptor, NeedsProtocol, S, SerializedRequest, E> {
+    fn with_udp(
         self,
         socket: UdpSocket,
-    ) -> Server<UdpListener, UdpProtocol, S, SerialMessage, E> {
+        recv_buffer_size: usize,
+        send_queue_size: usize,
+    ) -> Server<UdpListener, UdpProtocol, S, SerializedRequest, E> {
         self.with_protocol(UdpProtocol::default())
-            .with_acceptor(UdpListener::new(
-                socket,
-                DEFAULT_RECV_BUFFER_SIZE,
-                DEFAULT_SEND_QUEUE_SIZE,
-            ))
+            .with_acceptor(UdpListener::new(socket, recv_buffer_size, send_queue_size))
     }
 }

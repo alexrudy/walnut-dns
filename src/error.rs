@@ -6,6 +6,9 @@ pub enum HickoryError {
     #[error("dns protocol error: {0}")]
     Protocol(#[from] ProtoError),
 
+    #[error("udp message does not appear to be dns")]
+    NotDNSMessage,
+
     #[error("Recieved a response as a request message")]
     ResponseAsRequest,
 
