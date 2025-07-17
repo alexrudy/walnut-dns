@@ -12,7 +12,6 @@ use self::request::SerializedRequest;
 use self::udp::UdpProtocol;
 
 const DEFAULT_RECV_BUFFER_SIZE: usize = 4096;
-const DEFAULT_SEND_QUEUE_SIZE: usize = 2048;
 
 pub mod request;
 pub mod response;
@@ -37,13 +36,12 @@ pub trait UdpServerExt<S, E>: Sized {
         self,
         socket: UdpSocket,
     ) -> Server<UdpListener, UdpProtocol, S, SerializedRequest, E> {
-        self.with_udp(socket, DEFAULT_RECV_BUFFER_SIZE, DEFAULT_SEND_QUEUE_SIZE)
+        self.with_udp(socket, DEFAULT_RECV_BUFFER_SIZE)
     }
     fn with_udp(
         self,
         socket: UdpSocket,
         recv_buffer_size: usize,
-        send_queue_size: usize,
     ) -> Server<UdpListener, UdpProtocol, S, SerializedRequest, E>;
 }
 
@@ -52,9 +50,8 @@ impl<S, E> UdpServerExt<S, E> for Server<NeedsAcceptor, NeedsProtocol, S, Serial
         self,
         socket: UdpSocket,
         recv_buffer_size: usize,
-        send_queue_size: usize,
     ) -> Server<UdpListener, UdpProtocol, S, SerializedRequest, E> {
         self.with_protocol(UdpProtocol::default())
-            .with_acceptor(UdpListener::new(socket, recv_buffer_size, send_queue_size))
+            .with_acceptor(UdpListener::new(socket, recv_buffer_size))
     }
 }

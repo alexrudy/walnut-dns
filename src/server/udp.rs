@@ -1,12 +1,10 @@
-use std::{
-    pin::Pin,
-    task::{Context, Poll, ready},
-};
+use std::net::SocketAddr;
+use std::pin::Pin;
+use std::task::{Context, Poll, ready};
 
-use chateau::{
-    server::{Connection, Protocol},
-    stream::udp::{UdpConnection, UdpResponder},
-};
+use bytes::{Buf, Bytes};
+use chateau::server::{Connection, Protocol};
+use chateau::stream::udp::UdpConnection;
 use hickory_proto::xfer::SerialMessage;
 
 use crate::error::HickoryError;
@@ -34,12 +32,22 @@ where
 
     type Connection = DnsUdpResponder<S>;
 
-    fn serve_connection(&self, stream: UdpConnection, service: S) -> Self::Connection {
-        let (msg, responder) = stream.into_parts();
+    fn serve_connection(&self, mut stream: UdpConnection, service: S) -> Self::Connection {
+        let msg = stream.take().unwrap();
         let (data, addr) = msg.into_parts();
         let smsg = SerialMessage::from_parts(data.into(), addr);
-        DnsUdpResponder::new(service, smsg, responder)
+        DnsUdpResponder::new(service, smsg, stream)
     }
+}
+
+#[pin_project::pin_project(project=ResponseStateProj)]
+enum ResponseState<S>
+where
+    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
+{
+    Oneshot(#[pin] tower::util::Oneshot<S, SerializedRequest>),
+    Sending { data: Bytes, addr: SocketAddr },
+    Idle,
 }
 
 #[pin_project::pin_project]
@@ -50,23 +58,23 @@ where
     cancelled: bool,
 
     #[pin]
-    oneshot: tower::util::Oneshot<S, SerializedRequest>,
+    state: ResponseState<S>,
 
-    responder: Option<UdpResponder>,
+    responder: UdpConnection,
 }
 
 impl<S> DnsUdpResponder<S>
 where
     S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
 {
-    pub fn new(service: S, msg: SerialMessage, responder: UdpResponder) -> Self {
+    pub fn new(service: S, msg: SerialMessage, responder: UdpConnection) -> Self {
         Self {
             cancelled: false,
-            oneshot: tower::util::Oneshot::new(
+            state: ResponseState::Oneshot(tower::util::Oneshot::new(
                 service,
                 SerializedRequest::new(msg, hickory_proto::xfer::Protocol::Udp),
-            ),
-            responder: Some(responder),
+            )),
+            responder,
         }
     }
 }
@@ -81,16 +89,35 @@ where
         if self.cancelled {
             return Poll::Ready(Err(HickoryError::Closed));
         }
-        let this = self.project();
-        match ready!(this.oneshot.poll(cx)) {
-            Ok(msg) => {
-                this.responder
-                    .take()
-                    .expect("Connection polled after completion")
-                    .send(msg.into_parts());
-                Poll::Ready(Ok(()))
+        let mut this = self.project();
+        loop {
+            match this.state.as_mut().project() {
+                ResponseStateProj::Oneshot(future) => match ready!(future.poll(cx)) {
+                    Ok(msg) => {
+                        let (data, addr) = msg.into_parts();
+                        this.state.set(ResponseState::Sending {
+                            data: Bytes::from(data),
+                            addr,
+                        });
+                    }
+                    Err(error) => {
+                        return Poll::Ready(Err(error));
+                    }
+                },
+                ResponseStateProj::Sending { data, addr } => {
+                    match ready!(this.responder.socket().poll_send_to(cx, &data, *addr)) {
+                        Ok(n) => {
+                            data.advance(n);
+                            if data.is_empty() {
+                                this.state.set(ResponseState::Idle);
+                                return Poll::Ready(Ok(()));
+                            }
+                        }
+                        Err(error) => return Poll::Ready(Err(HickoryError::Send(error))),
+                    }
+                }
+                ResponseStateProj::Idle => return Poll::Ready(Err(HickoryError::Closed)),
             }
-            Err(error) => Poll::Ready(Err(error)),
         }
     }
 }

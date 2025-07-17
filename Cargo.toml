@@ -63,7 +63,7 @@ optional = true
 
 [dependencies.chateau]
 version = "0.1.0"
-# path = "../chateau"
+path = "../chateau"
 # git = "https://github.com/alexrudy/chateau.git"
 
 

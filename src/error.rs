@@ -1,3 +1,5 @@
+use std::io;
+
 use hickory_proto::ProtoError;
 use hickory_server::authority::LookupError;
 
@@ -17,4 +19,7 @@ pub enum HickoryError {
 
     #[error("Connection closed")]
     Closed,
+
+    #[error("Send IO error: {0}")]
+    Send(#[source] io::Error),
 }
