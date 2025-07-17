@@ -858,7 +858,7 @@ where
         header.set_response_code(response_code);
         self.respond(
             response_handle,
-            MessageResponseBuilder::from_message_request(&request)
+            MessageResponseBuilder::from_message_request(request)
                 .error_msg(request.header(), response_code),
         )
         .await
@@ -933,42 +933,42 @@ where
     where
         R: ResponseHandler,
     {
-        let edns = match self.handle_edns(&request).await {
+        let edns = match self.handle_edns(request).await {
             Ok(edns) => edns,
             Err(message) => {
                 return self
                     .respond(
                         &mut response_handle,
-                        MessageResponseBuilder::from_message_request(&request)
-                            .build_no_records(message.header().clone()),
+                        MessageResponseBuilder::from_message_request(request)
+                            .build_no_records(*message.header()),
                     )
                     .await;
             }
         };
 
         let msg = match request.message_type() {
-            MessageType::Query => self.handle_query(&request, edns).await,
+            MessageType::Query => self.handle_query(request, edns).await,
             MessageType::Response => {
                 tracing::warn!("got a response as a request from id: {}", request.id());
                 return self
-                    .respond_error_code(&mut response_handle, &request, ResponseCode::FormErr)
+                    .respond_error_code(&mut response_handle, request, ResponseCode::FormErr)
                     .await;
             }
         };
 
         match msg {
             Ok(message) => {
-                let rmsg = MessageResponseBuilder::from_message_request(&request);
+                let rmsg = MessageResponseBuilder::from_message_request(request);
                 let ns = message.name_servers();
                 let first_soa = ns
                     .iter()
                     .position(|rr| rr.record_type() == RecordType::SOA)
-                    .unwrap_or_else(|| ns.len());
+                    .unwrap_or(ns.len());
 
                 let (ns_only, soa_only) = ns.split_at(first_soa);
 
                 let msg = rmsg.build(
-                    message.header().clone(),
+                    *message.header(),
                     message.answers().iter(),
                     ns_only.iter(),
                     soa_only.iter(),
@@ -979,7 +979,7 @@ where
             }
             Err(error) => {
                 tracing::error!("Error handling request: {error}");
-                self.respond_error_code(&mut response_handle, &request, ResponseCode::ServFail)
+                self.respond_error_code(&mut response_handle, request, ResponseCode::ServFail)
                     .await
             }
         }
