@@ -18,7 +18,6 @@ async-trait = "0.1"
 bb8 = { version = "0.8", optional = true }
 bytes = "1"
 camino = "1"
-chateau.path = "../chateau"
 chrono = "0.4"
 clap = { version = "4", optional = true }
 data-encoding = { version = "2.2.0", default-features = false }
@@ -61,6 +60,11 @@ version = ">=0.1.1"
 version = "^0.3"
 features = ["env-filter", "json", "fmt", "ansi", "std"]
 optional = true
+
+[dependencies.chateau]
+# path = "../chateau"
+git = "https://github.com/alexrudy/chateau.git"
+
 
 [dev-dependencies]
 hickory-client = { version = "0.25" }
