@@ -62,8 +62,9 @@ features = ["env-filter", "json", "fmt", "ansi", "std"]
 optional = true
 
 [dependencies.chateau]
+version = "0.1.0"
 # path = "../chateau"
-git = "https://github.com/alexrudy/chateau.git"
+# git = "https://github.com/alexrudy/chateau.git"
 
 
 [dev-dependencies]
@@ -84,7 +85,7 @@ features = ["env-filter", "json", "fmt", "ansi", "std"]
 default = []
 pool = ["dep:bb8"]
 bundled = ["rusqlite/bundled"]
-cli = ["dep:clap", "dep:tracing-subscriber"]
+cli = ["dep:clap", "dep:tracing-subscriber", "tokio/signal"]
 
 [[bin]]
 name = "walnut-dns"

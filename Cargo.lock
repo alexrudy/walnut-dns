@@ -197,7 +197,8 @@ checksum = "9555578bc9e57714c812a1f84e4fc5b4d21fcb063490c624de019f7464c91268"
 [[package]]
 name = "chateau"
 version = "0.1.0"
-source = "git+https://github.com/alexrudy/chateau.git#1b8ec54540b89bba0f9f88ed0cfecc4e9141ad38"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cac7dc775513656a82032307cac2b3f532dee1111de51b2a1cb37b36664db173"
 dependencies = [
  "bytes",
  "futures-core",
