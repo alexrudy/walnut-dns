@@ -82,6 +82,7 @@ enum InnerConnectionManager {
 
 impl From<rusqlite::Connection> for ConnectionManager {
     fn from(value: rusqlite::Connection) -> Self {
+        tracing::trace!("New single connection");
         ConnectionManager {
             inner: InnerConnectionManager::Single(Arc::new(Mutex::new(value))),
         }
@@ -91,6 +92,8 @@ impl From<rusqlite::Connection> for ConnectionManager {
 #[cfg(feature = "pool")]
 impl From<self::pool::Pool> for ConnectionManager {
     fn from(value: self::pool::Pool) -> Self {
+        tracing::trace!("New pooled connection");
+
         ConnectionManager {
             inner: InnerConnectionManager::Pool(value),
         }
@@ -460,6 +463,7 @@ impl CatalogStore<ZoneAuthority<Zone>> for SqliteStore {
     #[tracing::instrument(skip_all, level = "debug")]
     async fn list(&self, name: &LowerName) -> Result<Vec<Name>, CatalogError> {
         let conn = self.manager.get().await?;
+        tracing::trace!("List records for {name}");
         crate::block_in_place(|| {
             let zx = ZonePersistence::new(&conn);
             let names = zx.list(name)?;
@@ -617,6 +621,7 @@ impl<'c> ZonePersistence<'c> {
         let guard = tracing::trace_span!("zone").entered();
 
         let mut stmt = self.connection.prepare(&Self::TABLE.upsert())?;
+        tracing::trace!("preparing statement for insert with name={}", zone.name());
         let n = stmt.execute(named_params! { ":id": zone.id(), ":name": SqlName::from(zone.name().clone()), ":zone_type": zone.zone_type(), ":allow_axfr": zone.allow_axfr(), ":dns_class": u16::from(zone.dns_class()) })?;
         if n > 0 {
             tracing::trace!("affected {} rows", n);
@@ -840,7 +845,7 @@ mod tests {
         let name = Name::from_utf8(name).unwrap();
         let soa = rdata::SOA::new(
             name.clone(),
-            Name::from_utf8("admin.example.com").unwrap(),
+            Name::from_utf8("admin.example.com.").unwrap(),
             1,
             3600,
             1800,
@@ -852,7 +857,7 @@ mod tests {
     }
 
     fn create_test_a_record() -> Record {
-        let name = Name::from_utf8("www.test.example.com").unwrap();
+        let name = Name::from_utf8("www.test.example.com.").unwrap();
         let ttl = TimeToLive::from(300);
         let rdata = rdata::A::new(192, 168, 1, 1);
         Record::from_rdata(name, ttl, rdata).into_record_rdata()
@@ -860,6 +865,8 @@ mod tests {
 
     #[test]
     fn test_sqlite_configuration_serde() {
+        crate::subscribe();
+
         // Test deserialization with no path (default)
         let json = "{}";
         let config: SqliteConfiguration = serde_json::from_str(json).unwrap();
@@ -873,6 +880,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_sqlite_catalog_new() {
+        crate::subscribe();
+
         let connection = rusqlite::Connection::open_in_memory().unwrap();
         let catalog = SqliteStore::new(connection.into()).await.unwrap();
 
@@ -882,6 +891,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_sqlite_catalog_new_in_memory() {
+        crate::subscribe();
+
         let catalog = SqliteStore::new_in_memory().await.unwrap();
 
         // Should be created successfully with migrations applied
@@ -890,6 +901,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_sqlite_catalog_new_from_config_in_memory() {
+        crate::subscribe();
+
         let config = SqliteConfiguration {
             path: None,
             busy_timeout: None,
@@ -902,6 +915,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_sqlite_catalog_new_from_config_with_file() {
+        crate::subscribe();
+
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
         let config = SqliteConfiguration {
@@ -920,8 +935,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_catalog_upsert_and_get_zone() {
+        crate::subscribe();
+
         let catalog = SqliteStore::new_in_memory().await.unwrap();
-        let zone = create_test_zone("test.example.com");
+        let zone = create_test_zone("test.example.com.");
         let zone_id = zone.id();
         let expected_name = zone.name().clone();
         let expected_type = zone.zone_type();
@@ -939,8 +956,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_catalog_find_zone() {
+        crate::subscribe();
+
         let catalog = SqliteStore::new_in_memory().await.unwrap();
-        let zone = create_test_zone("test.example.com");
+        let zone = create_test_zone("test.example.com.");
         let zone_name = LowerName::from(zone.name().clone());
         let expected_name = zone.name().clone();
 
@@ -955,8 +974,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_catalog_find_nonexistent_zone() {
+        crate::subscribe();
         let catalog = SqliteStore::new_in_memory().await.unwrap();
-        let nonexistent_name = LowerName::from(Name::from_utf8("nonexistent.example.com").unwrap());
+        let nonexistent_name =
+            LowerName::from(Name::from_utf8("nonexistent.example.com.").unwrap());
 
         // Find nonexistent zone
         let found_zones = catalog.find(&nonexistent_name).await.unwrap();
@@ -965,8 +986,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_catalog_delete_zone() {
+        crate::subscribe();
         let catalog = SqliteStore::new_in_memory().await.unwrap();
-        let zone = create_test_zone("test.example.com");
+        let zone = create_test_zone("test.example.com.");
         let zone_id = zone.id();
 
         // Upsert zone
@@ -985,6 +1007,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_catalog_list_zones() {
+        crate::subscribe();
         let catalog = SqliteStore::new_in_memory().await.unwrap();
 
         // Start with empty list
@@ -993,7 +1016,7 @@ mod tests {
         assert!(initial_list.is_empty());
 
         // Add a zone
-        let zone = create_test_zone("test.example.com");
+        let zone = create_test_zone("test.example.com.");
         let zone_name = zone.name().clone();
         catalog.insert(&zone).await.unwrap();
 
@@ -1006,16 +1029,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_catalog_multiple_zones() {
+        crate::subscribe();
         let catalog = SqliteStore::new_in_memory().await.unwrap();
 
         // Create multiple zones
-        let zone1 = create_test_zone("test.example.org");
+        let zone1 = create_test_zone("test.example.org.");
         let zone1_name = zone1.name().clone();
         let zone2 = {
-            let name = Name::from_utf8("another.example.com").unwrap();
+            let name = Name::from_utf8("another.example.com.").unwrap();
             let soa = rdata::SOA::new(
                 name.clone(),
-                Name::from_utf8("admin.another.example.com").unwrap(),
+                Name::from_utf8("admin.another.example.com.").unwrap(),
                 1,
                 3600,
                 1800,
@@ -1046,11 +1070,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_catalog_chained_zones() {
+        crate::subscribe();
         let catalog = SqliteStore::new_in_memory().await.unwrap();
 
         // Create multiple zones
-        let zone1 = create_test_zone("test.exmaple.com");
-        let zone2 = create_test_zone("test.example.org");
+        let zone1 = create_test_zone("test.example.com.");
+        let zone2 = create_test_zone("test.example.org.");
         let name = zone1.origin().clone();
         catalog
             .upsert(name.clone(), &vec![zone1.into(), zone2.into()])
@@ -1060,14 +1085,16 @@ mod tests {
         // List should contain both zones
         let root = LowerName::new(&Name::root());
         let zone_list = catalog.list(&root).await.unwrap();
-        assert_eq!(zone_list.len(), 1);
+        assert_eq!(zone_list.len(), 2);
         assert!(zone_list.contains(&name.into()));
     }
 
     #[tokio::test]
     async fn test_catalog_zone_with_records() {
+        crate::subscribe();
+
         let catalog = SqliteStore::new_in_memory().await.unwrap();
-        let mut zone = create_test_zone("test.example.com");
+        let mut zone = create_test_zone("test.example.com.");
         let a_record = create_test_a_record();
 
         // Add record to zone
@@ -1092,8 +1119,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_catalog_concurrent_access() {
+        crate::subscribe();
+
         let catalog = SqliteStore::new_in_memory().await.unwrap();
-        let zone = create_test_zone("test.example.com");
+        let zone = create_test_zone("test.example.com.");
         let zone_name = LowerName::from(zone.name().clone());
 
         // Test that the catalog can handle concurrent access via Arc<Mutex<Connection>>
@@ -1109,6 +1138,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_catalog_debug_format() {
+        crate::subscribe();
+
         let catalog = SqliteStore::new_in_memory().await.unwrap();
         let debug_string = format!("{catalog:?}");
         assert!(debug_string.contains("Sqlite"));
@@ -1116,8 +1147,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_zone_update_serial_number() {
+        crate::subscribe();
+
         let catalog = SqliteStore::new_in_memory().await.unwrap();
-        let mut zone = create_test_zone("test.example.com");
+        let mut zone = create_test_zone("test.example.com.");
         let a_record = create_test_a_record();
 
         // Add record with serial 1
@@ -1140,14 +1173,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_zone_name_case_insensitive_search() {
+        crate::subscribe();
+
         let catalog = SqliteStore::new_in_memory().await.unwrap();
-        let zone = create_test_zone("test.example.com");
+        let zone = create_test_zone("test.example.com.");
         let expected_name = zone.name().clone();
 
         catalog.insert(&zone).await.unwrap();
 
         // Search with different case
-        let upper_name = LowerName::from(Name::from_utf8("TEST.EXAMPLE.COM").unwrap());
+        let upper_name = LowerName::from(Name::from_utf8("TEST.EXAMPLE.COM.").unwrap());
         let found_zones = catalog.find(&upper_name).await.unwrap().unwrap();
         assert_eq!(found_zones.len(), 1);
         assert_eq!(found_zones[0].name(), &expected_name);

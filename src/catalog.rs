@@ -12,19 +12,19 @@
 //! - DNSSEC awareness
 //! - Authoritative and recursive lookups
 use std::fmt;
+use std::task::{Context, Poll};
 use std::{borrow::Borrow, sync::Arc};
 
-use hickory_proto::op::{Edns, Header, LowerQuery, MessageType, OpCode, ResponseCode};
+use hickory_proto::op::{Edns, Header, LowerQuery, Message, MessageType, OpCode, ResponseCode};
 use hickory_proto::rr::{LowerName, RecordSet, RecordType};
 use hickory_server::authority::{
     AuthLookup, AuthorityObject, EmptyLookup, LookupControlFlow, LookupError, LookupObject,
-    LookupOptions, LookupRecords, MessageResponseBuilder,
+    LookupOptions, LookupRecords, MessageResponse, MessageResponseBuilder,
 };
 use hickory_server::server::{Request, RequestHandler, RequestInfo, ResponseHandler, ResponseInfo};
 
-use crate::authority::edns::EdnsResponse;
 use crate::authority::edns::lookup_options_for_edns;
-use crate::authority::response::{ResponseHandleExt, ResponseInfoExt, ResponseResultExt};
+use crate::error::HickoryError;
 use crate::rr::Name;
 
 /// Error type for catalog operations
@@ -164,8 +164,7 @@ impl<A> Clone for Catalog<A> {
 
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument("send", skip_all, level = "trace")]
-async fn send_lookup_response<R: ResponseHandler>(
-    response_handle: &mut R,
+async fn lookup_response(
     response: LookupControlFlow<Box<dyn LookupObject>>,
     response_edns: Option<Edns>,
     request: &Request,
@@ -173,7 +172,7 @@ async fn send_lookup_response<R: ResponseHandler>(
     request_id: u16,
     query: &LowerQuery,
     edns: Option<&Edns>,
-) -> Result<ResponseInfo, LookupError> {
+) -> Result<Message, LookupError> {
     tracing::trace!("sending lookup response");
     // We no longer need the context from LookupControlFlow, so decompose into a standard Result
     // to clean up the rest of the match conditions
@@ -185,25 +184,19 @@ async fn send_lookup_response<R: ResponseHandler>(
     let (response_header, sections) =
         build_response(result, authority, request_id, request.header(), query, edns).await;
 
-    let mut message_response = MessageResponseBuilder::from_message_request(request).build(
-        response_header,
-        sections.answers.iter(),
-        sections.ns.iter(),
-        sections.soa.iter(),
-        sections.additionals.iter(),
-    );
+    let mut message = Message::new();
+    message.set_header(response_header);
+    message.add_queries(request.queries().iter().map(|q| q.original().clone()));
+    message.add_answers(sections.answers.iter().cloned());
+    message.add_name_servers(sections.ns.iter().cloned());
+    message.add_name_servers(sections.soa.iter().cloned());
+    message.add_additionals(sections.additionals.iter().cloned());
 
     if let Some(resp_edns) = response_edns {
-        message_response.set_edns(resp_edns);
+        message.set_edns(resp_edns);
     }
 
-    match response_handle.send_response(message_response).await {
-        Err(e) => {
-            tracing::error!("error sending response: {e}");
-            return Err(LookupError::Io(e));
-        }
-        Ok(l) => return Ok(l),
-    }
+    Ok(message)
 }
 
 struct LookupSections {
@@ -456,13 +449,12 @@ async fn build_response(
     }
 }
 
-async fn lookup<R: ResponseHandler + Unpin>(
+async fn lookup(
     request_info: RequestInfo<'_>,
     authorities: &[&dyn AuthorityObject],
     request: &Request,
     response_edns: Option<Edns>,
-    mut response_handle: R,
-) -> Result<ResponseInfo, LookupError> {
+) -> Result<Message, LookupError> {
     let edns = request.edns();
     let lookup_options = lookup_options_for_edns(edns);
     let request_id = request.id();
@@ -476,8 +468,10 @@ async fn lookup<R: ResponseHandler + Unpin>(
 
     for (authority_index, authority) in authorities.iter().enumerate() {
         tracing::debug!(
-            "performing {query:?} query on authority {origin} with request id {request_id}",
-            origin = authority.origin(),
+            origin = %authority.origin(),
+            qtype = %query.query_type(),
+            name = %query.name(),
+            "querying"
         );
 
         let mut result = authority.search(request_info.clone(), lookup_options).await;
@@ -517,9 +511,8 @@ async fn lookup<R: ResponseHandler + Unpin>(
             );
         }
 
-        tracing::trace!("SEND {result}");
-        return send_lookup_response(
-            &mut response_handle,
+        tracing::trace!("build {result}");
+        return lookup_response(
             result,
             response_edns,
             request,
@@ -657,32 +650,37 @@ where
     ///
     /// Information about the response that was sent
     #[tracing::instrument(skip_all, level = "trace")]
-    pub async fn lookup<R: ResponseHandler>(
+    pub async fn lookup(
         &self,
         request: &Request,
         edns: Option<Edns>,
-        response_handle: &mut R,
-    ) -> ResponseInfo {
+    ) -> Result<Message, HickoryError> {
         let Ok(request_info) = request.request_info() else {
             tracing::trace!("Invalid request format");
-            return response_handle
-                .send_error(request, ResponseCode::FormErr)
-                .await;
+            return Ok(Message::error_msg(
+                request.id(),
+                request.op_code(),
+                ResponseCode::FormErr,
+            ));
         };
 
         let authorities: Vec<A> = match self.find(request_info.query.name()).await {
             Ok(Some(zones)) => zones,
             Ok(None) => {
                 tracing::trace!("No authorities found for {}", request_info.query.name());
-                return response_handle
-                    .send_error(request, ResponseCode::Refused)
-                    .await;
+                return Ok(Message::error_msg(
+                    request.id(),
+                    request.op_code(),
+                    ResponseCode::Refused,
+                ));
             }
             Err(error) => {
                 tracing::error!("Internal Error finding zones: {error}");
-                return response_handle
-                    .send_error(request, ResponseCode::ServFail)
-                    .await;
+                return Ok(Message::error_msg(
+                    request.id(),
+                    request.op_code(),
+                    ResponseCode::ServFail,
+                ));
             }
         };
 
@@ -695,12 +693,14 @@ where
             &refs,
             request,
             edns.as_ref().map(|arc| Borrow::<Edns>::borrow(arc).clone()),
-            response_handle.clone(),
         )
         .await
         {
-            Ok(lookup) => lookup,
-            Err(_) => ResponseInfo::code_serve_failed(),
+            Ok(message) => Ok(message),
+            Err(LookupError::ResponseCode(code)) => {
+                Ok(Message::error_msg(request.id(), request.op_code(), code))
+            }
+            Err(error) => Err(error.into()),
         }
     }
 }
@@ -730,39 +730,42 @@ where
         (*self.zones).upsert(name, &[zone]).await
     }
 
-    async fn update<R: ResponseHandler>(
-        &self,
-        request: &Request,
-        edns: Option<Edns>,
-        response_handle: &mut R,
-    ) -> ResponseInfo {
+    async fn update(&self, request: &Request, edns: Option<Edns>) -> Result<Message, HickoryError> {
         let request_info = match request.request_info() {
             Ok(request_info) => request_info,
             Err(error) => {
                 tracing::warn!("Update Request Protocol Error: {error}");
-                return response_handle
-                    .send_error(request, ResponseCode::ServFail)
-                    .await;
+                return Ok(Message::error_msg(
+                    request.id(),
+                    request.op_code(),
+                    ResponseCode::ServFail,
+                ));
             }
         };
         if request_info.query.query_type() != RecordType::SOA {
-            return response_handle
-                .send_error(request, ResponseCode::ServFail)
-                .await;
+            return Ok(Message::error_msg(
+                request.id(),
+                request.op_code(),
+                ResponseCode::ServFail,
+            ));
         }
 
         let authorities = match self.find(request_info.query.name()).await {
             Ok(Some(zones)) => zones,
             Ok(None) => {
-                return response_handle
-                    .send_error(request, ResponseCode::NotAuth)
-                    .await;
+                return Ok(Message::error_msg(
+                    request.id(),
+                    request.op_code(),
+                    ResponseCode::NotAuth,
+                ));
             }
             Err(error) => {
                 tracing::error!("Error finding zones: {error}");
-                return response_handle
-                    .send_error(request, ResponseCode::ServFail)
-                    .await;
+                return Ok(Message::error_msg(
+                    request.id(),
+                    request.op_code(),
+                    ResponseCode::ServFail,
+                ));
             }
         };
 
@@ -774,35 +777,31 @@ where
                 Err(response_code) => response_code,
             };
 
-            let mut response = MessageResponseBuilder::from_message_request(request);
-            let mut response_header = Header::default();
-            response_header.set_id(request.id());
-            response_header.set_op_code(OpCode::Update);
-            response_header.set_message_type(MessageType::Response);
-            response_header.set_response_code(response_code);
-
+            let mut response = Message::new();
+            response.add_queries(request.queries().iter().map(|lq| lq.original().clone()));
+            response
+                .set_id(request.id())
+                .set_op_code(OpCode::Update)
+                .set_message_type(MessageType::Response)
+                .set_response_code(response_code);
             if let Some(edns) = edns {
-                response.edns(edns);
+                response.set_edns(edns);
             }
 
-            return response_handle
-                .send_response(response.build_no_records(response_header))
-                .await
-                .into_info();
+            return Ok(response);
         }
 
-        response_handle
-            .send_error(request, ResponseCode::ServFail)
-            .await
+        Ok(Message::error_msg(
+            request.id(),
+            request.op_code(),
+            ResponseCode::ServFail,
+        ))
     }
 
-    async fn handle_edns<R: ResponseHandler>(
-        &self,
-        request: &Request,
-        response_handle: &mut R,
-    ) -> EdnsResponse {
+    async fn handle_edns(&self, request: &Request) -> Result<Option<Edns>, Message> {
         if let Some(req_edns) = request.edns() {
-            let mut response = MessageResponseBuilder::from_message_request(request);
+            let mut response = Message::new();
+            response.add_queries(request.queries().iter().map(|lq| lq.original().clone()));
             let mut response_header = Header::response_from_request(request.header());
 
             let mut resp_edns: Edns = Edns::new();
@@ -822,86 +821,208 @@ where
                 );
                 response_header.set_response_code(ResponseCode::BADVERS);
                 resp_edns.set_rcode_high(ResponseCode::BADVERS.high());
-                response.edns(resp_edns);
+                response.set_edns(resp_edns);
+                response.set_header(response_header);
 
-                return EdnsResponse::Sent(
-                    response_handle
-                        .send_response(response.build_no_records(response_header))
-                        .await
-                        .into_info(),
-                );
+                return Err(response);
             }
-
-            EdnsResponse::Response(resp_edns)
+            Ok(Some(resp_edns))
         } else {
-            EdnsResponse::None
+            Ok(None)
         }
     }
 
     #[tracing::instrument(skip_all, fields(op=%request.op_code(), id=%request.id()), level="debug")]
-    async fn handle_query<R: ResponseHandler>(
+    async fn handle_query(
         &self,
         request: &Request,
         edns: Option<Edns>,
-        response_handle: &mut R,
-    ) -> ResponseInfo {
+    ) -> Result<Message, HickoryError> {
         match request.op_code() {
-            OpCode::Query => self.lookup(request, edns, response_handle).await,
-            OpCode::Update => self.update(request, edns, response_handle).await,
+            OpCode::Query => self.lookup(request, edns).await,
+            OpCode::Update => self.update(request, edns).await,
             c => {
                 tracing::warn!("Unimplemented op code: {c}");
-                response_handle
-                    .send_error(request, ResponseCode::NotImp)
+                Ok(Message::error_msg(request.id(), c, ResponseCode::NotImp))
+            }
+        }
+    }
+
+    async fn respond_error_code<R: ResponseHandler>(
+        &self,
+        response_handle: &mut R,
+        request: &Request,
+        response_code: ResponseCode,
+    ) -> ResponseInfo {
+        let mut header = Header::new();
+        header.set_response_code(response_code);
+        self.respond(
+            response_handle,
+            MessageResponseBuilder::from_message_request(request)
+                .error_msg(request.header(), response_code),
+        )
+        .await
+    }
+
+    async fn respond<'q, 'a, R: ResponseHandler>(
+        &self,
+        response_handle: &mut R,
+        message: MessageResponse<
+            'q,
+            'a,
+            impl Iterator<Item = &'a hickory_proto::rr::Record> + Send,
+            impl Iterator<Item = &'a hickory_proto::rr::Record> + Send,
+            impl Iterator<Item = &'a hickory_proto::rr::Record> + Send,
+            impl Iterator<Item = &'a hickory_proto::rr::Record> + Send,
+        >,
+    ) -> ResponseInfo {
+        return match response_handle.send_response(message).await {
+            Ok(info) => info,
+            Err(error) => {
+                tracing::error!("Send error: {error}");
+                let mut header = Header::new();
+                header.set_response_code(ResponseCode::ServFail);
+                header.into()
+            }
+        };
+    }
+}
+
+impl<A> tower::Service<Request> for Catalog<A>
+where
+    A: AsRef<dyn AuthorityObject> + Send + 'static,
+{
+    type Response = Message;
+
+    type Error = HickoryError;
+
+    type Future = self::future::CatalogFuture;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, request: Request) -> Self::Future {
+        tracing::trace!("request {}", request.message_type());
+
+        let catalog = self.clone();
+
+        self::future::CatalogFuture::new(async move {
+            let edns = match catalog.handle_edns(&request).await {
+                Ok(edns) => edns,
+                Err(message) => return Ok(message),
+            };
+
+            match request.message_type() {
+                MessageType::Query => catalog.handle_query(&request, edns).await,
+                MessageType::Response => {
+                    tracing::warn!("got a response as a request from id: {}", request.id());
+                    Err(HickoryError::ResponseAsRequest)
+                }
+            }
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl<A> RequestHandler for Catalog<A>
+where
+    A: AsRef<dyn AuthorityObject> + Send + 'static,
+{
+    async fn handle_request<R>(&self, request: &Request, mut response_handle: R) -> ResponseInfo
+    where
+        R: ResponseHandler,
+    {
+        let edns = match self.handle_edns(request).await {
+            Ok(edns) => edns,
+            Err(message) => {
+                return self
+                    .respond(
+                        &mut response_handle,
+                        MessageResponseBuilder::from_message_request(request)
+                            .build_no_records(*message.header()),
+                    )
+                    .await;
+            }
+        };
+
+        let msg = match request.message_type() {
+            MessageType::Query => self.handle_query(request, edns).await,
+            MessageType::Response => {
+                tracing::warn!("got a response as a request from id: {}", request.id());
+                return self
+                    .respond_error_code(&mut response_handle, request, ResponseCode::FormErr)
+                    .await;
+            }
+        };
+
+        match msg {
+            Ok(message) => {
+                let rmsg = MessageResponseBuilder::from_message_request(request);
+                let ns = message.name_servers();
+                let first_soa = ns
+                    .iter()
+                    .position(|rr| rr.record_type() == RecordType::SOA)
+                    .unwrap_or(ns.len());
+
+                let (ns_only, soa_only) = ns.split_at(first_soa);
+
+                let msg = rmsg.build(
+                    *message.header(),
+                    message.answers().iter(),
+                    ns_only.iter(),
+                    soa_only.iter(),
+                    message.additionals().iter(),
+                );
+
+                self.respond(&mut response_handle, msg).await
+            }
+            Err(error) => {
+                tracing::error!("Error handling request: {error}");
+                self.respond_error_code(&mut response_handle, request, ResponseCode::ServFail)
                     .await
             }
         }
     }
 }
 
-/// Implementation of RequestHandler for the Catalog
-///
-/// This makes the catalog compatible with the hickory-dns server framework,
-/// allowing it to be used as a request handler for DNS servers.
-#[async_trait::async_trait]
-impl<A> RequestHandler for Catalog<A>
-where
-    A: AsRef<dyn AuthorityObject> + Send + 'static,
-{
-    /// Handle incoming DNS requests
-    ///
-    /// This is the main entry point for DNS request processing. It handles
-    /// both queries and updates, with proper EDNS support and error handling.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - The DNS request to process
-    /// * `response_handle` - Handler for sending the response
-    ///
-    /// # Returns
-    ///
-    /// Information about the response that was sent
-    #[tracing::instrument("dns", skip_all, fields(id=%request.id()), level="debug")]
-    async fn handle_request<R: ResponseHandler>(
-        &self,
-        request: &Request,
-        mut response_handle: R,
-    ) -> ResponseInfo {
-        tracing::trace!("request {}", request.message_type());
+mod future {
+    use std::{
+        fmt,
+        pin::Pin,
+        task::{Context, Poll},
+    };
 
-        let edns = match self.handle_edns(request, &mut response_handle).await {
-            EdnsResponse::Response(edns) => Some(edns),
-            EdnsResponse::None => None,
-            EdnsResponse::Sent(response_info) => return response_info,
-        };
+    use hickory_proto::op::Message;
 
-        match request.message_type() {
-            MessageType::Query => self.handle_query(request, edns, &mut response_handle).await,
-            MessageType::Response => {
-                tracing::warn!("got a response as a request from id: {}", request.id());
-                response_handle
-                    .send_error(request, ResponseCode::FormErr)
-                    .await
+    use crate::error::HickoryError;
+
+    pub struct CatalogFuture {
+        inner: Pin<Box<dyn Future<Output = Result<Message, HickoryError>> + Send + 'static>>,
+    }
+
+    impl fmt::Debug for CatalogFuture {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("CatalogFuture").finish()
+        }
+    }
+
+    impl CatalogFuture {
+        pub(super) fn new<F>(future: F) -> Self
+        where
+            F: Future<Output = Result<Message, HickoryError>> + Send + 'static,
+        {
+            Self {
+                inner: Box::pin(future),
             }
+        }
+    }
+
+    impl Future for CatalogFuture {
+        type Output = Result<Message, HickoryError>;
+
+        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            self.inner.as_mut().poll(cx)
         }
     }
 }

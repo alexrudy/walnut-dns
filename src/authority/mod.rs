@@ -39,7 +39,6 @@ use crate::rr::{
 
 pub(crate) mod dnssec;
 pub(crate) mod edns;
-pub(crate) mod response;
 
 pub use self::dnssec::{DNSSecZone, DnsSecZoneError, Journal};
 

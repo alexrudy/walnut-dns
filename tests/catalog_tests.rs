@@ -11,7 +11,6 @@ use walnut_dns::{Lookup as _, SqliteStore};
 use walnut_dns::{ZoneInfo as _, rr::Zone};
 
 mod support;
-use support::TestResponseHandler;
 use support::examples::create_example;
 use support::subscribe;
 
@@ -138,11 +137,7 @@ async fn test_catalog_lookup() {
     let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
     let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
-    let mut response_handler = TestResponseHandler::new();
-    catalog
-        .lookup(&question_req, None, &mut response_handler)
-        .await;
-    let result = response_handler.into_message().await;
+    let result = catalog.lookup(&question_req, None).await.unwrap();
 
     assert_eq!(result.response_code(), ResponseCode::NoError);
     assert_eq!(result.message_type(), MessageType::Response);
@@ -172,11 +167,7 @@ async fn test_catalog_lookup() {
     let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
     let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
-    let mut response_handler = TestResponseHandler::new();
-    catalog
-        .lookup(&question_req, None, &mut response_handler)
-        .await;
-    let result = response_handler.into_message().await;
+    let result = catalog.lookup(&question_req, None).await.unwrap();
 
     assert_eq!(result.response_code(), ResponseCode::NoError);
     assert_eq!(result.message_type(), MessageType::Response);
@@ -217,11 +208,7 @@ async fn test_catalog_lookup_soa() {
     let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
     let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
-    let mut response_handler = TestResponseHandler::new();
-    catalog
-        .lookup(&question_req, None, &mut response_handler)
-        .await;
-    let result = response_handler.into_message().await;
+    let result = catalog.lookup(&question_req, None).await.unwrap();
 
     assert_eq!(result.response_code(), ResponseCode::NoError);
     assert_eq!(result.message_type(), MessageType::Response);
@@ -283,13 +270,7 @@ async fn test_catalog_nx_soa() {
     let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
     let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
-    let mut response_handler = TestResponseHandler::new();
-    tracing::info!("BEGIN request");
-    catalog
-        .lookup(&question_req, None, &mut response_handler)
-        .await;
-    let result = response_handler.into_message().await;
-    tracing::info!("END request");
+    let result = catalog.lookup(&question_req, None).await.unwrap();
 
     assert_eq!(result.response_code(), ResponseCode::NXDomain);
     assert_eq!(result.message_type(), MessageType::Response);
@@ -335,11 +316,7 @@ async fn test_non_authoritive_nx_refused() {
     let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
     let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
-    let mut response_handler = TestResponseHandler::new();
-    catalog
-        .lookup(&question_req, None, &mut response_handler)
-        .await;
-    let result = response_handler.into_message().await;
+    let result = catalog.lookup(&question_req, None).await.unwrap();
 
     assert_eq!(result.response_code(), ResponseCode::Refused);
     assert_eq!(result.message_type(), MessageType::Response);
@@ -551,11 +528,7 @@ async fn test_cname_additionals() {
     let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
     let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
-    let mut response_handler = TestResponseHandler::new();
-    catalog
-        .lookup(&question_req, None, &mut response_handler)
-        .await;
-    let result = response_handler.into_message().await;
+    let result = catalog.lookup(&question_req, None).await.unwrap();
 
     assert_eq!(result.message_type(), MessageType::Response);
     assert_eq!(result.response_code(), ResponseCode::NoError);
@@ -599,11 +572,7 @@ async fn test_multiple_cname_additionals() {
     let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
     let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
-    let mut response_handler = TestResponseHandler::new();
-    catalog
-        .lookup(&question_req, None, &mut response_handler)
-        .await;
-    let result = response_handler.into_message().await;
+    let result = catalog.lookup(&question_req, None).await.unwrap();
 
     assert_eq!(result.message_type(), MessageType::Response);
     assert_eq!(result.response_code(), ResponseCode::NoError);

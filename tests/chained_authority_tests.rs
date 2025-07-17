@@ -12,12 +12,12 @@ use hickory_server::{
         LookupControlFlow, LookupError, LookupObject, LookupOptions, LookupRecords, MessageRequest,
         UpdateResult, ZoneType,
     },
-    server::{Request, RequestInfo, ResponseInfo},
+    server::{Request, RequestInfo},
 };
 
 mod support;
+use support::TestZoneStore;
 use support::subscribe;
-use support::{TestResponseHandler, TestZoneStore};
 use walnut_dns::Catalog;
 
 /// Tests for the chained authority catalog.
@@ -323,10 +323,7 @@ fn inner_lookup(
 }
 
 // Boilerplate to query the catalog
-async fn do_query(
-    catalog: &Catalog<Arc<dyn AuthorityObject>>,
-    query_name: &str,
-) -> (ResponseInfo, TestResponseHandler) {
+async fn do_query(catalog: &Catalog<Arc<dyn AuthorityObject>>, query_name: &str) -> Message {
     let mut question: Message = Message::new();
 
     let mut query: Query = Query::new();
@@ -338,12 +335,7 @@ async fn do_query(
     let question_bytes = question.to_bytes().unwrap();
     let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
     let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
-    let mut response_handler = TestResponseHandler::new();
-
-    let res = catalog
-        .lookup(&question_req, None, &mut response_handler)
-        .await;
-    (res, response_handler)
+    catalog.lookup(&question_req, None).await.unwrap()
 }
 
 // Handle boilerplate for the most common test case pattern: a positive response with a single A
@@ -353,8 +345,7 @@ async fn basic_test(
     query_name: &'static str,
     answer: A,
 ) {
-    let (_, response_handler) = do_query(catalog, query_name).await;
-    let result = response_handler.into_message().await;
+    let result = do_query(catalog, query_name).await;
 
     let answers: &[Record] = result.answers();
 
@@ -370,7 +361,7 @@ async fn error_test(
     query_name: &str,
     r_code: ResponseCode,
 ) {
-    let (res, _) = do_query(catalog, query_name).await;
+    let res = do_query(catalog, query_name).await;
 
     assert_eq!(res.response_code(), r_code);
     assert_eq!(res.answer_count(), 0);

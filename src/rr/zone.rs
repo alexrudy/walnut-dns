@@ -99,7 +99,7 @@ impl Zone {
     ///
     /// # Arguments
     ///
-    /// * `name` - The zone name (e.g., "example.com")
+    /// * `name` - The zone name (e.g., "example.com.")
     /// * `soa` - The Start of Authority record for this zone
     /// * `zone_type` - The type of zone (Primary, Secondary, External)
     /// * `allow_axfr` - Whether to allow zone transfers (AXFR)
@@ -533,14 +533,14 @@ mod tests {
     use hickory_proto::rr::{RecordType, rdata::A};
 
     fn create_test_name() -> Name {
-        Name::from_utf8("test.example.com").unwrap()
+        Name::from_utf8("test.example.com.").unwrap()
     }
 
     fn create_test_soa() -> Record<rdata::SOA> {
         let name = create_test_name();
         let soa = rdata::SOA::new(
             name.clone(),
-            Name::from_utf8("admin.example.com").unwrap(),
+            Name::from_utf8("admin.example.com.").unwrap(),
             1,
             3600,
             1800,

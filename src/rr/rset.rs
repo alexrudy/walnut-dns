@@ -644,7 +644,7 @@ mod tests {
     use hickory_proto::rr::{RecordType, rdata::A};
 
     fn create_test_name() -> Name {
-        Name::from_utf8("test.example.com").unwrap()
+        Name::from_utf8("test.example.com.").unwrap()
     }
 
     fn create_test_a_record() -> Record {
@@ -687,7 +687,7 @@ mod tests {
     #[test]
     fn test_recordset_with_name() {
         let name1 = create_test_name();
-        let name2 = Name::from_utf8("other.example.com").unwrap();
+        let name2 = Name::from_utf8("other.example.com.").unwrap();
         let record = create_test_a_record();
 
         let rrset1 = RecordSet::from_record(name1, record);
@@ -761,7 +761,7 @@ mod tests {
     #[test]
     fn test_recordset_insert_wrong_name() {
         let name1 = create_test_name();
-        let name2 = Name::from_utf8("other.example.com").unwrap();
+        let name2 = Name::from_utf8("other.example.com.").unwrap();
         let mut rrset = RecordSet::new(name1, RecordType::A);
 
         let record = Record::from_rdata(
@@ -787,7 +787,7 @@ mod tests {
             name,
             TimeToLive::from(300),
             RData::CNAME(hickory_proto::rr::rdata::CNAME(
-                Name::from_utf8("target.example.com").unwrap(),
+                Name::from_utf8("target.example.com.").unwrap(),
             )),
         )
         .into_record_rdata();
@@ -903,7 +903,7 @@ mod tests {
         // Create first SOA with serial 100
         let soa1 = SOA::new(
             name.clone(),
-            Name::from_utf8("admin.example.com").unwrap(),
+            Name::from_utf8("admin.example.com.").unwrap(),
             100, // serial
             3600,
             1800,
@@ -922,7 +922,7 @@ mod tests {
         // Try to insert SOA with older serial (50) - should be rejected
         let soa2 = SOA::new(
             name.clone(),
-            Name::from_utf8("admin.example.com").unwrap(),
+            Name::from_utf8("admin.example.com.").unwrap(),
             50, // older serial
             3600,
             1800,
@@ -940,7 +940,7 @@ mod tests {
         // Try to insert SOA with newer serial (200) - should succeed
         let soa3 = SOA::new(
             name.clone(),
-            Name::from_utf8("admin.example.com").unwrap(),
+            Name::from_utf8("admin.example.com.").unwrap(),
             200, // newer serial
             3600,
             1800,
@@ -971,7 +971,7 @@ mod tests {
         let mut rrset = RecordSet::new(name.clone(), RecordType::NS);
 
         // Add first NS record
-        let ns1 = NS(Name::from_utf8("ns1.example.com").unwrap());
+        let ns1 = NS(Name::from_utf8("ns1.example.com.").unwrap());
         let record1 = Record::from_rdata(name.clone(), TimeToLive::from(86400), ns1.clone())
             .into_record_rdata();
         rrset
@@ -980,7 +980,7 @@ mod tests {
         assert_eq!(rrset.len(), 1);
 
         // Add second NS record
-        let ns2 = NS(Name::from_utf8("ns2.example.com").unwrap());
+        let ns2 = NS(Name::from_utf8("ns2.example.com.").unwrap());
         let record2 =
             Record::from_rdata(name.clone(), TimeToLive::from(86400), ns2).into_record_rdata();
         rrset
@@ -1011,7 +1011,7 @@ mod tests {
         // Add SOA record
         let soa = SOA::new(
             name.clone(),
-            Name::from_utf8("admin.example.com").unwrap(),
+            Name::from_utf8("admin.example.com.").unwrap(),
             1,
             3600,
             1800,
@@ -1037,14 +1037,14 @@ mod tests {
         let mut rrset = RecordSet::new(name.clone(), RecordType::CNAME);
 
         // Add first CNAME record
-        let cname1 = CNAME(Name::from_utf8("target1.example.com").unwrap());
+        let cname1 = CNAME(Name::from_utf8("target1.example.com.").unwrap());
         let record1 =
             Record::from_rdata(name.clone(), TimeToLive::from(300), cname1).into_record_rdata();
         rrset.insert(record1, SerialNumber::from(1)).unwrap();
         assert_eq!(rrset.len(), 1);
 
         // Add second CNAME record - should replace the first
-        let cname2 = CNAME(Name::from_utf8("target2.example.com").unwrap());
+        let cname2 = CNAME(Name::from_utf8("target2.example.com.").unwrap());
         let record2 = Record::from_rdata(name, TimeToLive::from(300), cname2).into_record_rdata();
         rrset.insert(record2, SerialNumber::from(2)).unwrap();
         assert_eq!(rrset.len(), 1); // Still only one CNAME
@@ -1052,7 +1052,7 @@ mod tests {
         // Verify the CNAME points to the new target
         let cname_record = rrset.records().next().unwrap();
         if let RData::CNAME(cname) = cname_record.rdata() {
-            assert!(cname.0.to_utf8().starts_with("target2.example.com"));
+            assert!(cname.0.to_utf8().starts_with("target2.example.com."));
         } else {
             panic!("Expected CNAME record");
         }
@@ -1066,14 +1066,14 @@ mod tests {
         let mut rrset = RecordSet::new(name.clone(), RecordType::ANAME);
 
         // Add first ANAME record
-        let aname1 = ANAME(Name::from_utf8("target1.example.com").unwrap());
+        let aname1 = ANAME(Name::from_utf8("target1.example.com.").unwrap());
         let record1 =
             Record::from_rdata(name.clone(), TimeToLive::from(300), aname1).into_record_rdata();
         rrset.insert(record1, SerialNumber::from(1)).unwrap();
         assert_eq!(rrset.len(), 1);
 
         // Add second ANAME record - should replace the first
-        let aname2 = ANAME(Name::from_utf8("target2.example.com").unwrap());
+        let aname2 = ANAME(Name::from_utf8("target2.example.com.").unwrap());
         let record2 = Record::from_rdata(name, TimeToLive::from(300), aname2).into_record_rdata();
         rrset.insert(record2, SerialNumber::from(2)).unwrap();
         assert_eq!(rrset.len(), 1); // Still only one ANAME
@@ -1081,7 +1081,7 @@ mod tests {
         // Verify the ANAME points to the new target
         let aname_record = rrset.records().next().unwrap();
         if let RData::ANAME(aname) = aname_record.rdata() {
-            assert!(aname.0.to_utf8().starts_with("target2.example.com"));
+            assert!(aname.0.to_utf8().starts_with("target2.example.com."));
         } else {
             panic!("Expected ANAME record");
         }

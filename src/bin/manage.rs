@@ -11,6 +11,7 @@ use tracing_subscriber::EnvFilter;
 use walnut_dns::{
     Catalog, SqliteStore,
     rr::{Name, Zone, ZoneType},
+    server::UdpServerExt,
 };
 
 fn main() -> ExitCode {
@@ -127,11 +128,15 @@ async fn serve(address: IpAddr, port: u16, db: PathBuf) -> Result<(), Box<dyn st
     let store = SqliteStore::new(connection.into()).await?;
     let catalog = Catalog::new(store);
 
-    let mut server = hickory_server::ServerFuture::new(catalog);
     let socket = tokio::net::UdpSocket::bind((address, port)).await?;
-    server.register_socket(socket);
+    let server = walnut_dns::server::catalog_server(catalog)
+        .with_default_udp(socket)
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        });
+
     println!("Server started on {address}:{port}");
-    server.block_until_done().await?;
+    server.await?;
     println!("...end");
     Ok(())
 }
