@@ -2,15 +2,26 @@ use std::{cmp::Ordering, fmt};
 
 use chrono::{DateTime, Utc};
 use hickory_proto::{
+    ProtoError,
     dnssec::Proof,
     rr::{DNSClass, RData, RecordData, RecordType, RrKey},
-    serialize::binary::{BinDecoder, Restrict},
+    serialize::binary::{BinDecoder, BinEncodable, Restrict},
 };
 
 use crate::database::FromRow;
 
 use super::{AsHickory, RecordID, SqlName, ttl::TimeToLive};
 use hickory_proto::rr::Name;
+
+/// From [RFC 6762](https://tools.ietf.org/html/rfc6762#section-10.2)
+/// ```text
+/// The cache-flush bit is the most significant bit of the second
+/// 16-bit word of a resource record in a Resource Record Section of a
+/// Multicast DNS message (the field conventionally referred to as the
+/// rrclass field), and the actual resource record class is the least
+/// significant fifteen bits of this field.
+/// ```
+const MDNS_ENABLE_CACHE_FLUSH: u16 = 1 << 15;
 
 /// DNS Resource Record with extra fields
 ///
@@ -493,6 +504,40 @@ impl From<hickory_proto::rr::Record<RData>> for Record<RData> {
     }
 }
 
+impl<R: RecordData> BinEncodable for Record<R> {
+    fn emit(
+        &self,
+        encoder: &mut hickory_proto::serialize::binary::BinEncoder<'_>,
+    ) -> Result<(), ProtoError> {
+        self.name_labels.emit(encoder)?;
+        self.record_type().emit(encoder)?;
+        if self.mdns_cache_flush {
+            encoder.emit_u16(u16::from(self.dns_class()) | MDNS_ENABLE_CACHE_FLUSH)?;
+        } else {
+            self.dns_class.emit(encoder)?;
+        }
+        encoder.emit_u32(self.ttl.into())?;
+
+        // place the RData length
+        let place = encoder.place::<u16>()?;
+
+        // write the RData
+        //   the None case is handled below by writing `0` for the length of the RData
+        //   this is in turn read as `None` during the `read` operation.
+        if !self.rdata.is_update() {
+            self.rdata.emit(encoder)?;
+        }
+
+        // get the length written
+        let len = encoder.len_since_place(&place);
+        assert!(len <= u16::MAX as usize);
+
+        // replace the location with the length
+        place.replace(encoder, len as u16)?;
+        Ok(())
+    }
+}
+
 impl<R: RecordData> AsHickory for Record<R> {
     type Hickory = hickory_proto::rr::Record<R>;
 
@@ -512,7 +557,7 @@ mod tests {
     use hickory_proto::rr::{RecordType, rdata::A};
 
     fn create_test_name() -> Name {
-        Name::from_utf8("test.example.com").unwrap()
+        Name::from_utf8("test.example.com.").unwrap()
     }
 
     fn create_test_a_record() -> Record<A> {
@@ -526,7 +571,7 @@ mod tests {
     fn test_record_creation() {
         let record = create_test_a_record();
 
-        assert!(record.name().to_utf8().starts_with("test.example.com"));
+        assert!(record.name().to_utf8().starts_with("test.example.com."));
         assert_eq!(u32::from(record.ttl()), 300u32);
         assert_eq!(record.dns_class(), DNSClass::IN);
         assert_eq!(record.record_type(), RecordType::A);
@@ -649,7 +694,7 @@ mod tests {
         let record = create_test_a_record();
         let display_str = format!("{record}");
 
-        assert!(display_str.contains("test.example.com"));
+        assert!(display_str.contains("test.example.com."));
         assert!(display_str.contains("300"));
         assert!(display_str.contains("IN"));
         assert!(display_str.contains("A"));
@@ -658,8 +703,8 @@ mod tests {
 
     #[test]
     fn test_record_ordering() {
-        let name1 = Name::from_utf8("a.example.com").unwrap();
-        let name2 = Name::from_utf8("b.example.com").unwrap();
+        let name1 = Name::from_utf8("a.example.com.").unwrap();
+        let name2 = Name::from_utf8("b.example.com.").unwrap();
         let ttl = TimeToLive::from(300);
         let rdata = A::new(192, 168, 1, 1);
 

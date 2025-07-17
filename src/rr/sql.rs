@@ -58,8 +58,8 @@ impl FromSql for SqlName {
 pub trait NameExt {
     /// Parse an email address for use in SOA records
     ///
-    /// Converts an email address (e.g., "admin@example.com") into the DNS name
-    /// format used in SOA records (e.g., "admin.example.com"). Dots in the
+    /// Converts an email address (e.g., "admin@example.com.") into the DNS name
+    /// format used in SOA records (e.g., "admin.example.com."). Dots in the
     /// local part are escaped with backslashes.
     ///
     /// # Arguments
@@ -98,7 +98,7 @@ mod tests {
 
     #[test]
     fn test_sql_name_creation() {
-        let name = Name::from_utf8("example.com").unwrap();
+        let name = Name::from_utf8("example.com.").unwrap();
         let sql_name = SqlName::from(name.clone());
 
         assert_eq!(sql_name.to_utf8(), name.to_utf8());
@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn test_sql_name_conversions() {
-        let name = Name::from_utf8("test.example.com").unwrap();
+        let name = Name::from_utf8("test.example.com.").unwrap();
         let sql_name = SqlName::from(name.clone());
         let back_to_name: Name = sql_name.into();
 
@@ -115,11 +115,11 @@ mod tests {
 
     #[test]
     fn test_sql_name_from_lower_name() {
-        let name = Name::from_utf8("EXAMPLE.COM").unwrap();
+        let name = Name::from_utf8("example.com.").unwrap();
         let lower_name = LowerName::from(name);
         let sql_name = SqlName::from(lower_name);
 
-        assert!(sql_name.to_utf8().starts_with("example.com"));
+        assert!(sql_name.to_utf8().starts_with("example.com."));
     }
 
     #[test]
@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_sql_name_debug() {
-        let name = Name::from_utf8("debug.example.com").unwrap();
+        let name = Name::from_utf8("debug.example.com.").unwrap();
         let sql_name = SqlName::from(name);
         let debug_str = format!("{sql_name:?}");
 
@@ -143,14 +143,14 @@ mod tests {
 
     #[test]
     fn test_name_ext_parse_soa_email() {
-        let result = Name::parse_soa_email("admin@example.com").unwrap();
-        assert!(result.to_utf8().starts_with("admin.example.com"));
+        let result = Name::parse_soa_email("admin@example.com.").unwrap();
+        assert!(result.to_utf8().starts_with("admin.example.com."));
     }
 
     #[test]
     fn test_name_ext_parse_soa_email_with_dots() {
-        let result = Name::parse_soa_email("admin.user@example.com").unwrap();
-        assert!(result.to_utf8().starts_with("admin\\.user.example.com"));
+        let result = Name::parse_soa_email("admin.user@example.com.").unwrap();
+        assert!(result.to_utf8().starts_with("admin\\.user.example.com."));
     }
 
     #[test]

@@ -233,8 +233,8 @@ async fn test_authorize() {
 #[tokio::test]
 async fn test_prerequisites() {
     subscribe();
-    let not_zone = Name::from_str("not.a.domain.com").unwrap();
-    let not_in_zone = Name::from_str("not.example.com").unwrap();
+    let not_zone = Name::from_str("not.a.domain.com.").unwrap();
+    let not_in_zone = Name::from_str("not.example.com.").unwrap();
 
     let mut authority = DNSSecZone::new(create_example());
     authority.set_allow_update(true);
@@ -407,8 +407,8 @@ async fn test_prerequisites() {
 async fn test_pre_scan() {
     subscribe();
 
-    let up_name = Name::from_str("www.example.com").unwrap();
-    let not_zone = Name::from_str("not.zone.com").unwrap();
+    let up_name = Name::from_str("www.example.com.").unwrap();
+    let not_zone = Name::from_str("not.zone.com.").unwrap();
 
     let authority = DNSSecZone::new(create_example());
 

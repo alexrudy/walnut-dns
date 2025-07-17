@@ -9,37 +9,30 @@ repository = "https://github.com/alexrudy/walnut-dns"
 documentation = "https://docs.rs/walnut-dns"
 readme = "README.md"
 authors = ["Alex Rudy <opensource@alexrudy.net>"]
-categories = [
-    "network-programming",
-    "web-programming",
-]
+categories = ["network-programming", "web-programming"]
 keywords = ["dns", "server", "async"]
 
 [dependencies]
-async-trait = "0.1"
 arc-swap = "1"
+async-trait = "0.1"
 bb8 = { version = "0.8", optional = true }
+bytes = "1"
 camino = "1"
+chateau.path = "../chateau"
 chrono = "0.4"
 clap = { version = "4", optional = true }
 data-encoding = { version = "2.2.0", default-features = false }
+futures = "0.3"
 hickory-proto = { version = "0.25", features = ["mdns", "dnssec-ring"] }
 hickory-server = { version = "0.25", features = ["dnssec-ring"] }
+pin-project = "1.1.10"
 rusqlite = { version = "0.37", features = ["blob", "chrono", "uuid", "trace"] }
 rustls-pki-types = "1.10"
-rustls = { version = "0.23", default-features = false, features = [
-    "logging",
-    "std",
-    "tls12",
-] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
+tokio-util = "0.7.15"
+tower = "0.5"
 tracing = "0.1"
-tokio = { version = "1", features = [
-    "rt",
-    "rt-multi-thread",
-    "net",
-], optional = true }
 zeroize = "1"
 
 [dependencies.uuid]
@@ -51,6 +44,15 @@ features = [
     "serde",
 ]
 
+[dependencies.tokio]
+version = "1"
+features = ["rt", "rt-multi-thread", "net"]
+
+[dependencies.rustls]
+version = "0.23"
+default-features = false
+features = ["logging", "std", "tls12"]
+
 [dependencies.monarch-db]
 version = ">=0.1.1"
 # git = "https://github.com/alexrudy/monarch-db.git"
@@ -61,7 +63,6 @@ features = ["env-filter", "json", "fmt", "ansi", "std"]
 optional = true
 
 [dev-dependencies]
-futures = "0.3"
 hickory-client = { version = "0.25" }
 hickory-proto = { version = "0.25", features = ["tls-ring"] }
 hickory-server = { version = "0.25", features = ["testing", "tls-ring"] }
@@ -69,6 +70,7 @@ serde_json = "1.0"
 tempfile = "3.0"
 tokio = "1"
 tower = "0.5"
+static-assertions = { version = "1", package = "static_assertions" }
 
 [dev-dependencies.tracing-subscriber]
 version = "^0.3"
@@ -76,9 +78,9 @@ features = ["env-filter", "json", "fmt", "ansi", "std"]
 
 [features]
 default = []
-pool = ["dep:bb8", "dep:tokio"]
+pool = ["dep:bb8"]
 bundled = ["rusqlite/bundled"]
-cli = ["dep:clap", "dep:tokio", "dep:tracing-subscriber"]
+cli = ["dep:clap", "dep:tracing-subscriber"]
 
 [[bin]]
 name = "walnut-dns"

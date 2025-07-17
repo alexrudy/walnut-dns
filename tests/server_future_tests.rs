@@ -221,7 +221,7 @@ async fn test_server_www_tls() {
 
     subscribe();
 
-    let dns_name = "ns.example.com";
+    let dns_name = "ns.example.com.";
 
     let server_path = Path::new(env!("CARGO_MANIFEST_PATH")).parent().unwrap();
     println!("using server src path: {}", server_path.display());
