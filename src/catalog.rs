@@ -468,8 +468,10 @@ async fn lookup(
 
     for (authority_index, authority) in authorities.iter().enumerate() {
         tracing::debug!(
-            "performing {query} query on authority {origin} with request id {request_id}",
-            origin = authority.origin(),
+            origin = %authority.origin(),
+            qtype = %query.query_type(),
+            name = %query.name(),
+            "querying"
         );
 
         let mut result = authority.search(request_info.clone(), lookup_options).await;
