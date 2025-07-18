@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 // use std::time::Duration;
 
+use chateau::server::Server;
 use futures::TryStreamExt;
 use hickory_client::client::{Client, ClientHandle};
 use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
@@ -30,6 +31,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
 use walnut_dns::rr::Zone;
 use walnut_dns::server::UdpServerExt as _;
+use walnut_dns::server::tcp::DnsOverTcp;
 use walnut_dns::{Catalog, SqliteStore, server};
 
 mod support;
@@ -60,7 +62,6 @@ async fn test_server_www_udp() {
 }
 
 #[tokio::test]
-#[ignore]
 #[allow(clippy::uninlined_format_args)]
 async fn test_server_www_tcp() {
     subscribe();
@@ -369,15 +370,16 @@ async fn server_thread_udp(udp_socket: UdpSocket, shutdown: oneshot::Receiver<()
 #[allow(unused)]
 async fn server_thread_tcp(tcp_listener: TcpListener, shutdown: oneshot::Receiver<()>) {
     let catalog = new_catalog().await;
-    unimplemented!()
-    // let mut server = ServerFuture::new(catalog);
-    // server.register_listener(tcp_listener, Duration::from_secs(30));
 
-    // while server_continue.load(Ordering::Relaxed) {
-    //     tokio::time::sleep(Duration::from_millis(10)).await;
-    // }
-
-    // server.shutdown_gracefully().await.unwrap();
+    let server = Server::builder()
+        .with_shared_service(catalog)
+        .with_tokio()
+        .with_protocol(DnsOverTcp::new())
+        .with_acceptor(tcp_listener)
+        .with_graceful_shutdown(async move {
+            let _ = shutdown.await;
+        });
+    server.await.unwrap();
 }
 
 // TODO: need a rustls option

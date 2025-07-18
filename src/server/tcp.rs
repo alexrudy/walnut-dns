@@ -1,71 +1,37 @@
 //! TCP Protocol for DNS
 
-use std::{
-    fmt, io,
-    pin::Pin,
-    task::{Context, Poll, ready},
-};
+use std::fmt;
+use std::pin::Pin;
+use std::task::{Context, Poll, ready};
 
-use bytes::{Buf, Bytes, BytesMut};
-use chateau::{
-    server::{Connection, Protocol},
-    stream::tcp::TcpStream,
-};
-use hickory_proto::xfer::SerialMessage;
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    sync::mpsc,
-};
-use tracing::{error, trace};
+use chateau::server::{Connection, Protocol};
+use chateau::stream::tcp::TcpStream;
+use futures::{Sink, Stream};
+use hickory_proto::op::Message;
+use hickory_server::server::Request;
+use tokio::task::JoinSet;
+use tokio_util::codec::Framed;
+use tracing::{Instrument, debug, error, trace, trace_span};
 
-use crate::error::HickoryError;
+use crate::{codec::DNSCodec, error::HickoryError};
 
-use super::request::SerializedRequest;
-
-/// Current state while writing to the remote of the TCP connection
-enum WriteTcpState {
-    /// Currently writing the length of bytes to of the buffer.
-    LenBytes {
-        /// Current position in the length buffer being written
-        pos: usize,
-        /// Length of the buffer
-        length: [u8; 2],
-        /// Buffer to write after the length
-        bytes: Bytes,
-    },
-    /// Currently writing the buffer to the remote
-    Bytes { bytes: Bytes },
-    /// Currently flushing the bytes to the remote
-    Flushing,
+#[derive(Debug, Default)]
+pub struct DnsOverTcp {
+    _priv: (),
 }
 
-/// Current state of a TCP stream as it's being read.
-enum ReadTcpState {
-    /// Currently reading the length of the TCP packet
-    LenBytes {
-        /// Current position in the buffer
-        pos: usize,
-        /// Buffer of the length to read
-        bytes: [u8; 2],
-    },
-    /// Currently reading the bytes of the DNS packet
-    Bytes {
-        /// Current position while reading the buffer
-        pos: usize,
-        /// buffer being read into
-        bytes: BytesMut,
-    },
+impl DnsOverTcp {
+    pub fn new() -> Self {
+        Self { _priv: () }
+    }
 }
 
-#[derive(Debug)]
-pub struct DnsOverTcp {}
-
-impl<S> Protocol<S, TcpStream, SerializedRequest> for DnsOverTcp
+impl<S> Protocol<S, TcpStream, Request> for DnsOverTcp
 where
-    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError> + 'static,
+    S: tower::Service<Request, Response = Message, Error = HickoryError> + 'static,
     S::Future: Send + 'static,
 {
-    type Response = SerialMessage;
+    type Response = Message;
     type Error = HickoryError;
 
     type Connection = DnsOverTcpConnection<S>;
@@ -78,274 +44,216 @@ where
 #[pin_project::pin_project]
 pub struct DnsOverTcpConnection<S>
 where
-    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
+    S: tower::Service<Request, Response = Message, Error = HickoryError>,
 {
     service: S,
-    read_state: ReadTcpState,
-    write_state: Option<WriteTcpState>,
-    outgoing: mpsc::UnboundedReceiver<SerialMessage>,
-    incoming: Option<mpsc::UnboundedSender<SerialMessage>>,
-    cancelled: bool,
     #[pin]
-    stream: TcpStream,
+    codec: Framed<TcpStream, DNSCodec>,
+    tasks: JoinSet<Result<Message, HickoryError>>,
+    outbound: Option<Message>,
+    cancelled: bool,
 }
 
 impl<S> DnsOverTcpConnection<S>
 where
-    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
+    S: tower::Service<Request, Response = Message, Error = HickoryError>,
 {
-    fn new(stream: TcpStream, service: S) -> Self {
-        let (tx, rx) = mpsc::unbounded_channel();
+    pub fn new(stream: TcpStream, service: S) -> Self {
+        let codec = Framed::new(stream, DNSCodec::new(hickory_proto::xfer::Protocol::Tcp));
+        let tasks = JoinSet::new();
         Self {
             service,
-            read_state: ReadTcpState::LenBytes {
-                pos: 0,
-                bytes: [0; 2],
-            },
-            write_state: None,
-            outgoing: rx,
-            incoming: None,
+            codec,
+            tasks,
+            outbound: None,
             cancelled: false,
-            stream,
         }
     }
 }
 
 impl<S> fmt::Debug for DnsOverTcpConnection<S>
 where
-    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
+    S: tower::Service<Request, Response = Message, Error = HickoryError>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DnsOverTcpConnection")
-            .field("stream", &self.stream)
+            .field("codec", &self.codec)
             .finish()
     }
 }
 
 impl<S> DnsOverTcpConnection<S>
 where
-    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
+    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+    S::Future: Send + 'static,
 {
-    fn poll_read(
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), HickoryError>> {
+        let mut this = self.as_mut().project();
+        ready!(this.service.poll_ready(cx))?;
+        loop {
+            match ready!(this.codec.as_mut().poll_next(cx)) {
+                Some(Ok(message)) => {
+                    trace!("Recieved message");
+                    let src = this
+                        .codec
+                        .get_ref()
+                        .peer_addr()
+                        .map_err(HickoryError::Recv)?;
+                    let id = message.id();
+                    let future = this.service.call(Request::new(
+                        message,
+                        src,
+                        hickory_proto::xfer::Protocol::Tcp,
+                    ));
+                    this.tasks.spawn(
+                        async move {
+                            trace!("Processing message {id}");
+                            let response = future.await?;
+                            trace!("Task returning response {id}");
+                            Ok(response)
+                        }
+                        .instrument(trace_span!(parent: None, "message", %id)),
+                    );
+                    trace!(%id, "Spawned task");
+                    return Ok(()).into();
+                }
+                Some(Err(error)) => {
+                    trace!("Dropping message, codec error: {error}");
+                }
+                None => {
+                    trace!("Codec Empty");
+                    return Ok(()).into();
+                }
+            }
+        }
+    }
+
+    fn poll_tasks(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<Option<SerializedRequest>, io::Error>> {
-        let mut this = self.as_mut().project();
+    ) -> Poll<Result<Option<Message>, HickoryError>> {
         loop {
-            match &mut this.read_state {
-                ReadTcpState::LenBytes { pos, bytes } => {
-                    let mut buf = tokio::io::ReadBuf::new(&mut bytes[*pos..]);
-                    match ready!(this.stream.as_mut().poll_read(cx, &mut buf)) {
-                        Ok(()) => {
-                            if buf.filled().len() == 0 {
-                                // EOF implied
-                                if *pos == 0 {
-                                    trace!("EOF at message boundary");
-                                    return Poll::Ready(Ok(None));
-                                } else {
-                                    trace!("EOF while reading message length");
-                                    return Poll::Ready(Err(io::Error::new(
-                                        io::ErrorKind::BrokenPipe,
-                                        "EOF while reading message length",
-                                    )));
-                                }
-                            }
-                            *pos += buf.filled().len();
-                            if *pos == bytes.len() {
-                                // Length read, start reading the rest
-                                let data_len = u16::from_be_bytes(*bytes);
-                                trace!(n=%data_len, "data length read");
-                                let buf = BytesMut::with_capacity(data_len as _);
-                                *this.read_state = ReadTcpState::Bytes { pos: 0, bytes: buf };
-                            }
-                        }
-                        Err(error) => return Poll::Ready(Err(error)),
-                    }
+            match ready!(self.tasks.poll_join_next(cx)) {
+                Some(Ok(Ok(message))) => {
+                    tracing::trace!("Service provided response {id}", id = message.id());
+                    return Ok(Some(message)).into();
                 }
-                ReadTcpState::Bytes { pos, bytes } => {
-                    let mut buf = tokio::io::ReadBuf::new(bytes);
-                    match ready!(this.stream.as_mut().poll_read(cx, &mut buf)) {
-                        Ok(()) => {
-                            if buf.filled().len() == 0 {
-                                // EOF implied
-
-                                trace!("EOF while reading message");
-                                return Poll::Ready(Err(io::Error::new(
-                                    io::ErrorKind::BrokenPipe,
-                                    "EOF while reading message",
-                                )));
-                            }
-                            *pos += buf.filled().len();
-                            if *pos == bytes.len() {
-                                // Message read
-                                if let ReadTcpState::Bytes { bytes, .. } = std::mem::replace(
-                                    this.read_state,
-                                    ReadTcpState::LenBytes {
-                                        pos: 0,
-                                        bytes: [0; 2],
-                                    },
-                                ) {
-                                    let addr = this.stream.peer_addr()?;
-                                    let msg = SerializedRequest::new(
-                                        SerialMessage::new(bytes.into(), addr),
-                                        hickory_proto::xfer::Protocol::Tcp,
-                                    );
-                                    return Poll::Ready(Ok(Some(msg)));
-                                } else {
-                                    panic!("TCP read state error: expected message found length");
-                                }
-                            }
-                        }
-                        Err(error) => return Poll::Ready(Err(error)),
-                    }
+                Some(Ok(Err(error))) => return Err(error).into(),
+                Some(Err(error)) if error.is_panic() => {
+                    error!("DNS Service panic handling request: {error}");
                 }
+                Some(Err(_)) => {
+                    trace!("DNS Service task cancelled");
+                }
+                None => return Ok(None).into(),
             }
         }
     }
 
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        if self.write_state.is_none() {
-            // Nothing to do, exit early.
-            return Poll::Ready(Ok(()));
-        }
-
-        let mut this = self.as_mut().project();
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), HickoryError>> {
         loop {
-            match this.write_state {
-                Some(WriteTcpState::Bytes { bytes }) => {
-                    match ready!(this.stream.as_mut().poll_write(cx, &bytes)) {
-                        Ok(n_written) => {
-                            bytes.advance(n_written);
-                            if bytes.is_empty() {
-                                *this.write_state = Some(WriteTcpState::Flushing);
-                            }
-                        }
-                        Err(error) => return Err(error).into(),
+            if self.outbound.is_none() {
+                trace!("Polling tasks");
+                let message = match ready!(self.as_mut().poll_tasks(cx))? {
+                    Some(message) => message,
+                    None => {
+                        trace!("No active tasks");
+                        return Ok(()).into();
                     }
-                }
-                Some(WriteTcpState::Flushing) => {
-                    match ready!(this.stream.as_mut().poll_flush(cx)) {
-                        Ok(()) => {
-                            *this.write_state = None;
-                        }
-                        Err(error) => {
-                            trace!("Error during flush: {error}");
-                            return Poll::Ready(Err(error));
-                        }
-                    }
-                }
-                Some(WriteTcpState::LenBytes { pos, length, bytes }) => {
-                    match ready!(this.stream.as_mut().poll_write(cx, length)) {
-                        Ok(n) => {
-                            *pos += n;
-                            if *pos == 2 {
-                                *this.write_state = Some(WriteTcpState::Bytes {
-                                    bytes: bytes.clone(),
-                                });
-                            }
-                        }
-                        Err(_) => todo!(),
-                    }
-                }
-                None => todo!(),
+                };
+                self.as_mut().outbound = Some(message);
             }
+            trace!("Writing message");
+            let mut this = self.as_mut().project();
+            ready!(this.codec.as_mut().poll_ready(cx))?;
+            let message = this.outbound.take().expect("Pending outbound message");
+            this.codec
+                .start_send(message)
+                .map_err(HickoryError::Protocol)?;
         }
     }
 
-    fn poll_recv(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        if self.write_state.is_some() {
-            // Don't poll for new inbound messages until the outbound messsages are done.
-            return Poll::Ready(Ok(()));
-        }
-        let this = self.as_mut().project();
-        match ready!(this.outgoing.poll_recv(cx)) {
-            Some(msg) => {
-                let (data, _) = msg.into_parts();
-                let len_bytes: u16 = data.len().try_into().map_err(|_| {
-                    trace!(n=%data.len(), "message won't fit length in u16");
-                    io::Error::new(io::ErrorKind::InvalidData, "Message is too large")
-                })?;
-                let length = u16::to_be_bytes(len_bytes);
-                trace!(n=%len_bytes, "setting up write");
-                *this.write_state = Some(WriteTcpState::LenBytes {
-                    pos: 0,
-                    length,
-                    bytes: data.into(),
-                });
-                Poll::Ready(Ok(()))
-            }
-            None => Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "Outgoing message pipe has closed",
-            ))),
-        }
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), HickoryError>> {
+        ready!(self.as_mut().poll_write(cx))?;
+        trace!("Shutting down");
+        self.as_mut()
+            .project()
+            .codec
+            .poll_close(cx)
+            .map_err(HickoryError::Protocol)
     }
 }
 
 impl<S> Future for DnsOverTcpConnection<S>
 where
-    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
+    S: tower::Service<Request, Response = Message, Error = HickoryError>,
     S::Future: Send + 'static,
 {
     type Output = Result<(), HickoryError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        ready!(self.service.poll_ready(cx))?;
+        // Write as much as we can before pending.
+        if let Poll::Ready(Err(error)) = self.as_mut().poll_write(cx) {
+            debug!("Write error: {error}");
+            return Err(error).into();
+        };
 
-        loop {
-            match self.as_mut().poll_recv(cx) {
-                Poll::Ready(Ok(())) => {}
-                Poll::Ready(Err(err)) => return Poll::Ready(Err(HickoryError::Send(err))),
-                Poll::Pending => {}
-            };
-
-            match self.as_mut().poll_write(cx) {
-                Poll::Ready(Ok(())) => {}
-                Poll::Ready(Err(err)) => return Poll::Ready(Err(HickoryError::Send(err))),
-                Poll::Pending => break,
-            };
-        }
-        if self.cancelled {
-            return Poll::Pending;
-        }
-
-        loop {
+        // Read and start new tasks only if we are still running.
+        if !self.cancelled {
+            trace!("Polling read");
             match self.as_mut().poll_read(cx) {
-                Poll::Ready(Ok(Some(request))) => {
-                    if let Some(sender) = self.incoming.clone() {
-                        let future = self.service.call(request);
-                        tokio::spawn(async move {
-                            match future.await {
-                                Ok(response) => {
-                                    if let Err(_) = sender.send(response) {
-                                        error!("Error sending response");
-                                    }
-                                }
-                                Err(error) => {
-                                    error!("Error handling request: {error}");
-                                }
-                            }
-                        });
-                    } else {
-                        return Poll::Ready(Ok(()));
-                    }
+                Poll::Ready(Ok(())) if self.tasks.is_empty() => {
+                    trace!("No read / no tasks. Done");
+                    self.as_mut().poll_shutdown(cx)
                 }
-
-                Poll::Ready(Ok(None)) => return Poll::Ready(Ok(())),
-                Poll::Ready(Err(err)) => return Poll::Ready(Err(HickoryError::Recv(err))),
-                Poll::Pending => break,
+                Poll::Ready(Ok(())) => {
+                    trace!("No read / tasks pending");
+                    self.as_mut().poll_write(cx)
+                }
+                Poll::Ready(Err(error)) => {
+                    debug!("Read error: {error}");
+                    Err(error).into()
+                }
+                Poll::Pending if self.tasks.is_empty() => {
+                    // No more tasks to poll, but there might be data sitting
+                    // in the outbound buffer.
+                    ready!(self.as_mut().project().codec.poll_flush(cx))?;
+                    Poll::Pending
+                }
+                Poll::Pending => Poll::Pending,
             }
+        } else if self.tasks.is_empty() {
+            // Cancelled, flush and close writer.
+            ready!(
+                self.as_mut()
+                    .project()
+                    .codec
+                    .poll_close(cx)
+                    .map_err(Into::into)
+            )
+            .inspect(|_| trace!("Flush and close"))
+            .inspect_err(|err| debug!("Close error: {err}"))
+            .into()
+        } else {
+            debug!("Pending tasks");
+
+            // Tasks are still running.
+            Poll::Pending
         }
-        Poll::Pending
     }
 }
 
 impl<S> Connection for DnsOverTcpConnection<S>
 where
-    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
+    S: tower::Service<Request, Response = Message, Error = HickoryError>,
 {
     fn graceful_shutdown(mut self: Pin<&mut Self>) {
         self.cancelled = true;
-        self.incoming.take();
     }
 }

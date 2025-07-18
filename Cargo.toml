@@ -29,7 +29,7 @@ rusqlite = { version = "0.37", features = ["blob", "chrono", "uuid", "trace"] }
 rustls-pki-types = "1.10"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
-tokio-util = "0.7.15"
+tokio-util = { version = "0.7.15", features = ["codec", "net"] }
 tower = "0.5"
 tracing = "0.1"
 zeroize = "1"

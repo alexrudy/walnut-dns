@@ -1,7 +1,6 @@
 use std::net::SocketAddr;
 
 use hickory_proto::xfer::{Protocol, SerialMessage};
-pub use hickory_server::server::Request;
 
 pub struct SerializedRequest {
     inner: SerialMessage,

@@ -2,6 +2,7 @@ use std::io;
 
 use hickory_proto::ProtoError;
 use hickory_server::authority::LookupError;
+use tokio::task::JoinError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HickoryError {
@@ -25,4 +26,7 @@ pub enum HickoryError {
 
     #[error("Recv IO error: {0}")]
     Recv(#[source] io::Error),
+
+    #[error("Panic: {0}")]
+    Panic(JoinError),
 }

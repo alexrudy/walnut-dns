@@ -1,5 +1,6 @@
 pub mod authority;
 pub mod catalog;
+pub mod codec;
 pub mod database;
 pub mod error;
 pub mod rr;
