@@ -62,7 +62,6 @@ features = ["env-filter", "json", "fmt", "ansi", "std"]
 optional = true
 
 [dependencies.chateau]
-features = ["tls-ring"]
 version = "0.1.0"
 path = "../chateau"
 # git = "https://github.com/alexrudy/chateau.git"
@@ -84,6 +83,9 @@ features = ["env-filter", "json", "fmt", "ansi", "std"]
 
 [features]
 default = []
+tls = []
+tls-ring = ["tls", "chateau/tls-ring", "hickory-proto/tls-ring"]
+tls-awc-lc = ["tls", "chateau/tls-aws-lc", "hickory-proto/tls-aws-lc-rs"]
 pool = ["dep:bb8"]
 bundled = ["rusqlite/bundled"]
 cli = ["dep:clap", "dep:tracing-subscriber", "tokio/signal"]

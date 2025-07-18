@@ -27,6 +27,26 @@ impl DNSCodec {
     pub fn protocol(&self) -> Protocol {
         self.protocol
     }
+
+    fn parse_length(&mut self, src: &mut bytes::BytesMut) -> Option<usize> {
+        if src.len() < 2 {
+            // Not enough data to read length marker
+            return None;
+        }
+
+        let mut length_bytes = [0u8; 2];
+        length_bytes.copy_from_slice(&src[..2]);
+        let length = u16::from_be_bytes(length_bytes) as usize;
+
+        if src.len() < (length + 2) {
+            src.reserve((length + 2) - src.len());
+            // Not enough data to read entire message
+            return None;
+        }
+        trace!("decode len={length}");
+        src.advance(2);
+        Some(length)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -77,25 +97,15 @@ impl Decoder for DNSCodec {
 
     fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let length = match self.protocol {
-            Protocol::Tcp | Protocol::Tls => {
-                if src.len() < 2 {
-                    // Not enough data to read length marker
-                    return Ok(None);
-                }
-
-                let mut length_bytes = [0u8; 2];
-                length_bytes.copy_from_slice(&src[..2]);
-                let length = u16::from_be_bytes(length_bytes) as usize;
-
-                if src.len() < (length + 2) {
-                    src.reserve((length + 2) - src.len());
-                    // Not enough data to read entire message
-                    return Ok(None);
-                }
-                trace!("decode len={length}");
-                src.advance(2);
-                length
-            }
+            #[cfg(feature = "tls")]
+            Protocol::Tls => match self.parse_length(src) {
+                Some(length) => length,
+                None => return Ok(None),
+            },
+            Protocol::Tcp => match self.parse_length(src) {
+                Some(length) => length,
+                None => return Ok(None),
+            },
             Protocol::Udp => {
                 trace!("decode udp, buffer={}", src.len());
                 src.len()
