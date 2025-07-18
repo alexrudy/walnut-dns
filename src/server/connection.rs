@@ -7,15 +7,16 @@ use std::{fmt, io};
 
 use chateau::info::HasConnectionInfo;
 use chateau::server::Connection;
+use futures::stream::FuturesUnordered;
 use futures::{Sink, Stream};
 use hickory_proto::ProtoError;
 use hickory_proto::op::Message;
 use hickory_proto::xfer::Protocol;
 use hickory_server::server::Request;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::task::JoinSet;
 use tokio_util::codec::Framed;
-use tracing::{Instrument, debug, debug_span, error, trace, trace_span, warn};
+use tracing::instrument::Instrumented;
+use tracing::{Instrument, debug, debug_span, trace, trace_span, warn};
 
 use crate::codec::{CodecError, DNSCodec, DNSRequest};
 use crate::error::HickoryError;
@@ -92,22 +93,76 @@ enum ServiceState<S> {
     Ready(Option<S>),
 }
 
+#[pin_project::pin_project(project=AddressStateProject)]
+enum AddressFutureState<F> {
+    Future(#[pin] F),
+    Done(Option<Message>),
+}
+
 #[pin_project::pin_project]
-pub struct DNSConnection<S, F> {
+struct AddressedFuture<F> {
+    #[pin]
+    state: AddressFutureState<F>,
+    addr: SocketAddr,
+}
+
+impl<F> AddressedFuture<F> {
+    fn future(future: F, addr: SocketAddr) -> Self {
+        Self {
+            state: AddressFutureState::Future(future),
+            addr,
+        }
+    }
+
+    fn done(message: Message, addr: SocketAddr) -> Self {
+        Self {
+            state: AddressFutureState::Done(Some(message)),
+            addr,
+        }
+    }
+}
+
+impl<F> Future for AddressedFuture<F>
+where
+    F: Future<Output = Result<Message, HickoryError>>,
+{
+    type Output = Result<(Message, SocketAddr), HickoryError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        match this.state.project() {
+            AddressStateProject::Future(future) => ready!(future.poll(cx)),
+            AddressStateProject::Done(message) => Ok(message.take().expect("polled after done")),
+        }
+        .map(|message| (message, *this.addr))
+        .into()
+    }
+}
+
+#[pin_project::pin_project]
+pub struct DNSConnection<S, F>
+where
+    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+{
     service: ServiceState<S>,
     #[pin]
     codec: F,
-    tasks: JoinSet<Result<(Message, SocketAddr), HickoryError>>,
+
+    #[pin]
+    tasks: FuturesUnordered<Instrumented<AddressedFuture<S::Future>>>,
     outbound: Option<(Message, SocketAddr)>,
     cancelled: bool,
 }
 
-impl<S, F> DNSConnection<S, F> {
+impl<S, F> DNSConnection<S, F>
+where
+    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+{
     pub fn new(service: S, codec: F) -> Self {
         Self {
             service: ServiceState::Pending(Some(service)),
             codec,
-            tasks: JoinSet::new(),
+            tasks: FuturesUnordered::new(),
             outbound: None,
             cancelled: false,
         }
@@ -118,13 +173,17 @@ impl<S, IO> DNSConnection<S, DNSFramedStream<IO>>
 where
     IO: AsyncRead + AsyncWrite + HasConnectionInfo,
     IO::Addr: Into<SocketAddr> + Clone,
+    S: tower::Service<Request, Response = Message, Error = HickoryError>,
 {
     pub fn streamed(service: S, stream: IO, protocol: Protocol) -> Self {
         Self::new(service, DNSFramedStream::new(stream, protocol))
     }
 }
 
-impl<S, F> fmt::Debug for DNSConnection<S, F> {
+impl<S, F> fmt::Debug for DNSConnection<S, F>
+where
+    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DNSConnection").finish()
     }
@@ -138,7 +197,6 @@ enum ReadAction {
 impl<S, F> DNSConnection<S, F>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
-    S::Future: Send + 'static,
     F: Stream<Item = Result<DNSRequest, CodecError>>,
 {
     fn poll_read(
@@ -171,12 +229,9 @@ where
                     .expect("service polled to ready");
 
                     let future = svc.call(message);
-                    this.tasks.spawn(
-                        async move {
-                            let response = future.await?;
-                            Ok((response, addr))
-                        }
-                        .instrument(debug_span!(parent: None, "message", %id)),
+                    this.tasks.push(
+                        AddressedFuture::future(future, addr)
+                            .instrument(debug_span!(parent: None, "message", %id)),
                     );
                     trace!(%id, "Spawned task");
                     *this.service = ServiceState::Pending(Some(svc));
@@ -184,8 +239,8 @@ where
                 }
                 Some(Ok(DNSRequest::Failed((reply, addr)))) => {
                     let id = reply.id();
-                    this.tasks.spawn(
-                        async move { Ok((reply, addr)) }
+                    this.tasks.push(
+                        AddressedFuture::done(reply, addr)
                             .instrument(trace_span!(parent: None, "message", %id)),
                     );
                     trace!(%id, "Spawned error response");
@@ -208,26 +263,23 @@ where
     }
 }
 
-impl<S, F> DNSConnection<S, F> {
+impl<S, F> DNSConnection<S, F>
+where
+    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+{
     fn poll_tasks(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<Option<(Message, SocketAddr)>, HickoryError>> {
         loop {
-            match ready!(self.as_mut().project().tasks.poll_join_next(cx)) {
-                Some(Ok(Ok((message, addr)))) => {
+            match ready!(self.as_mut().project().tasks.poll_next(cx)) {
+                Some(Ok((message, addr))) => {
                     trace!(id=%message.id(), "Service provided response");
                     return Ok(Some((message, addr))).into();
                 }
-                Some(Ok(Err(error))) => {
+                Some(Err(error)) => {
                     warn!("Task encountered an unhandled error: {error}");
                     return Ok(None).into();
-                }
-                Some(Err(error)) if error.is_panic() => {
-                    error!("DNS Service panic handling request: {error}");
-                }
-                Some(Err(_)) => {
-                    trace!("DNS Service task cancelled");
                 }
                 None => return Ok(None).into(),
             }
@@ -237,6 +289,7 @@ impl<S, F> DNSConnection<S, F> {
 
 impl<S, F> DNSConnection<S, F>
 where
+    S: tower::Service<Request, Response = Message, Error = HickoryError>,
     F: Sink<(Message, SocketAddr), Error = ProtoError>,
 {
     fn poll_write(
@@ -244,20 +297,23 @@ where
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), HickoryError>> {
         loop {
-            if self.outbound.is_none() {
-                let message = match ready!(self.as_mut().poll_tasks(cx))? {
-                    Some(message) => message,
-                    None => {
-                        return Ok(()).into();
-                    }
-                };
-                *self.as_mut().project().outbound = Some(message);
+            {
+                let mut this = self.as_mut().project();
+                ready!(this.codec.as_mut().poll_ready(cx))?;
             }
+
+            let message = match ready!(self.as_mut().poll_tasks(cx))? {
+                Some(message) => message,
+                None => {
+                    return Ok(()).into();
+                }
+            };
+
             let mut this = self.as_mut().project();
-            ready!(this.codec.as_mut().poll_ready(cx))?;
-            let message = this.outbound.take().expect("Pending outbound message");
+
             trace!(id=%message.0.id(), "Writing message");
             this.codec
+                .as_mut()
                 .start_send(message)
                 .map_err(HickoryError::Protocol)?;
         }
@@ -279,7 +335,6 @@ where
 impl<S, F> Future for DNSConnection<S, F>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
-    S::Future: Send + 'static,
     F: Stream<Item = Result<DNSRequest, CodecError>>
         + Sink<(Message, SocketAddr), Error = ProtoError>,
 {
@@ -340,7 +395,10 @@ where
     }
 }
 
-impl<S, F> Connection for DNSConnection<S, F> {
+impl<S, F> Connection for DNSConnection<S, F>
+where
+    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+{
     fn graceful_shutdown(self: Pin<&mut Self>) {
         *self.project().cancelled = true;
     }
