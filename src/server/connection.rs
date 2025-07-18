@@ -8,7 +8,7 @@ use std::{fmt, io};
 use chateau::info::HasConnectionInfo;
 use chateau::server::Connection;
 use futures::stream::FuturesUnordered;
-use futures::{Sink, Stream};
+use futures::{Sink, Stream, TryStream};
 use hickory_proto::ProtoError;
 use hickory_proto::op::Message;
 use hickory_proto::xfer::Protocol;
@@ -213,7 +213,7 @@ where
         }
 
         loop {
-            match ready!(this.codec.as_mut().poll_next(cx)) {
+            match ready!(this.codec.as_mut().try_poll_next(cx)) {
                 Some(Ok(DNSRequest::Message(message))) => {
                     trace!("Recieved message");
 
@@ -272,7 +272,7 @@ where
         cx: &mut Context<'_>,
     ) -> Poll<Result<Option<(Message, SocketAddr)>, HickoryError>> {
         loop {
-            match ready!(self.as_mut().project().tasks.poll_next(cx)) {
+            match ready!(self.as_mut().project().tasks.try_poll_next(cx)) {
                 Some(Ok((message, addr))) => {
                     trace!(id=%message.id(), "Service provided response");
                     return Ok(Some((message, addr))).into();
@@ -297,10 +297,7 @@ where
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), HickoryError>> {
         loop {
-            {
-                let mut this = self.as_mut().project();
-                ready!(this.codec.as_mut().poll_ready(cx))?;
-            }
+            ready!(self.as_mut().project().codec.poll_ready(cx))?;
 
             let message = match ready!(self.as_mut().poll_tasks(cx))? {
                 Some(message) => message,
@@ -309,11 +306,10 @@ where
                 }
             };
 
-            let mut this = self.as_mut().project();
-
             trace!(id=%message.0.id(), "Writing message");
-            this.codec
-                .as_mut()
+            self.as_mut()
+                .project()
+                .codec
                 .start_send(message)
                 .map_err(HickoryError::Protocol)?;
         }
