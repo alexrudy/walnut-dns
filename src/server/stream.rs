@@ -26,6 +26,7 @@ impl<IO> DnsOverStream<IO> {
         }
     }
 
+    #[cfg(feature = "tls")]
     pub fn tls() -> Self {
         Self {
             protocol: hickory_proto::xfer::Protocol::Tls,

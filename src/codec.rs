@@ -173,20 +173,28 @@ impl Encoder<Message> for DNSCodec {
             encode_fallback_servfail_response(id, &mut buffer)
         })?;
 
-        if matches!(self.protocol, Protocol::Tcp | Protocol::Tls) {
-            let n = buffer.len();
+        fn write_length(dst: &mut bytes::BytesMut, n: usize) {
             if dst.len() < (n + 2) {
                 let additional = (n + 2) - dst.len();
                 dst.reserve(additional);
             }
             dst.put(u16::to_be_bytes(n as u16).as_slice());
-        } else {
-            let n = buffer.len();
-            if dst.len() < n {
-                let additional = n - dst.len();
-                dst.reserve(additional);
-            }
         }
+
+        match self.protocol {
+            Protocol::Tcp => write_length(dst, buffer.len()),
+            #[cfg(feature = "tls")]
+            Protocol::Tls => write_length(dst, buffer.len()),
+            Protocol::Udp => {
+                let n = buffer.len();
+                if dst.len() < n {
+                    let additional = n - dst.len();
+                    dst.reserve(additional);
+                }
+            }
+            p => unimplemented!("Unsupported protocol: {p}"),
+        }
+
         dst.put(&*buffer);
         Ok(())
     }
