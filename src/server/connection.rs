@@ -1,6 +1,6 @@
 //! TCP Protocol for DNS
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::task::{Context, Poll, ready};
 use std::{fmt, io};
@@ -161,6 +161,8 @@ where
 
                     let id = message.id();
                     let addr = message.src();
+
+                    sanitize_address(&addr).map_err(HickoryError::Recv)?;
 
                     let mut svc = match this.service {
                         ServiceState::Pending(_) => None,
@@ -342,4 +344,31 @@ impl<S, F> Connection for DNSConnection<S, F> {
     fn graceful_shutdown(self: Pin<&mut Self>) {
         *self.project().cancelled = true;
     }
+}
+
+fn sanitize_address(address: &SocketAddr) -> Result<(), io::Error> {
+    if address.port() == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "port cannot be zero",
+        ));
+    }
+
+    if let IpAddr::V4(addr) = address.ip() {
+        if addr.is_broadcast() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "broadcast addresses are not supported",
+            ));
+        }
+    }
+
+    if address.ip().is_unspecified() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "unspecified addresses are not supported",
+        ));
+    }
+
+    Ok(())
 }

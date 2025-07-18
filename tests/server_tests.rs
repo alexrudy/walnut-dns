@@ -1,12 +1,15 @@
 use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+#[cfg(feature = "tls")]
 use std::path::Path;
 use std::str::FromStr;
+#[cfg(feature = "tls")]
 use std::sync::Arc;
 use std::time::Duration;
 // use std::time::Duration;
 
 use chateau::server::Server;
+#[cfg(feature = "tls")]
 use chateau::server::conn::tls::TlsAcceptor;
 use futures::TryStreamExt;
 use hickory_client::client::{Client, ClientHandle};
@@ -14,13 +17,15 @@ use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::rdata::{A, OPT};
 use hickory_proto::rr::{DNSClass, Name, RData, Record, RecordType};
 use hickory_proto::runtime::TokioRuntimeProvider;
+#[cfg(feature = "tls")]
 use hickory_proto::rustls::default_provider;
 use hickory_proto::tcp::TcpClientStream;
 use hickory_proto::udp::UdpClientStream;
 use hickory_proto::xfer::{DnsHandle, DnsMultiplexer};
-use rustls::ServerConfig;
+
+#[cfg(feature = "tls")]
 use rustls::{
-    ClientConfig, RootCertStore,
+    ClientConfig, RootCertStore, ServerConfig,
     pki_types::{
         CertificateDer, PrivateKeyDer,
         pem::{self, PemObject},
@@ -222,7 +227,7 @@ fn read_file(path: &str) -> Vec<u8> {
 }
 
 #[tokio::test]
-#[allow(clippy::uninlined_format_args)]
+#[cfg(feature = "tls")]
 async fn test_server_www_tls() {
     use std::env;
 
@@ -285,10 +290,12 @@ async fn lazy_tcp_client(addr: SocketAddr) -> Client {
     client
 }
 
+#[cfg(feature = "tls")]
 fn read_certs(cert_path: impl AsRef<Path>) -> Result<Vec<CertificateDer<'static>>, pem::Error> {
     CertificateDer::pem_file_iter(cert_path)?.collect::<Result<Vec<_>, _>>()
 }
 
+#[cfg(feature = "tls")]
 async fn lazy_tls_client(
     ipaddr: SocketAddr,
     dns_name: String,
@@ -396,13 +403,16 @@ async fn server_thread_tcp(tcp_listener: TcpListener, shutdown: oneshot::Receive
     server.await.unwrap();
 }
 
+#[cfg(feature = "tls")]
 async fn server_thread_tls(
     tls_listener: TcpListener,
     shutdown: oneshot::Receiver<()>,
     cert_chain: Arc<dyn ResolvesServerCert>,
 ) {
     let catalog = new_catalog().await;
-    let mut tls_config = ServerConfig::builder()
+    let mut tls_config = ServerConfig::builder_with_provider(default_provider().into())
+        .with_safe_default_protocol_versions()
+        .unwrap()
         .with_no_client_auth()
         .with_cert_resolver(cert_chain);
     tls_config.alpn_protocols = vec![b"dot".to_vec()];
