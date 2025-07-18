@@ -82,12 +82,20 @@ where
     }
 }
 
+enum ReadAction {
+    Spawned,
+    Terminated,
+}
+
 impl<S> DnsOverTcpConnection<S>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
     S::Future: Send + 'static,
 {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), HickoryError>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<ReadAction, HickoryError>> {
         let mut this = self.as_mut().project();
         ready!(this.service.poll_ready(cx))?;
         loop {
@@ -115,14 +123,14 @@ where
                         .instrument(trace_span!(parent: None, "message", %id)),
                     );
                     trace!(%id, "Spawned task");
-                    return Ok(()).into();
+                    return Ok(ReadAction::Spawned).into();
                 }
                 Some(Err(error)) => {
                     trace!("Dropping message, codec error: {error}");
                 }
                 None => {
                     trace!("Codec Empty");
-                    return Ok(()).into();
+                    return Ok(ReadAction::Terminated).into();
                 }
             }
         }
@@ -156,7 +164,6 @@ where
     ) -> Poll<Result<(), HickoryError>> {
         loop {
             if self.outbound.is_none() {
-                trace!("Polling tasks");
                 let message = match ready!(self.as_mut().poll_tasks(cx))? {
                     Some(message) => message,
                     None => {
@@ -181,7 +188,7 @@ where
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), HickoryError>> {
         ready!(self.as_mut().poll_write(cx))?;
-        trace!("Shutting down");
+        trace!("Shutting down writer");
         self.as_mut()
             .project()
             .codec
@@ -206,16 +213,12 @@ where
 
         // Read and start new tasks only if we are still running.
         if !self.cancelled {
-            trace!("Polling read");
             match self.as_mut().poll_read(cx) {
-                Poll::Ready(Ok(())) if self.tasks.is_empty() => {
-                    trace!("No read / no tasks. Done");
+                Poll::Ready(Ok(ReadAction::Terminated)) => {
+                    self.cancelled = true;
                     self.as_mut().poll_shutdown(cx)
                 }
-                Poll::Ready(Ok(())) => {
-                    trace!("No read / tasks pending");
-                    self.as_mut().poll_write(cx)
-                }
+                Poll::Ready(Ok(ReadAction::Spawned)) => self.as_mut().poll_write(cx),
                 Poll::Ready(Err(error)) => {
                     debug!("Read error: {error}");
                     Err(error).into()
@@ -230,19 +233,8 @@ where
             }
         } else if self.tasks.is_empty() {
             // Cancelled, flush and close writer.
-            ready!(
-                self.as_mut()
-                    .project()
-                    .codec
-                    .poll_close(cx)
-                    .map_err(Into::into)
-            )
-            .inspect(|_| trace!("Flush and close"))
-            .inspect_err(|err| debug!("Close error: {err}"))
-            .into()
+            self.as_mut().poll_shutdown(cx)
         } else {
-            debug!("Pending tasks");
-
             // Tasks are still running.
             Poll::Pending
         }
