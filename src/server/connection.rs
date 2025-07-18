@@ -17,7 +17,7 @@ use tokio::task::JoinSet;
 use tokio_util::codec::Framed;
 use tracing::{Instrument, debug, error, trace, trace_span};
 
-use crate::codec::DNSCodec;
+use crate::codec::{CodecError, DNSCodec, DNSRequest};
 use crate::error::HickoryError;
 
 #[pin_project::pin_project]
@@ -77,12 +77,12 @@ impl<IO> Stream for DNSFramedStream<IO>
 where
     IO: AsyncRead + AsyncWrite,
 {
-    type Item = Result<Request, ProtoError>;
+    type Item = Result<DNSRequest, CodecError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
         this.codec.as_mut().poll_next(cx).map(|r| {
-            r.map(|r| r.map(|msg| Request::new(msg, *this.addr, this.codec.codec().protocol())))
+            r.map(|r| r.map(|msg| msg.with_address(*this.addr, this.codec.codec().protocol())))
         })
     }
 }
@@ -134,7 +134,7 @@ impl<S, F> DNSConnection<S, F>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
     S::Future: Send + 'static,
-    F: Stream<Item = Result<Request, ProtoError>>,
+    F: Stream<Item = Result<DNSRequest, CodecError>>,
 {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -144,7 +144,7 @@ where
         ready!(this.service.poll_ready(cx))?;
         loop {
             match ready!(this.codec.as_mut().poll_next(cx)) {
-                Some(Ok(message)) => {
+                Some(Ok(DNSRequest::Message(message))) => {
                     trace!("Recieved message");
 
                     let id = message.id();
@@ -162,8 +162,25 @@ where
                     trace!(%id, "Spawned task");
                     return Ok(ReadAction::Spawned).into();
                 }
-                Some(Err(error)) => {
+                Some(Ok(DNSRequest::Failed((reply, addr)))) => {
+                    let id = reply.id();
+                    this.tasks.spawn(
+                        async move {
+                            trace!("Task returning error response {id}");
+                            Ok((reply, addr))
+                        }
+                        .instrument(trace_span!(parent: None, "message", %id)),
+                    );
+                    trace!(%id, "Spawned task");
+                    return Ok(ReadAction::Spawned).into();
+                }
+
+                Some(Err(CodecError::DropMessage(error))) => {
                     trace!("Dropping message, codec error: {error}");
+                }
+                Some(Err(CodecError::IO(error))) => {
+                    trace!("Codec IO Error");
+                    return Err(HickoryError::Recv(error)).into();
                 }
                 None => {
                     trace!("Codec Empty");
@@ -245,7 +262,8 @@ impl<S, F> Future for DNSConnection<S, F>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
     S::Future: Send + 'static,
-    F: Stream<Item = Result<Request, ProtoError>> + Sink<(Message, SocketAddr), Error = ProtoError>,
+    F: Stream<Item = Result<DNSRequest, CodecError>>
+        + Sink<(Message, SocketAddr), Error = ProtoError>,
 {
     type Output = Result<(), HickoryError>;
 

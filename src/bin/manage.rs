@@ -6,12 +6,13 @@ use std::{
     process::ExitCode,
 };
 
+use chateau::server::Server;
 use clap::arg;
 use tracing_subscriber::EnvFilter;
 use walnut_dns::{
     Catalog, SqliteStore,
     rr::{Name, Zone, ZoneType},
-    server::UdpServerExt,
+    server::udp::{DnsOverUdp, UdpListener},
 };
 
 fn main() -> ExitCode {
@@ -129,8 +130,11 @@ async fn serve(address: IpAddr, port: u16, db: PathBuf) -> Result<(), Box<dyn st
     let catalog = Catalog::new(store);
 
     let socket = tokio::net::UdpSocket::bind((address, port)).await?;
-    let server = walnut_dns::server::catalog_server(catalog)
-        .with_default_udp(socket)
+    let server = Server::builder()
+        .with_shared_service(catalog)
+        .with_acceptor(UdpListener::new(socket.into()))
+        .with_protocol(DnsOverUdp::new())
+        .with_tokio()
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         });

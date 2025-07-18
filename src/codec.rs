@@ -1,11 +1,13 @@
+use std::net::SocketAddr;
+
 use bytes::{Buf, BufMut};
 use hickory_proto::{
     ProtoError,
-    op::Message,
+    op::{Header, Message, ResponseCode},
     serialize::binary::{BinDecodable, BinDecoder, BinEncodable as _, BinEncoder},
     xfer::Protocol,
 };
-use hickory_server::authority::MessageRequest;
+use hickory_server::{authority::MessageRequest, server::Request};
 use tokio_util::codec::{Decoder, Encoder};
 use tracing::{error, trace};
 
@@ -27,29 +29,76 @@ impl DNSCodec {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum CodecError {
+    #[error("Failed to decode message, dropping")]
+    DropMessage(#[source] ProtoError),
+
+    #[error(transparent)]
+    IO(#[from] std::io::Error),
+}
+
+pub enum CodecRequest {
+    Message(MessageRequest),
+    Failed(Header, ResponseCode),
+}
+
+impl CodecRequest {
+    pub fn with_address(self, addr: SocketAddr, protocol: Protocol) -> DNSRequest {
+        match self {
+            CodecRequest::Message(message_request) => {
+                DNSRequest::Message(Request::new(message_request, addr, protocol))
+            }
+            CodecRequest::Failed(header, response_code) => DNSRequest::Failed((
+                Message::error_msg(header.id(), header.op_code(), response_code),
+                addr,
+            )),
+        }
+    }
+}
+
+pub enum DNSRequest {
+    Message(Request),
+    Failed((Message, SocketAddr)),
+}
+
 impl Decoder for DNSCodec {
-    type Item = MessageRequest;
-    type Error = ProtoError;
+    type Item = CodecRequest;
+    type Error = CodecError;
 
     fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        if src.len() < 2 {
-            // Not enough data to read length marker
-            return Ok(None);
-        }
+        if matches!(self.protocol, Protocol::Tcp | Protocol::Tls) {
+            if src.len() < 2 {
+                // Not enough data to read length marker
+                return Ok(None);
+            }
 
-        let mut length_bytes = [0u8; 2];
-        length_bytes.copy_from_slice(&src[..2]);
-        let length = u16::from_be_bytes(length_bytes) as usize;
-        src.advance(2);
+            let mut length_bytes = [0u8; 2];
+            length_bytes.copy_from_slice(&src[..2]);
+            let length = u16::from_be_bytes(length_bytes) as usize;
+            src.advance(2);
 
-        if src.len() < length {
-            src.reserve(length - src.len());
-            // Not enough data to read message
-            return Ok(None);
+            if src.len() < length {
+                src.reserve(length - src.len());
+                // Not enough data to read message
+                return Ok(None);
+            }
         }
 
         let mut decoder = BinDecoder::new(&src);
-        Self::Item::read(&mut decoder).map(Some)
+        match MessageRequest::read(&mut decoder) {
+            Ok(message) => Ok(Some(CodecRequest::Message(message))),
+            Err(error) => {
+                // Try to just parse the header, if that fails, just drop the message.
+                let mut decoder = BinDecoder::new(&src);
+                match Header::read(&mut decoder) {
+                    Ok(header) => {
+                        return Ok(Some(CodecRequest::Failed(header, ResponseCode::FormErr)));
+                    }
+                    Err(_) => return Err(CodecError::DropMessage(error)),
+                };
+            }
+        }
     }
 }
 
@@ -81,14 +130,21 @@ impl Encoder<Message> for DNSCodec {
             encode_fallback_servfail_response(id, &mut buffer)
         })?;
 
-        let n = buffer.len();
-        if dst.len() < (n + 2) {
-            let additional = (n + 2) - dst.len();
-            dst.reserve(additional);
+        if matches!(self.protocol, Protocol::Tcp | Protocol::Tls) {
+            let n = buffer.len();
+            if dst.len() < (n + 2) {
+                let additional = (n + 2) - dst.len();
+                dst.reserve(additional);
+            }
+            dst.put(u16::to_be_bytes(n as u16).as_slice());
+        } else {
+            let n = buffer.len();
+            if dst.len() < n {
+                let additional = n - dst.len();
+                dst.reserve(additional);
+            }
         }
-        dst.put(u16::to_be_bytes(n as u16).as_slice());
         dst.put(&*buffer);
-
         Ok(())
     }
 }

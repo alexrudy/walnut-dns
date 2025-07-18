@@ -1,15 +1,23 @@
+use std::borrow::Borrow;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll, ready};
+use std::{fmt, io};
 
-use bytes::{Buf, Bytes};
-use chateau::server::{Connection, Protocol};
-use chateau::stream::udp::UdpConnection;
-use hickory_proto::xfer::SerialMessage;
+use chateau::server::{Accept, Protocol};
+use futures::Sink;
+use futures::Stream;
+use hickory_proto::ProtoError;
+use hickory_proto::op::Message;
+use hickory_server::server::Request;
+use tokio_util::udp::UdpFramed;
+use tracing::trace;
 
+use crate::codec::{CodecError, DNSCodec, DNSRequest};
 use crate::error::HickoryError;
 
-use super::request::SerializedRequest;
+use super::connection::DNSConnection;
 
 #[derive(Debug, Clone, Default)]
 pub struct DnsOverUdp {
@@ -22,111 +30,135 @@ impl DnsOverUdp {
     }
 }
 
-impl<S> Protocol<S, UdpConnection, SerializedRequest> for DnsOverUdp
+impl<S> Protocol<S, UdpSocket, Request> for DnsOverUdp
 where
-    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError> + 'static,
+    S: tower::Service<Request, Response = Message, Error = HickoryError> + 'static,
+    S::Future: Send + 'static,
 {
-    type Response = SerialMessage;
+    type Response = Message;
 
     type Error = HickoryError;
 
-    type Connection = DnsOverUdpConnection<S>;
+    type Connection = DNSConnection<S, DNSFramedUdp>;
 
-    fn serve_connection(&self, mut stream: UdpConnection, service: S) -> Self::Connection {
-        let msg = stream.take().unwrap();
-        let (data, addr) = msg.into_parts();
-        let smsg = SerialMessage::from_parts(data.into(), addr);
-        DnsOverUdpConnection::new(service, smsg, stream)
+    fn serve_connection(&self, stream: UdpSocket, service: S) -> Self::Connection {
+        let codec = UdpFramed::new(stream, DNSCodec::new(hickory_proto::xfer::Protocol::Udp));
+        DNSConnection::new(service, DNSFramedUdp::new(codec))
     }
 }
 
-#[pin_project::pin_project(project=ResponseStateProj)]
-enum ResponseState<S>
-where
-    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
-{
-    Oneshot(#[pin] tower::util::Oneshot<S, SerializedRequest>),
-    Sending { data: Bytes, addr: SocketAddr },
-    Idle,
-}
-
+#[derive(Debug)]
 #[pin_project::pin_project]
-pub struct DnsOverUdpConnection<S>
-where
-    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
-{
-    cancelled: bool,
-
+pub struct DNSFramedUdp {
     #[pin]
-    state: ResponseState<S>,
-
-    responder: UdpConnection,
+    framed: UdpFramed<DNSCodec, UdpSocket>,
 }
 
-impl<S> DnsOverUdpConnection<S>
-where
-    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
-{
-    pub fn new(service: S, msg: SerialMessage, responder: UdpConnection) -> Self {
-        Self {
-            cancelled: false,
-            state: ResponseState::Oneshot(tower::util::Oneshot::new(
-                service,
-                SerializedRequest::new(msg, hickory_proto::xfer::Protocol::Udp),
-            )),
-            responder,
+impl DNSFramedUdp {
+    pub fn new(framed: UdpFramed<DNSCodec, UdpSocket>) -> Self {
+        Self { framed }
+    }
+}
+
+impl Sink<(Message, SocketAddr)> for DNSFramedUdp {
+    type Error = ProtoError;
+
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().framed.poll_ready(cx)
+    }
+
+    fn start_send(self: Pin<&mut Self>, item: (Message, SocketAddr)) -> Result<(), Self::Error> {
+        self.project().framed.start_send(item)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().framed.poll_flush(cx)
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().framed.poll_close(cx)
+    }
+}
+
+impl Stream for DNSFramedUdp {
+    type Item = Result<DNSRequest, CodecError>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.project().framed.poll_next(cx).map(|r| {
+            r.map(|r| {
+                r.map(|(msg, addr)| msg.with_address(addr, hickory_proto::xfer::Protocol::Udp))
+            })
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct UdpSocket {
+    inner: Arc<tokio::net::UdpSocket>,
+    done: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl Borrow<tokio::net::UdpSocket> for UdpSocket {
+    fn borrow(&self) -> &tokio::net::UdpSocket {
+        &self.inner
+    }
+}
+
+impl Drop for UdpSocket {
+    fn drop(&mut self) {
+        if let Some(done) = self.done.take() {
+            done.send(()).ok();
         }
     }
 }
 
-impl<S> Future for DnsOverUdpConnection<S>
-where
-    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
-{
-    type Output = Result<(), HickoryError>;
+pub struct UdpListener {
+    socket: Arc<tokio::net::UdpSocket>,
+    done: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+}
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.cancelled {
-            return Poll::Ready(Err(HickoryError::Closed));
-        }
-        let mut this = self.project();
-        loop {
-            match this.state.as_mut().project() {
-                ResponseStateProj::Oneshot(future) => match ready!(future.poll(cx)) {
-                    Ok(msg) => {
-                        let (data, addr) = msg.into_parts();
-                        this.state.set(ResponseState::Sending {
-                            data: Bytes::from(data),
-                            addr,
-                        });
-                    }
-                    Err(error) => {
-                        return Poll::Ready(Err(error));
-                    }
-                },
-                ResponseStateProj::Sending { data, addr } => {
-                    match ready!(this.responder.socket().poll_send_to(cx, &data, *addr)) {
-                        Ok(n) => {
-                            data.advance(n);
-                            if data.is_empty() {
-                                this.state.set(ResponseState::Idle);
-                                return Poll::Ready(Ok(()));
-                            }
-                        }
-                        Err(error) => return Poll::Ready(Err(HickoryError::Send(error))),
-                    }
-                }
-                ResponseStateProj::Idle => return Poll::Ready(Err(HickoryError::Closed)),
-            }
-        }
+impl UdpListener {
+    pub fn new(socket: Arc<tokio::net::UdpSocket>) -> Self {
+        Self { socket, done: None }
     }
 }
 
-impl<S> Connection for DnsOverUdpConnection<S>
-where
-    S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
-{
-    fn graceful_shutdown(self: Pin<&mut Self>) {
-        *self.project().cancelled = true;
+impl From<tokio::net::UdpSocket> for UdpListener {
+    fn from(value: tokio::net::UdpSocket) -> Self {
+        Self::new(Arc::new(value))
+    }
+}
+
+impl fmt::Debug for UdpListener {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UdpListener")
+            .field("socket", &*self.socket)
+            .finish()
+    }
+}
+
+impl Accept for UdpListener {
+    type Connection = UdpSocket;
+
+    type Error = io::Error;
+
+    fn poll_accept(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Self::Connection, Self::Error>> {
+        if let Some(rx) = self.done.as_mut() {
+            ready!(Pin::new(rx).poll(cx));
+            trace!("Last connection has closed, ready to start a new one");
+        }
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.done = Some(Box::pin(async move {
+            rx.await.ok();
+        }));
+
+        Poll::Ready(Ok(UdpSocket {
+            inner: self.socket.clone(),
+            done: Some(tx),
+        }))
     }
 }

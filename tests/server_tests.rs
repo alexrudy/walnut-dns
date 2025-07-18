@@ -30,9 +30,9 @@ use tokio::net::TcpListener;
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
 use walnut_dns::rr::Zone;
-use walnut_dns::server::UdpServerExt as _;
 use walnut_dns::server::tcp::DnsOverTcp;
-use walnut_dns::{Catalog, SqliteStore, server};
+use walnut_dns::server::udp::{DnsOverUdp, UdpListener};
+use walnut_dns::{Catalog, SqliteStore};
 
 mod support;
 use support::examples::create_example;
@@ -358,8 +358,11 @@ async fn new_catalog() -> Catalog<ZoneAuthority<Zone>> {
 
 async fn server_thread_udp(udp_socket: UdpSocket, shutdown: oneshot::Receiver<()>) {
     let catalog = new_catalog().await;
-    let server = server::catalog_server(catalog)
-        .with_default_udp(udp_socket)
+    let server = Server::builder()
+        .with_shared_service(catalog)
+        .with_tokio()
+        .with_acceptor(UdpListener::new(udp_socket.into()))
+        .with_protocol(DnsOverUdp::new())
         .with_graceful_shutdown(async move {
             let _ = shutdown.await;
         });
