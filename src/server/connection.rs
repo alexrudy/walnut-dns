@@ -147,6 +147,7 @@ where
     service: ServiceState<S>,
     #[pin]
     codec: F,
+    codec_send_ready: bool,
 
     #[pin]
     tasks: FuturesUnordered<Instrumented<AddressedFuture<S::Future>>>,
@@ -161,6 +162,7 @@ where
         Self {
             service: ServiceState::Pending(Some(service)),
             codec,
+            codec_send_ready: false,
             tasks: FuturesUnordered::new(),
             cancelled: false,
         }
@@ -295,7 +297,11 @@ where
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), HickoryError>> {
         loop {
-            ready!(self.as_mut().project().codec.poll_ready(cx))?;
+            if !self.codec_send_ready {
+                let this = self.as_mut().project();
+                ready!(this.codec.poll_ready(cx))?;
+                *this.codec_send_ready = true;
+            }
 
             let message = match ready!(self.as_mut().poll_tasks(cx))? {
                 Some(message) => message,
@@ -304,10 +310,10 @@ where
                 }
             };
 
+            let this = self.as_mut().project();
             trace!(id=%message.0.id(), "Writing message");
-            self.as_mut()
-                .project()
-                .codec
+            *this.codec_send_ready = false;
+            this.codec
                 .start_send(message)
                 .map_err(HickoryError::Protocol)?;
         }
