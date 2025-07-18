@@ -55,7 +55,10 @@ pub(crate) fn encode_response(
     Ok(SerialMessage::new(buffer, dst))
 }
 
-fn encode_fallback_servfail_response(id: u16, buffer: &mut Vec<u8>) -> Result<(), ProtoError> {
+pub(crate) fn encode_fallback_servfail_response(
+    id: u16,
+    buffer: &mut Vec<u8>,
+) -> Result<(), ProtoError> {
     buffer.clear();
     let mut encoder = BinEncoder::new(buffer);
     encoder.set_max_size(512);

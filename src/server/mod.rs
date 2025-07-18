@@ -9,12 +9,13 @@ use crate::Catalog;
 use crate::services::serialize::{DNSEncoderDecoder, DNSEncoderDecoderLayer};
 
 use self::request::SerializedRequest;
-use self::udp::UdpProtocol;
+use self::udp::DnsOverUdp;
 
 const DEFAULT_RECV_BUFFER_SIZE: usize = 4096;
 
 pub mod request;
 pub mod response;
+pub mod tcp;
 pub mod udp;
 
 pub fn catalog_server<A>(
@@ -35,14 +36,14 @@ pub trait UdpServerExt<S, E>: Sized {
     fn with_default_udp(
         self,
         socket: UdpSocket,
-    ) -> Server<UdpListener, UdpProtocol, S, SerializedRequest, E> {
+    ) -> Server<UdpListener, DnsOverUdp, S, SerializedRequest, E> {
         self.with_udp(socket, DEFAULT_RECV_BUFFER_SIZE)
     }
     fn with_udp(
         self,
         socket: UdpSocket,
         recv_buffer_size: usize,
-    ) -> Server<UdpListener, UdpProtocol, S, SerializedRequest, E>;
+    ) -> Server<UdpListener, DnsOverUdp, S, SerializedRequest, E>;
 }
 
 impl<S, E> UdpServerExt<S, E> for Server<NeedsAcceptor, NeedsProtocol, S, SerializedRequest, E> {
@@ -50,8 +51,8 @@ impl<S, E> UdpServerExt<S, E> for Server<NeedsAcceptor, NeedsProtocol, S, Serial
         self,
         socket: UdpSocket,
         recv_buffer_size: usize,
-    ) -> Server<UdpListener, UdpProtocol, S, SerializedRequest, E> {
-        self.with_protocol(UdpProtocol::default())
+    ) -> Server<UdpListener, DnsOverUdp, S, SerializedRequest, E> {
+        self.with_protocol(DnsOverUdp::default())
             .with_acceptor(UdpListener::new(socket, recv_buffer_size))
     }
 }

@@ -12,17 +12,17 @@ use crate::error::HickoryError;
 use super::request::SerializedRequest;
 
 #[derive(Debug, Clone, Default)]
-pub struct UdpProtocol {
+pub struct DnsOverUdp {
     _priv: (),
 }
 
-impl UdpProtocol {
+impl DnsOverUdp {
     pub fn new() -> Self {
         Self { _priv: () }
     }
 }
 
-impl<S> Protocol<S, UdpConnection, SerializedRequest> for UdpProtocol
+impl<S> Protocol<S, UdpConnection, SerializedRequest> for DnsOverUdp
 where
     S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError> + 'static,
 {
@@ -30,13 +30,13 @@ where
 
     type Error = HickoryError;
 
-    type Connection = DnsUdpResponder<S>;
+    type Connection = DnsOverUdpConnection<S>;
 
     fn serve_connection(&self, mut stream: UdpConnection, service: S) -> Self::Connection {
         let msg = stream.take().unwrap();
         let (data, addr) = msg.into_parts();
         let smsg = SerialMessage::from_parts(data.into(), addr);
-        DnsUdpResponder::new(service, smsg, stream)
+        DnsOverUdpConnection::new(service, smsg, stream)
     }
 }
 
@@ -51,7 +51,7 @@ where
 }
 
 #[pin_project::pin_project]
-pub struct DnsUdpResponder<S>
+pub struct DnsOverUdpConnection<S>
 where
     S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
 {
@@ -63,7 +63,7 @@ where
     responder: UdpConnection,
 }
 
-impl<S> DnsUdpResponder<S>
+impl<S> DnsOverUdpConnection<S>
 where
     S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
 {
@@ -79,7 +79,7 @@ where
     }
 }
 
-impl<S> Future for DnsUdpResponder<S>
+impl<S> Future for DnsOverUdpConnection<S>
 where
     S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
 {
@@ -122,7 +122,7 @@ where
     }
 }
 
-impl<S> Connection for DnsUdpResponder<S>
+impl<S> Connection for DnsOverUdpConnection<S>
 where
     S: tower::Service<SerializedRequest, Response = SerialMessage, Error = HickoryError>,
 {

@@ -22,4 +22,7 @@ pub enum HickoryError {
 
     #[error("Send IO error: {0}")]
     Send(#[source] io::Error),
+
+    #[error("Recv IO error: {0}")]
+    Recv(#[source] io::Error),
 }
