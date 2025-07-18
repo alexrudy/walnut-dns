@@ -150,7 +150,6 @@ where
 
     #[pin]
     tasks: FuturesUnordered<Instrumented<AddressedFuture<S::Future>>>,
-    outbound: Option<(Message, SocketAddr)>,
     cancelled: bool,
 }
 
@@ -163,7 +162,6 @@ where
             service: ServiceState::Pending(Some(service)),
             codec,
             tasks: FuturesUnordered::new(),
-            outbound: None,
             cancelled: false,
         }
     }
