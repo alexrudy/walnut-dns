@@ -13,6 +13,7 @@ use self::udp::DnsOverUdp;
 
 const DEFAULT_RECV_BUFFER_SIZE: usize = 4096;
 
+pub mod connection;
 pub mod request;
 pub mod response;
 pub mod tcp;

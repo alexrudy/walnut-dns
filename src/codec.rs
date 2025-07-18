@@ -21,6 +21,10 @@ impl DNSCodec {
     pub fn new(protocol: Protocol) -> Self {
         Self { protocol }
     }
+
+    pub fn protocol(&self) -> Protocol {
+        self.protocol
+    }
 }
 
 impl Decoder for DNSCodec {
