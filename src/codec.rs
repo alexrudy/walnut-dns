@@ -76,36 +76,59 @@ impl Decoder for DNSCodec {
     type Error = CodecError;
 
     fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        if matches!(self.protocol, Protocol::Tcp | Protocol::Tls) {
-            if src.len() < 2 {
-                // Not enough data to read length marker
-                return Ok(None);
-            }
+        let length = match self.protocol {
+            Protocol::Tcp | Protocol::Tls => {
+                if src.len() < 2 {
+                    // Not enough data to read length marker
+                    return Ok(None);
+                }
 
-            let mut length_bytes = [0u8; 2];
-            length_bytes.copy_from_slice(&src[..2]);
-            let length = u16::from_be_bytes(length_bytes) as usize;
-            src.advance(2);
+                let mut length_bytes = [0u8; 2];
+                length_bytes.copy_from_slice(&src[..2]);
+                let length = u16::from_be_bytes(length_bytes) as usize;
 
-            if src.len() < length {
-                src.reserve(length - src.len());
-                // Not enough data to read message
-                return Ok(None);
+                if src.len() < (length + 2) {
+                    src.reserve((length + 2) - src.len());
+                    // Not enough data to read entire message
+                    return Ok(None);
+                }
+                trace!("decode len={length}");
+                src.advance(2);
+                length
             }
+            Protocol::Udp => {
+                trace!("decode udp, buffer={}", src.len());
+                src.len()
+            }
+            p => {
+                unimplemented!("Unknown protocol: {p}");
+            }
+        };
+
+        if src.len() == 0 {
+            // No data to decode.
+            return Ok(None);
         }
 
         let mut decoder = BinDecoder::new(&src);
         match MessageRequest::read(&mut decoder) {
-            Ok(message) => Ok(Some(CodecRequest::Message(message))),
+            Ok(message) => {
+                src.advance(length);
+                Ok(Some(CodecRequest::Message(message)))
+            }
             Err(error) => {
                 // Try to just parse the header, if that fails, just drop the message.
                 let mut decoder = BinDecoder::new(&src);
                 match Header::read(&mut decoder) {
                     Ok(header) => {
                         debug!("Failed to parse message, sending error: {error}");
+                        src.advance(length);
                         return Ok(Some(CodecRequest::Failed(header, ResponseCode::FormErr)));
                     }
-                    Err(_) => return Err(CodecError::DropMessage(error)),
+                    Err(_) => {
+                        error!("Failed to parse header: {error}");
+                        return Err(CodecError::DropMessage(error));
+                    }
                 };
             }
         }

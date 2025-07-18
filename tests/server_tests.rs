@@ -7,6 +7,7 @@ use std::time::Duration;
 // use std::time::Duration;
 
 use chateau::server::Server;
+use chateau::server::conn::tls::TlsAcceptor;
 use futures::TryStreamExt;
 use hickory_client::client::{Client, ClientHandle};
 use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
@@ -17,6 +18,7 @@ use hickory_proto::rustls::default_provider;
 use hickory_proto::tcp::TcpClientStream;
 use hickory_proto::udp::UdpClientStream;
 use hickory_proto::xfer::{DnsHandle, DnsMultiplexer};
+use rustls::ServerConfig;
 use rustls::{
     ClientConfig, RootCertStore,
     pki_types::{
@@ -30,7 +32,7 @@ use tokio::net::TcpListener;
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
 use walnut_dns::rr::Zone;
-use walnut_dns::server::tcp::DnsOverTcp;
+use walnut_dns::server::stream::DnsOverStream;
 use walnut_dns::server::udp::{DnsOverUdp, UdpListener};
 use walnut_dns::{Catalog, SqliteStore};
 
@@ -46,7 +48,10 @@ async fn test_server_www_udp() {
     subscribe();
 
     let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0));
-    let udp_socket = UdpSocket::bind(&addr).await.unwrap();
+    let udp_socket = tokio::time::timeout(Duration::from_secs(5), UdpSocket::bind(&addr))
+        .await
+        .expect("bind timeout")
+        .unwrap();
 
     let ipaddr = udp_socket.local_addr().unwrap();
     println!("udp_socket on port: {}", ipaddr);
@@ -55,10 +60,15 @@ async fn test_server_www_udp() {
     let server = tokio::spawn(server_thread_udp(udp_socket, shutdown));
     let client = tokio::spawn(client_thread_www(lazy_udp_client(ipaddr)));
 
-    let client_result = client.await;
+    let client_result = tokio::time::timeout(Duration::from_secs(5), client)
+        .await
+        .expect("client timeout");
     assert!(client_result.is_ok(), "client failed: {:?}", client_result);
     tx.send(()).unwrap();
-    server.await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("server timeout")
+        .unwrap();
 }
 
 #[tokio::test]
@@ -211,8 +221,6 @@ fn read_file(path: &str) -> Vec<u8> {
     bytes
 }
 
-// TODO: move all this to future based clients
-#[ignore]
 #[tokio::test]
 #[allow(clippy::uninlined_format_args)]
 async fn test_server_www_tls() {
@@ -318,10 +326,13 @@ async fn client_thread_www(future: impl Future<Output = Client>) {
     let name = Name::from_str("www.example.com.").unwrap();
 
     let mut client = future.await;
-    let response = client
-        .query(name.clone(), DNSClass::IN, RecordType::A)
-        .await
-        .expect("error querying");
+    let response = tokio::time::timeout(
+        Duration::from_secs(10),
+        client.query(name.clone(), DNSClass::IN, RecordType::A),
+    )
+    .await
+    .expect("timeout querying")
+    .expect("error querying");
 
     assert_eq!(
         response.response_code(),
@@ -377,7 +388,7 @@ async fn server_thread_tcp(tcp_listener: TcpListener, shutdown: oneshot::Receive
     let server = Server::builder()
         .with_shared_service(catalog)
         .with_tokio()
-        .with_protocol(DnsOverTcp::new())
+        .with_protocol(DnsOverStream::tcp())
         .with_acceptor(tcp_listener)
         .with_graceful_shutdown(async move {
             let _ = shutdown.await;
@@ -385,23 +396,28 @@ async fn server_thread_tcp(tcp_listener: TcpListener, shutdown: oneshot::Receive
     server.await.unwrap();
 }
 
-// TODO: need a rustls option
-#[allow(unused)]
 async fn server_thread_tls(
     tls_listener: TcpListener,
     shutdown: oneshot::Receiver<()>,
     cert_chain: Arc<dyn ResolvesServerCert>,
 ) {
-    use std::path::Path;
-
     let catalog = new_catalog().await;
-    unimplemented!();
+    let mut tls_config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_cert_resolver(cert_chain);
+    tls_config.alpn_protocols = vec![b"dot".to_vec()];
+    let acceptor = TlsAcceptor::new(Arc::new(tls_config), tls_listener);
 
-    // server
-    //     .register_tls_listener(tls_listener, Duration::from_secs(30), cert_chain)
-    //     .expect("failed to register TLS");
-
-    // server.shutdown_gracefully().await;
+    Server::builder()
+        .with_acceptor(acceptor)
+        .with_shared_service(catalog)
+        .with_tokio()
+        .with_protocol(DnsOverStream::tls())
+        .with_graceful_shutdown(async move {
+            shutdown.await.ok();
+        })
+        .await
+        .unwrap();
 }
 
 /// This test checks the behavior of the server when it receives a query with too many OPT RRs.

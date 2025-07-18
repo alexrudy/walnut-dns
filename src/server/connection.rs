@@ -15,7 +15,7 @@ use hickory_server::server::Request;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::task::JoinSet;
 use tokio_util::codec::Framed;
-use tracing::{Instrument, debug, error, trace, trace_span};
+use tracing::{Instrument, debug, debug_span, error, trace, trace_span, warn};
 
 use crate::codec::{CodecError, DNSCodec, DNSRequest};
 use crate::error::HickoryError;
@@ -87,9 +87,14 @@ where
     }
 }
 
+enum ServiceState<S> {
+    Pending(Option<S>),
+    Ready(Option<S>),
+}
+
 #[pin_project::pin_project]
 pub struct DNSConnection<S, F> {
-    service: S,
+    service: ServiceState<S>,
     #[pin]
     codec: F,
     tasks: JoinSet<Result<(Message, SocketAddr), HickoryError>>,
@@ -100,7 +105,7 @@ pub struct DNSConnection<S, F> {
 impl<S, F> DNSConnection<S, F> {
     pub fn new(service: S, codec: F) -> Self {
         Self {
-            service,
+            service: ServiceState::Pending(Some(service)),
             codec,
             tasks: JoinSet::new(),
             outbound: None,
@@ -141,7 +146,14 @@ where
         cx: &mut Context<'_>,
     ) -> Poll<Result<ReadAction, HickoryError>> {
         let mut this = self.as_mut().project();
-        ready!(this.service.poll_ready(cx))?;
+        match this.service {
+            ServiceState::Pending(svc) => {
+                ready!(svc.as_mut().expect("service available").poll_ready(cx))?;
+                *this.service = ServiceState::Ready(svc.take());
+            }
+            ServiceState::Ready(_) => {}
+        }
+
         loop {
             match ready!(this.codec.as_mut().poll_next(cx)) {
                 Some(Ok(DNSRequest::Message(message))) => {
@@ -149,29 +161,32 @@ where
 
                     let id = message.id();
                     let addr = message.src();
-                    let future = this.service.call(message);
+
+                    let mut svc = match this.service {
+                        ServiceState::Pending(_) => None,
+                        ServiceState::Ready(svc) => svc.take(),
+                    }
+                    .expect("service polled to ready");
+
+                    let future = svc.call(message);
                     this.tasks.spawn(
                         async move {
-                            trace!("Processing message {id}");
                             let response = future.await?;
-                            trace!("Task returning response {id}");
                             Ok((response, addr))
                         }
-                        .instrument(trace_span!(parent: None, "message", %id)),
+                        .instrument(debug_span!(parent: None, "message", %id)),
                     );
                     trace!(%id, "Spawned task");
+                    *this.service = ServiceState::Pending(Some(svc));
                     return Ok(ReadAction::Spawned).into();
                 }
                 Some(Ok(DNSRequest::Failed((reply, addr)))) => {
                     let id = reply.id();
                     this.tasks.spawn(
-                        async move {
-                            trace!("Task returning error response {id}");
-                            Ok((reply, addr))
-                        }
-                        .instrument(trace_span!(parent: None, "message", %id)),
+                        async move { Ok((reply, addr)) }
+                            .instrument(trace_span!(parent: None, "message", %id)),
                     );
-                    trace!(%id, "Spawned task");
+                    trace!(%id, "Spawned error response");
                     return Ok(ReadAction::Spawned).into();
                 }
 
@@ -199,10 +214,13 @@ impl<S, F> DNSConnection<S, F> {
         loop {
             match ready!(self.as_mut().project().tasks.poll_join_next(cx)) {
                 Some(Ok(Ok((message, addr)))) => {
-                    tracing::trace!("Service provided response {id}", id = message.id());
+                    trace!(id=%message.id(), "Service provided response");
                     return Ok(Some((message, addr))).into();
                 }
-                Some(Ok(Err(error))) => return Err(error).into(),
+                Some(Ok(Err(error))) => {
+                    warn!("Task encountered an unhandled error: {error}");
+                    return Ok(None).into();
+                }
                 Some(Err(error)) if error.is_panic() => {
                     error!("DNS Service panic handling request: {error}");
                 }
@@ -228,16 +246,15 @@ where
                 let message = match ready!(self.as_mut().poll_tasks(cx))? {
                     Some(message) => message,
                     None => {
-                        trace!("No active tasks");
                         return Ok(()).into();
                     }
                 };
                 *self.as_mut().project().outbound = Some(message);
             }
-            trace!("Writing message");
             let mut this = self.as_mut().project();
             ready!(this.codec.as_mut().poll_ready(cx))?;
             let message = this.outbound.take().expect("Pending outbound message");
+            trace!(id=%message.0.id(), "Writing message");
             this.codec
                 .start_send(message)
                 .map_err(HickoryError::Protocol)?;
@@ -249,7 +266,6 @@ where
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), HickoryError>> {
         ready!(self.as_mut().poll_write(cx))?;
-        trace!("Shutting down writer");
         self.as_mut()
             .project()
             .codec
@@ -276,27 +292,41 @@ where
 
         // Read and start new tasks only if we are still running.
         if !self.cancelled {
-            match self.as_mut().poll_read(cx) {
-                Poll::Ready(Ok(ReadAction::Terminated)) => {
-                    let this = self.as_mut().project();
-                    *this.cancelled = true;
-                    self.poll_shutdown(cx)
-                }
+            loop {
+                match self.as_mut().poll_read(cx) {
+                    Poll::Ready(Ok(ReadAction::Terminated)) => {
+                        trace!("Read terminated: cancel");
+                        let this = self.as_mut().project();
+                        *this.cancelled = true;
+                        return self.poll_shutdown(cx);
+                    }
 
-                // Since we just spawned a task, poll_write probably won't succeed,
-                // but it will register a wakeup when the taks completes.
-                Poll::Ready(Ok(ReadAction::Spawned)) => self.as_mut().poll_write(cx),
-                Poll::Ready(Err(error)) => {
-                    debug!("Read error: {error}");
-                    Err(error).into()
+                    // Since we just spawned a task, poll_write probably won't succeed,
+                    // but it will register a wakeup when the taks completes.
+                    Poll::Ready(Ok(ReadAction::Spawned)) => {
+                        if let Err(error) = ready!(self.as_mut().poll_write(cx)) {
+                            debug!("Write error: {error}");
+                            return Err(error).into();
+                        }
+                    }
+                    Poll::Ready(Err(error)) => {
+                        debug!("Read error: {error}");
+                        return Err(error).into();
+                    }
+                    Poll::Pending if self.tasks.is_empty() => {
+                        // No more tasks to poll, but there might be data sitting
+                        // in the outbound buffer.
+                        ready!(self.as_mut().project().codec.poll_flush(cx)).inspect_err(
+                            |error| {
+                                debug!("Flush error: {error}");
+                            },
+                        )?;
+                        return Poll::Pending;
+                    }
+                    Poll::Pending => {
+                        return Poll::Pending;
+                    }
                 }
-                Poll::Pending if self.tasks.is_empty() => {
-                    // No more tasks to poll, but there might be data sitting
-                    // in the outbound buffer.
-                    ready!(self.as_mut().project().codec.poll_flush(cx))?;
-                    Poll::Pending
-                }
-                Poll::Pending => Poll::Pending,
             }
         } else if self.tasks.is_empty() {
             // Cancelled, flush and close writer.
