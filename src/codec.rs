@@ -9,7 +9,7 @@ use hickory_proto::{
 };
 use hickory_server::{authority::MessageRequest, server::Request};
 use tokio_util::codec::{Decoder, Encoder};
-use tracing::{error, trace};
+use tracing::{debug, error, trace};
 
 use crate::server::response::{encode_fallback_servfail_response, max_size_for_response};
 
@@ -38,6 +38,11 @@ pub enum CodecError {
     IO(#[from] std::io::Error),
 }
 
+/// Request decoded from a codec
+///
+/// The Failed condition indicates that the codec errored, but was still able
+/// to process enough information to send a response.
+#[derive(Debug)]
 pub enum CodecRequest {
     Message(MessageRequest),
     Failed(Header, ResponseCode),
@@ -57,6 +62,10 @@ impl CodecRequest {
     }
 }
 
+/// A Request parsed from the codec, with address and protocol information
+/// attached. This must be done after the codec, since the codec is agnostic
+/// to the underlying protocol.
+#[derive(Debug)]
 pub enum DNSRequest {
     Message(Request),
     Failed((Message, SocketAddr)),
@@ -93,6 +102,7 @@ impl Decoder for DNSCodec {
                 let mut decoder = BinDecoder::new(&src);
                 match Header::read(&mut decoder) {
                     Ok(header) => {
+                        debug!("Failed to parse message, sending error: {error}");
                         return Ok(Some(CodecRequest::Failed(header, ResponseCode::FormErr)));
                     }
                     Err(_) => return Err(CodecError::DropMessage(error)),
