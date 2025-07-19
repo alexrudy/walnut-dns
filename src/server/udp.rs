@@ -42,7 +42,10 @@ where
     type Connection = DNSConnection<S, DNSFramedUdp>;
 
     fn serve_connection(&self, stream: UdpSocket, service: S) -> Self::Connection {
-        let codec = UdpFramed::new(stream, DNSCodec::new(hickory_proto::xfer::Protocol::Udp));
+        let codec = UdpFramed::new(
+            stream,
+            DNSCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp),
+        );
         DNSConnection::new(service, DNSFramedUdp::new(codec))
     }
 }

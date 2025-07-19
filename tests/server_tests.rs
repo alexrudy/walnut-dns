@@ -273,6 +273,53 @@ async fn test_server_www_tls() {
     server.await.unwrap();
 }
 
+#[tokio::test]
+#[cfg(feature = "tls")]
+async fn test_server_www_https() {
+    use std::env;
+
+    subscribe();
+
+    let dns_name = "ns.example.com.";
+
+    let server_path = Path::new(env!("CARGO_MANIFEST_PATH")).parent().unwrap();
+    println!("using server src path: {}", server_path.display());
+
+    let ca = read_certs(server_path.join("tests/test-data/ca.pem")).unwrap();
+    let cert_chain = read_certs(server_path.join("tests/test-data/cert.pem")).unwrap();
+
+    let key = PrivateKeyDer::from_pem_file(server_path.join("tests/test-data/cert.key")).unwrap();
+
+    let certified_key = CertifiedKey::from_der(cert_chain, key, &default_provider()).unwrap();
+    let server_cert_resolver = SingleCertAndKey::from(certified_key);
+
+    // Server address
+    let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0));
+    let tcp_listener = TcpListener::bind(&addr).await.unwrap();
+
+    let ipaddr = tcp_listener.local_addr().unwrap();
+    println!("tcp_listener on port: {ipaddr}");
+    let (tx, shutdown) = oneshot::channel();
+
+    let server = tokio::spawn(server_thread_https(
+        tcp_listener,
+        shutdown,
+        Arc::new(server_cert_resolver),
+    ));
+
+    let client = tokio::spawn(client_thread_www(lazy_https_client(
+        ipaddr,
+        dns_name.to_string(),
+        ca,
+    )));
+
+    let client_result = client.await;
+
+    assert!(client_result.is_ok(), "client failed: {:?}", client_result);
+    tx.send(()).unwrap();
+    server.await.unwrap();
+}
+
 async fn lazy_udp_client(addr: SocketAddr) -> Client {
     let conn = UdpClientStream::builder(addr, TokioRuntimeProvider::default()).build();
     let (client, driver) = Client::connect(conn).await.expect("failed to connect");
@@ -325,6 +372,33 @@ async fn lazy_tls_client(
     let (client, driver) = Client::connect(multiplexer)
         .await
         .expect("failed to connect");
+    tokio::spawn(driver);
+    client
+}
+
+#[cfg(feature = "tls")]
+async fn lazy_https_client(
+    ipaddr: SocketAddr,
+    dns_name: String,
+    cert_chain: Vec<CertificateDer<'static>>,
+) -> Client {
+    use hickory_proto::h2::HttpsClientStreamBuilder;
+
+    let mut root_store = RootCertStore::empty();
+    let (_, ignored) = root_store.add_parsable_certificates(cert_chain);
+    assert_eq!(ignored, 0, "bad certificate!");
+
+    let config = ClientConfig::builder_with_provider(Arc::new(default_provider()))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
+    let stream =
+        HttpsClientStreamBuilder::with_client_config(config.into(), TokioRuntimeProvider::new())
+            .build(ipaddr, dns_name, "/dns-query".into());
+
+    let (client, driver) = Client::connect(stream).await.expect("failed to connect");
     tokio::spawn(driver);
     client
 }
@@ -428,6 +502,40 @@ async fn server_thread_tls(
         })
         .await
         .unwrap();
+}
+
+#[cfg(feature = "h2")]
+async fn server_thread_https(
+    listener: TcpListener,
+    shutdown: oneshot::Receiver<()>,
+    cert_chain: Arc<dyn ResolvesServerCert>,
+) {
+    use walnut_dns::services::http::DNSOverHTTPLayer;
+
+    let catalog = new_catalog().await;
+    let mut tls_config = ServerConfig::builder_with_provider(default_provider().into())
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_cert_resolver(cert_chain);
+    tls_config.alpn_protocols = vec![b"h2".to_vec()];
+
+    hyperdriver::Server::builder::<hyperdriver::Body>()
+        .with_acceptor(
+            hyperdriver::server::conn::Acceptor::new(listener).with_tls(tls_config.into()),
+        )
+        .with_http2()
+        .with_tokio()
+        .with_shared_service(
+            tower::ServiceBuilder::new()
+                .layer(DNSOverHTTPLayer::new(http::Version::HTTP_2))
+                .service(catalog),
+        )
+        .with_graceful_shutdown(async move {
+            shutdown.await.ok();
+        })
+        .await
+        .unwrap()
 }
 
 /// This test checks the behavior of the server when it receives a query with too many OPT RRs.

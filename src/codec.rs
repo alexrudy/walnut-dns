@@ -1,31 +1,45 @@
 use std::net::SocketAddr;
 
 use bytes::{Buf, BufMut};
-use hickory_proto::{
-    ProtoError,
-    op::{Header, Message, ResponseCode},
-    serialize::binary::{BinDecodable, BinDecoder, BinEncodable as _, BinEncoder},
-    xfer::Protocol,
-};
+use hickory_proto::ProtoError;
+use hickory_proto::op::{Header, Message, ResponseCode};
+use hickory_proto::serialize::binary::{BinDecodable, BinDecoder, BinEncodable as _, BinEncoder};
+use hickory_proto::udp::MAX_RECEIVE_BUFFER_SIZE;
+use hickory_proto::xfer::Protocol;
 use hickory_server::{authority::MessageRequest, server::Request};
 use tokio_util::codec::{Decoder, Encoder};
 use tracing::{debug, error, trace};
 
-use crate::server::response::{encode_fallback_servfail_response, max_size_for_response};
+use crate::server::response::encode_fallback_servfail_response;
 
 /// The wire codec for standard DNS messages defined in RFC 1035.
 #[derive(Debug, Clone)]
 pub struct DNSCodec {
-    protocol: Protocol,
+    length_delimited: bool,
+    max_response_size: Option<u16>,
 }
 
 impl DNSCodec {
-    pub fn new(protocol: Protocol) -> Self {
-        Self { protocol }
+    pub fn new_for_protocol(protocol: Protocol) -> Self {
+        let (length_delimited, max_response_size) = match protocol {
+            Protocol::Tcp => (true, Some(u16::MAX)),
+            #[cfg(feature = "tls")]
+            Protocol::Tls => (true, Some(u16::MAX)),
+            Protocol::Udp => (false, Some(MAX_RECEIVE_BUFFER_SIZE as u16)),
+            _ => unimplemented!("Unknown protocol"),
+        };
+
+        Self {
+            length_delimited,
+            max_response_size,
+        }
     }
 
-    pub fn protocol(&self) -> Protocol {
-        self.protocol
+    pub fn new(length_delimited: bool, max_response_size: Option<u16>) -> Self {
+        Self {
+            length_delimited,
+            max_response_size,
+        }
     }
 
     fn parse_length(&mut self, src: &mut bytes::BytesMut) -> Option<usize> {
@@ -96,29 +110,21 @@ impl Decoder for DNSCodec {
     type Error = CodecError;
 
     fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let length = match self.protocol {
-            #[cfg(feature = "tls")]
-            Protocol::Tls => match self.parse_length(src) {
+        let length = if self.length_delimited {
+            match self.parse_length(src) {
                 Some(length) => length,
                 None => return Ok(None),
-            },
-            Protocol::Tcp => match self.parse_length(src) {
-                Some(length) => length,
-                None => return Ok(None),
-            },
-            Protocol::Udp => {
-                trace!("decode udp, buffer={}", src.len());
-                src.len()
             }
-            p => {
-                unimplemented!("Unknown protocol: {p}");
-            }
+        } else {
+            src.len()
         };
 
         if src.len() == 0 {
             // No data to decode.
             return Ok(None);
         }
+
+        trace!("decode buffer={}", src.len());
 
         let mut decoder = BinDecoder::new(&src);
         match MessageRequest::read(&mut decoder) {
@@ -160,12 +166,19 @@ impl Encoder<Message> for DNSCodec {
             let mut encoder = BinEncoder::new(&mut buffer);
 
             // Set an appropriate maximum on the encoder.
-            let max_size = max_size_for_response(self.protocol, &response);
-            trace!(
-                "setting response max size: {max_size} for protocol: {:?}",
-                self.protocol
-            );
-            encoder.set_max_size(max_size);
+            if let Some(max_size) = if self.length_delimited {
+                if let Some(edns) = response.extensions() {
+                    Some(edns.max_payload())
+                } else {
+                    self.max_response_size
+                }
+            } else {
+                self.max_response_size
+            } {
+                trace!("setting response max size: {max_size}");
+                encoder.set_max_size(max_size);
+            }
+
             response.emit(&mut encoder)
         }
         .or_else(|error| {
@@ -181,18 +194,14 @@ impl Encoder<Message> for DNSCodec {
             dst.put(u16::to_be_bytes(n as u16).as_slice());
         }
 
-        match self.protocol {
-            Protocol::Tcp => write_length(dst, buffer.len()),
-            #[cfg(feature = "tls")]
-            Protocol::Tls => write_length(dst, buffer.len()),
-            Protocol::Udp => {
-                let n = buffer.len();
-                if dst.len() < n {
-                    let additional = n - dst.len();
-                    dst.reserve(additional);
-                }
+        if self.length_delimited {
+            write_length(dst, buffer.len())
+        } else {
+            let n = buffer.len();
+            if dst.len() < n {
+                let additional = n - dst.len();
+                dst.reserve(additional);
             }
-            p => unimplemented!("Unsupported protocol: {p}"),
         }
 
         dst.put(&*buffer);

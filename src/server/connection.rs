@@ -27,6 +27,7 @@ pub struct DNSFramedStream<IO> {
 
     #[pin]
     codec: Framed<IO, DNSCodec>,
+    protocol: hickory_proto::xfer::Protocol,
 }
 
 impl<IO> DNSFramedStream<IO>
@@ -38,7 +39,8 @@ where
         let remote = stream.info().remote_addr().clone().into();
         Self {
             addr: remote,
-            codec: Framed::new(stream, DNSCodec::new(protocol)),
+            codec: Framed::new(stream, DNSCodec::new_for_protocol(protocol)),
+            protocol,
         }
     }
 }
@@ -82,9 +84,10 @@ where
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
-        this.codec.as_mut().poll_next(cx).map(|r| {
-            r.map(|r| r.map(|msg| msg.with_address(*this.addr, this.codec.codec().protocol())))
-        })
+        this.codec
+            .as_mut()
+            .poll_next(cx)
+            .map(|r| r.map(|r| r.map(|msg| msg.with_address(*this.addr, *this.protocol))))
     }
 }
 
@@ -323,7 +326,6 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), HickoryError>> {
-        ready!(self.as_mut().poll_write(cx))?;
         self.as_mut()
             .project()
             .codec
@@ -341,21 +343,20 @@ where
     type Output = Result<(), HickoryError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Write as much as we can before pending.
-        if let Poll::Ready(Err(error)) = self.as_mut().poll_write(cx) {
-            debug!("Write error: {error}");
-            return Err(error).into();
-        };
+        loop {
+            // Write as much as we can before pending.
+            if let Poll::Ready(Err(error)) = self.as_mut().poll_write(cx) {
+                debug!("Write error: {error}");
+                return Err(error).into();
+            };
 
-        // Read and start new tasks only if we are still running.
-        if !self.cancelled {
-            loop {
+            // Read and start new tasks only if we are still running.
+            if !self.cancelled {
                 match self.as_mut().poll_read(cx) {
                     Poll::Ready(Ok(ReadAction::Terminated)) => {
                         trace!("Read terminated: cancel");
                         let this = self.as_mut().project();
                         *this.cancelled = true;
-                        return self.poll_shutdown(cx);
                     }
 
                     // Since we just spawned a task, poll_write probably won't succeed,
@@ -384,13 +385,13 @@ where
                         return Poll::Pending;
                     }
                 }
+            } else if self.tasks.is_empty() {
+                // Cancelled, flush and close writer.
+                return self.as_mut().poll_shutdown(cx);
+            } else {
+                // Tasks are still running.
+                return Poll::Pending;
             }
-        } else if self.tasks.is_empty() {
-            // Cancelled, flush and close writer.
-            self.as_mut().poll_shutdown(cx)
-        } else {
-            // Tasks are still running.
-            Poll::Pending
         }
     }
 }
