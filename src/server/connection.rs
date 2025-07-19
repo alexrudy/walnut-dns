@@ -282,7 +282,6 @@ where
                 }
                 Some(Err(error)) => {
                     warn!("Task encountered an unhandled error: {error}");
-                    return Ok(None).into();
                 }
                 None => return Ok(None).into(),
             }

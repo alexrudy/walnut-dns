@@ -17,7 +17,7 @@ use tracing::debug;
 
 use crate::{codec::DNSCodec, error::HickoryError};
 
-const MIME_APPLICATION_DNS: &'static str = "application/dns-message";
+const MIME_APPLICATION_DNS: &str = "application/dns-message";
 
 #[derive(Debug)]
 pub struct DNSBody {
@@ -374,7 +374,7 @@ impl VerifyRequest {
 
     pub fn verify<B>(&self, request: &http::Request<B>) -> Result<(), io::Error> {
         let uri = request.uri();
-        if uri.path() != &self.path {
+        if uri.path() != self.path {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "URI Path mismatch",

@@ -119,14 +119,14 @@ impl Decoder for DNSCodec {
             src.len()
         };
 
-        if src.len() == 0 {
+        if src.is_empty() {
             // No data to decode.
             return Ok(None);
         }
 
         trace!("decode buffer={}", src.len());
 
-        let mut decoder = BinDecoder::new(&src);
+        let mut decoder = BinDecoder::new(src);
         match MessageRequest::read(&mut decoder) {
             Ok(message) => {
                 src.advance(length);
@@ -134,18 +134,18 @@ impl Decoder for DNSCodec {
             }
             Err(error) => {
                 // Try to just parse the header, if that fails, just drop the message.
-                let mut decoder = BinDecoder::new(&src);
+                let mut decoder = BinDecoder::new(src);
                 match Header::read(&mut decoder) {
                     Ok(header) => {
                         debug!("Failed to parse message, sending error: {error}");
                         src.advance(length);
-                        return Ok(Some(CodecRequest::Failed(header, ResponseCode::FormErr)));
+                        Ok(Some(CodecRequest::Failed(header, ResponseCode::FormErr)))
                     }
                     Err(_) => {
                         error!("Failed to parse header: {error}");
-                        return Err(CodecError::DropMessage(error));
+                        Err(CodecError::DropMessage(error))
                     }
-                };
+                }
             }
         }
     }

@@ -268,7 +268,7 @@ async fn test_server_www_tls() {
 
     let client_result = client.await;
 
-    assert!(client_result.is_ok(), "client failed: {:?}", client_result);
+    assert!(client_result.is_ok(), "client failed: {client_result:?}");
     tx.send(()).unwrap();
     server.await.unwrap();
 }
@@ -315,7 +315,7 @@ async fn test_server_www_https() {
 
     let client_result = client.await;
 
-    assert!(client_result.is_ok(), "client failed: {:?}", client_result);
+    assert!(client_result.is_ok(), "client failed: {client_result:?}");
     tx.send(()).unwrap();
     server.await.unwrap();
 }
