@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use std::net::SocketAddr;
 
 use bytes::{Buf, BufMut};
@@ -13,13 +14,24 @@ use tracing::{debug, error, trace};
 use crate::server::response::encode_fallback_servfail_response;
 
 /// The wire codec for standard DNS messages defined in RFC 1035.
-#[derive(Debug, Clone)]
-pub struct DNSCodec {
+#[derive(Debug)]
+pub struct DNSCodec<M> {
     length_delimited: bool,
     max_response_size: Option<u16>,
+    message: PhantomData<fn() -> M>,
 }
 
-impl DNSCodec {
+impl<M> Clone for DNSCodec<M> {
+    fn clone(&self) -> Self {
+        Self {
+            length_delimited: self.length_delimited,
+            max_response_size: self.max_response_size,
+            message: PhantomData,
+        }
+    }
+}
+
+impl<M> DNSCodec<M> {
     pub fn new_for_protocol(protocol: Protocol) -> Self {
         let (length_delimited, max_response_size) = match protocol {
             Protocol::Tcp => (true, Some(u16::MAX)),
@@ -32,6 +44,7 @@ impl DNSCodec {
         Self {
             length_delimited,
             max_response_size,
+            message: PhantomData,
         }
     }
 
@@ -39,6 +52,7 @@ impl DNSCodec {
         Self {
             length_delimited,
             max_response_size,
+            message: PhantomData,
         }
     }
 
@@ -77,18 +91,18 @@ pub enum CodecError {
 /// The Failed condition indicates that the codec errored, but was still able
 /// to process enough information to send a response.
 #[derive(Debug)]
-pub enum CodecRequest {
-    Message(MessageRequest),
+pub enum MessageDecoded<M> {
+    Message(M),
     Failed(Header, ResponseCode),
 }
 
-impl CodecRequest {
+impl MessageDecoded<MessageRequest> {
     pub fn with_address(self, addr: SocketAddr, protocol: Protocol) -> DNSRequest {
         match self {
-            CodecRequest::Message(message_request) => {
+            MessageDecoded::Message(message_request) => {
                 DNSRequest::Message(Request::new(message_request, addr, protocol))
             }
-            CodecRequest::Failed(header, response_code) => DNSRequest::Failed((
+            MessageDecoded::Failed(header, response_code) => DNSRequest::Failed((
                 Message::error_msg(header.id(), header.op_code(), response_code),
                 addr,
             )),
@@ -105,8 +119,11 @@ pub enum DNSRequest {
     Failed((Message, SocketAddr)),
 }
 
-impl Decoder for DNSCodec {
-    type Item = CodecRequest;
+impl<M> Decoder for DNSCodec<M>
+where
+    M: for<'a> BinDecodable<'a>,
+{
+    type Item = MessageDecoded<M>;
     type Error = CodecError;
 
     fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
@@ -127,10 +144,10 @@ impl Decoder for DNSCodec {
         trace!("decode buffer={}", src.len());
 
         let mut decoder = BinDecoder::new(src);
-        match MessageRequest::read(&mut decoder) {
+        match M::read(&mut decoder) {
             Ok(message) => {
                 src.advance(length);
-                Ok(Some(CodecRequest::Message(message)))
+                Ok(Some(MessageDecoded::Message(message)))
             }
             Err(error) => {
                 // Try to just parse the header, if that fails, just drop the message.
@@ -139,7 +156,7 @@ impl Decoder for DNSCodec {
                     Ok(header) => {
                         debug!("Failed to parse message, sending error: {error}");
                         src.advance(length);
-                        Ok(Some(CodecRequest::Failed(header, ResponseCode::FormErr)))
+                        Ok(Some(MessageDecoded::Failed(header, ResponseCode::FormErr)))
                     }
                     Err(_) => {
                         error!("Failed to parse header: {error}");
@@ -151,7 +168,7 @@ impl Decoder for DNSCodec {
     }
 }
 
-impl Encoder<Message> for DNSCodec {
+impl<M> Encoder<Message> for DNSCodec<M> {
     type Error = ProtoError;
 
     fn encode(&mut self, response: Message, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {

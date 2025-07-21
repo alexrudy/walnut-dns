@@ -1,5 +1,6 @@
 pub mod authority;
 pub mod catalog;
+pub mod client;
 pub mod codec;
 pub mod database;
 pub mod error;

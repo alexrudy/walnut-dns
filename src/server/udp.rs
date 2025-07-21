@@ -10,6 +10,7 @@ use futures::Sink;
 use futures::Stream;
 use hickory_proto::ProtoError;
 use hickory_proto::op::Message;
+use hickory_server::authority::MessageRequest;
 use hickory_server::server::Request;
 use tokio_util::udp::UdpFramed;
 use tracing::trace;
@@ -54,11 +55,11 @@ where
 #[pin_project::pin_project]
 pub struct DNSFramedUdp {
     #[pin]
-    framed: UdpFramed<DNSCodec, UdpSocket>,
+    framed: UdpFramed<DNSCodec<MessageRequest>, UdpSocket>,
 }
 
 impl DNSFramedUdp {
-    pub fn new(framed: UdpFramed<DNSCodec, UdpSocket>) -> Self {
+    pub fn new(framed: UdpFramed<DNSCodec<MessageRequest>, UdpSocket>) -> Self {
         Self { framed }
     }
 }

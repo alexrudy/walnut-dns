@@ -1,18 +1,15 @@
 #![cfg(feature = "cli")]
 
 use std::{
-    net::IpAddr,
     path::{Path, PathBuf},
     process::ExitCode,
 };
 
-use chateau::server::Server;
 use clap::arg;
 use tracing_subscriber::EnvFilter;
 use walnut_dns::{
-    Catalog, SqliteStore,
+    SqliteStore,
     rr::{Name, Zone, ZoneType},
-    server::udp::{DnsOverUdp, UdpListener},
 };
 
 fn main() -> ExitCode {
@@ -41,20 +38,6 @@ fn manage() -> Result<(), ()> {
                     arg!(<ORIGIN> "DNS origin for zone file")
                         .value_parser(clap::value_parser!(Name)),
                 ),
-        )
-        .subcommand(
-            clap::Command::new("serve")
-                .about("Run a DNS server")
-                .arg(
-                    arg!(--port <PORT> "Port to listen on")
-                        .value_parser(clap::value_parser!(u16))
-                        .default_value("8053"),
-                )
-                .arg(
-                    arg!(--address <ADDRESS> "Address to listen on")
-                        .value_parser(clap::value_parser!(IpAddr))
-                        .default_value("127.0.0.1"),
-                ),
         );
 
     let args = app.get_matches();
@@ -77,20 +60,7 @@ fn manage() -> Result<(), ()> {
                 }
             }
         }
-        Some(("serve", matches)) => {
-            let address = matches
-                .get_one::<IpAddr>("address")
-                .expect("address is required");
-            let port = matches.get_one::<u16>("port").expect("port is required");
-            match serve_dns(*address, *port, db) {
-                Ok(_) => {}
-                Err(error) => {
-                    eprintln!("Error in DNS server");
-                    eprintln!("{error}");
-                    return Err(());
-                }
-            }
-        }
+
         _ => unreachable!("clap crimes?"),
     }
 
@@ -115,32 +85,4 @@ fn load_zone_to_db(
         println!("Zone '{}' loaded successfully", zone.name());
         Ok(())
     })
-}
-
-fn serve_dns(address: IpAddr, port: u16, db: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    rt.block_on(serve(address, port, db.to_path_buf()))
-}
-
-async fn serve(address: IpAddr, port: u16, db: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let connection = rusqlite::Connection::open(db)?;
-    let store = SqliteStore::new(connection.into()).await?;
-    let catalog = Catalog::new(store);
-
-    let socket = tokio::net::UdpSocket::bind((address, port)).await?;
-    let server = Server::builder()
-        .with_shared_service(catalog)
-        .with_acceptor(UdpListener::new(socket.into()))
-        .with_protocol(DnsOverUdp::new())
-        .with_tokio()
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        });
-
-    println!("Server started on {address}:{port}");
-    server.await?;
-    println!("...end");
-    Ok(())
 }

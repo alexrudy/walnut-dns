@@ -12,6 +12,7 @@ use futures::{Sink, Stream, TryStream};
 use hickory_proto::ProtoError;
 use hickory_proto::op::Message;
 use hickory_proto::xfer::Protocol;
+use hickory_server::authority::MessageRequest;
 use hickory_server::server::Request;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Framed;
@@ -26,7 +27,7 @@ pub struct DNSFramedStream<IO> {
     addr: SocketAddr,
 
     #[pin]
-    codec: Framed<IO, DNSCodec>,
+    codec: Framed<IO, DNSCodec<MessageRequest>>,
     protocol: hickory_proto::xfer::Protocol,
 }
 

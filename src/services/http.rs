@@ -10,7 +10,7 @@ use std::{
 use bytes::{Buf, Bytes, BytesMut};
 use chateau::info::ConnectionInfo;
 use hickory_proto::op::Message;
-use hickory_server::server::Request;
+use hickory_server::{authority::MessageRequest, server::Request};
 use http::HeaderMap;
 use tokio_util::codec::{Decoder, Encoder as _};
 use tracing::debug;
@@ -71,7 +71,7 @@ impl<S> tower::Layer<S> for DNSOverHTTPLayer {
 pub struct DNSOverHTTP<S> {
     dns_service: S,
     version: http::Version,
-    codec: DNSCodec,
+    codec: DNSCodec<MessageRequest>,
 }
 
 impl<S> DNSOverHTTP<S> {
@@ -195,7 +195,7 @@ where
     state: DoHFState<B, S>,
     version: http::Version,
     address: SocketAddr,
-    codec: DNSCodec,
+    codec: DNSCodec<MessageRequest>,
 }
 
 impl<B, S> DNSOverHTTPFuture<B, S>
@@ -206,7 +206,7 @@ where
         error: HickoryError,
         version: http::Version,
         address: SocketAddr,
-        codec: DNSCodec,
+        codec: DNSCodec<MessageRequest>,
     ) -> Self {
         Self {
             state: DoHFState::Error { error: Some(error) },
@@ -221,7 +221,7 @@ where
         service: S,
         version: http::Version,
         address: SocketAddr,
-        codec: DNSCodec,
+        codec: DNSCodec<MessageRequest>,
     ) -> Self {
         Self {
             state: DoHFState::Decode { bytes, service },
@@ -236,7 +236,7 @@ where
         service: S,
         version: http::Version,
         address: SocketAddr,
-        codec: DNSCodec,
+        codec: DNSCodec<MessageRequest>,
     ) -> Self {
         Self {
             state: DoHFState::Collect {
