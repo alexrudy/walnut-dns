@@ -1,10 +1,16 @@
-use std::net::{Ipv4Addr, SocketAddr};
+use std::{net::SocketAddr, time::Duration};
 
 use clap::arg;
 use hickory_proto::{op::Query, rr::RecordType, xfer::DnsRequestOptions};
+use tracing_subscriber::EnvFilter;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), ()> {
+    tracing_subscriber::fmt()
+        .compact()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
+
     let cmd = clap::Command::new("walnut-client")
         .about("Simple UDP DNS Client")
         .arg(arg!(<ADDR> "Server to query").value_parser(clap::value_parser!(SocketAddr)))
@@ -24,9 +30,7 @@ async fn main() -> Result<(), ()> {
         .get_one::<RecordType>("TYPE")
         .expect("type is required");
 
-    let bind = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
-
-    if let Err(error) = lookup(*address, bind, query, *record_type).await {
+    if let Err(error) = lookup(*address, query, *record_type).await {
         eprintln!("{error}");
         Err(())
     } else {
@@ -36,14 +40,23 @@ async fn main() -> Result<(), ()> {
 
 async fn lookup(
     address: SocketAddr,
-    bind: SocketAddr,
     query: &str,
     record: RecordType,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let client = walnut_dns::client::Client::new_udp_client(address, bind).await?;
+    let client = walnut_dns::client::Client::new_udp_client(address).await?;
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     let query = Query::query(query.parse()?, record);
-    let response = client.lookup(query, DnsRequestOptions::default()).await?;
+    let mut rf = client.lookup(query, DnsRequestOptions::default());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let response = match futures::poll!(&mut rf) {
+        std::task::Poll::Ready(response) => response?,
+        std::task::Poll::Pending => {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            rf.await?
+        }
+    };
+
     response.queries().iter().for_each(|query| {
         println!(
             "Query: {} {} {}",

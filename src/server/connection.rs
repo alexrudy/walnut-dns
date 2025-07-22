@@ -258,6 +258,9 @@ where
                     trace!("Codec IO Error");
                     return Err(HickoryError::Recv(error)).into();
                 }
+                Some(Err(CodecError::FailedMessage(_, response_code))) => {
+                    trace!("Dropping message, codec error: {response_code}");
+                }
                 None => {
                     trace!("Codec Empty");
                     return Ok(ReadAction::Terminated).into();

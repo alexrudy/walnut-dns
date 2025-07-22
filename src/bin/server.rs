@@ -2,6 +2,7 @@ use std::{net::IpAddr, path::PathBuf};
 
 use chateau::server::Server;
 use clap::arg;
+use tracing_subscriber::EnvFilter;
 use walnut_dns::{
     Catalog, SqliteStore,
     server::udp::{DnsOverUdp, UdpListener},
@@ -9,6 +10,10 @@ use walnut_dns::{
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), ()> {
+    tracing_subscriber::fmt()
+        .compact()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
     let cmd = clap::Command::new("serve")
         .about("Run a DNS server")
         .arg(

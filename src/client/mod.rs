@@ -1,23 +1,154 @@
-use std::{
-    collections::BTreeMap,
-    fmt, io,
-    net::SocketAddr,
-    pin::{Pin, pin},
-    sync::{Arc, Mutex},
-    task::{Context, Poll, Waker, ready},
-};
+use std::future::ready;
+use std::io;
+use std::net::{Ipv4Addr, SocketAddr};
+use std::pin::{Pin, pin};
+use std::sync::Arc;
+use std::task::{Context, Poll};
 
-use futures::{Sink as _, Stream};
-use hickory_proto::{
-    ProtoError,
-    op::{Edns, Header, Message, Query, ResponseCode},
-    xfer::{DnsRequest, DnsRequestOptions, DnsResponse},
-};
+use chateau::client::codec::{FramedProtocol, Tagged};
+use futures::{FutureExt, Sink, SinkExt, Stream, StreamExt, TryStreamExt, future::BoxFuture};
+use hickory_proto::ProtoError;
+use hickory_proto::op::{Edns, Header, Message, Query, ResponseCode};
+use hickory_proto::xfer::{DnsRequest, DnsRequestOptions, DnsResponse};
 use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
-use tracing::{debug, trace, warn};
+use tower::ServiceExt;
 
 use crate::codec::{CodecError, DNSCodec};
+
+struct DnsCodecItem {
+    message: Message,
+    address: SocketAddr,
+}
+
+impl Tagged for DnsCodecItem {
+    type Tag = u16;
+    fn tag(&self) -> Self::Tag {
+        self.message.id()
+    }
+}
+
+type DNSService = chateau::services::SharedService<DnsRequest, DnsResponse, DNSClientError>;
+
+pub async fn client(address: SocketAddr) -> Result<DNSService, io::Error> {
+    let bind = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
+    let socket = UdpSocket::bind(bind).await?;
+    let codec = DNSCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp);
+    let (sink, stream) = UdpFramed::new(socket, codec).split();
+    let sink = sink.with(|req: DnsCodecItem| ready(Ok((req.message, req.address))));
+    let stream = stream
+        .map(|res| {
+            res.and_then(|(md, addr)| match md {
+                crate::codec::MessageDecoded::Message(message) => Ok((message, addr)),
+                crate::codec::MessageDecoded::Failed(header, response_code) => {
+                    Err(CodecError::FailedMessage(header, response_code))
+                }
+            })
+        })
+        .map_ok(|(message, address)| DnsCodecItem { message, address });
+
+    let joined = Joined::new(stream, sink);
+    let protocol = FramedProtocol::new(joined);
+
+    tokio::spawn(protocol.driver());
+
+    Ok(tower::ServiceBuilder::new()
+        .layer(chateau::services::SharedService::layer())
+        .layer_fn(|svc| UdpAddressService {
+            inner: svc,
+            address,
+        })
+        .service(protocol))
+}
+
+#[pin_project::pin_project]
+#[derive(Debug, Clone)]
+pub struct Joined<St, Si> {
+    #[pin]
+    stream: St,
+    #[pin]
+    sink: Si,
+}
+
+impl<St, Si> Joined<St, Si> {
+    pub fn new(stream: St, sink: Si) -> Self {
+        Self { stream, sink }
+    }
+}
+
+impl<St, Si, I> Sink<I> for Joined<St, Si>
+where
+    Si: Sink<I>,
+{
+    type Error = Si::Error;
+
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().sink.poll_ready(cx)
+    }
+
+    fn start_send(self: Pin<&mut Self>, item: I) -> Result<(), Self::Error> {
+        self.project().sink.start_send(item)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().sink.poll_flush(cx)
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().sink.poll_close(cx)
+    }
+}
+
+impl<St, Si> Stream for Joined<St, Si>
+where
+    St: Stream,
+{
+    type Item = St::Item;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.project().stream.poll_next(cx)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct UdpAddressService<S> {
+    inner: S,
+    address: SocketAddr,
+}
+
+impl<S> tower::Service<DnsRequest> for UdpAddressService<S>
+where
+    S: tower::Service<DnsCodecItem, Response = DnsCodecItem, Error = CodecError>,
+    S::Future: Send + 'static,
+{
+    type Response = DnsResponse;
+
+    type Error = DNSClientError;
+
+    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx).map_err(Into::into)
+    }
+
+    fn call(&mut self, req: DnsRequest) -> Self::Future {
+        let (message, _) = req.into_parts();
+        let future = self.inner.call(DnsCodecItem {
+            message,
+            address: self.address,
+        });
+        Box::pin(async move {
+            future
+                .map(|r| {
+                    r.and_then(|DnsCodecItem { message, .. }| {
+                        DnsResponse::from_message(message).map_err(CodecError::DropMessage)
+                    })
+                })
+                .await
+                .map_err(Into::into)
+        })
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ClientConfiguration {
@@ -35,20 +166,24 @@ impl Default for ClientConfiguration {
 /// A DNS Client
 #[derive(Debug, Clone)]
 pub struct Client {
-    inner: Arc<InnerClient>,
+    inner: DNSService,
     config: Arc<ClientConfiguration>,
 }
 
 impl Client {
-    pub async fn new_udp_client(address: SocketAddr, bind: SocketAddr) -> io::Result<Client> {
-        let socket = UdpSocket::bind(bind).await?;
+    pub async fn new_udp_client(address: SocketAddr) -> io::Result<Client> {
+        let svc = client(address).await?;
         Ok(Client {
-            inner: Arc::new(InnerClient::new(address, socket)),
+            inner: svc,
             config: Arc::new(ClientConfiguration::default()),
         })
     }
 
-    pub fn lookup(&self, mut query: Query, options: DnsRequestOptions) -> ResponseHandle {
+    pub fn lookup(
+        &self,
+        mut query: Query,
+        options: DnsRequestOptions,
+    ) -> tower::util::Oneshot<DNSService, DnsRequest> {
         let mut message = Message::new();
         message.set_id(12345u16);
         let mut original_query = None;
@@ -73,7 +208,7 @@ impl Client {
         }
 
         let request = DnsRequest::new(message, options).with_original_query(original_query);
-        self.inner.send(request)
+        self.inner.clone().oneshot(request)
     }
 }
 
@@ -89,243 +224,14 @@ pub enum DNSClientError {
     Closed,
 }
 
-#[derive(Debug)]
-struct InflightRequest {
-    waker: Option<Waker>,
-    query_pair: Option<(Query, Query)>,
-}
-
-#[derive(Debug)]
-enum RequestEntry {
-    Inflight(InflightRequest),
-    Response(Option<Message>),
-}
-
-#[derive(Debug)]
-struct InnerClient {
-    in_flight: Mutex<BTreeMap<u16, RequestEntry>>,
-    driver: Mutex<Pin<Box<ConnectionDriver>>>,
-    address: SocketAddr,
-}
-
-impl InnerClient {
-    fn new(address: SocketAddr, bind: UdpSocket) -> Self {
-        Self {
-            in_flight: Mutex::new(BTreeMap::new()),
-            driver: Mutex::new(Box::pin(ConnectionDriver {
-                framed: UdpFramed::new(
-                    Arc::new(bind),
-                    DNSCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp),
-                ),
-            })),
-            address,
-        }
-    }
-
-    fn send(self: &Arc<Self>, request: DnsRequest) -> ResponseHandle {
-        let driver = self.driver.lock().expect("driver poisoned");
-        let sender = UdpFramed::new(
-            driver.framed.get_ref().clone(),
-            driver.framed.codec().clone(),
-        );
-        drop(driver);
-
-        ResponseHandle {
-            sender: Sender {
-                framed: sender,
-                address: self.address,
-            },
-            client: Arc::clone(self),
-            state: ResponseState::Request(Some(request)),
-        }
-    }
-
-    fn pending(&self, id: u16, query_pair: Option<(Query, Query)>, waker: Waker) {
-        let mut in_flight = self.in_flight.lock().expect("in-flight poisoned");
-        in_flight.insert(
-            id,
-            RequestEntry::Inflight(InflightRequest {
-                waker: Some(waker),
-                query_pair,
-            }),
-        );
-    }
-
-    fn check(&self, id: u16, waker: &Waker) -> Option<Result<DnsResponse, DNSClientError>> {
-        let mut in_flight = self.in_flight.lock().expect("in-flight poisoned");
-        let entry = in_flight.get_mut(&id)?;
-        match entry {
-            RequestEntry::Inflight(inflight) => {
-                inflight.waker.replace(waker.clone());
-                None
+impl From<CodecError> for DNSClientError {
+    fn from(value: CodecError) -> Self {
+        match value {
+            CodecError::DropMessage(proto_error) => DNSClientError::Protocol(proto_error),
+            CodecError::FailedMessage(header, response_code) => {
+                DNSClientError::Response(header, response_code)
             }
-            RequestEntry::Response(message) => {
-                let msg = message
-                    .take()
-                    .expect("message error: someone stole our message!");
-                Some(DnsResponse::from_message(msg).map_err(Into::into))
-            }
-        }
-    }
-
-    fn insert(&self, mut message: Message) {
-        let mut in_flight = self.in_flight.lock().expect("in-flight poisoned");
-        trace!("Inserting id={}", message.id());
-        let Some(entry) = in_flight.get_mut(&message.id()) else {
-            warn!("Dropping unexpected response: {}", message.id());
-            return;
-        };
-
-        match entry {
-            RequestEntry::Inflight(ifr) => {
-                if let Some((original, modified)) = ifr.query_pair.as_ref() {
-                    if Some(modified) != message.query() {
-                        warn!("Dropping case-mismatched response: {}", message.id());
-                        return;
-                    }
-                    message.take_queries();
-                    message.add_query(original.clone());
-                }
-                ifr.waker.take().expect("stolen waker").wake();
-                debug!("Got response for query: {}", message.id());
-                *entry = RequestEntry::Response(Some(message));
-            }
-            RequestEntry::Response(_) => {
-                warn!("Dropping duplicate response: {}", message.id());
-            }
-        }
-    }
-}
-
-#[derive(Debug)]
-#[pin_project::pin_project]
-struct ConnectionDriver {
-    #[pin]
-    framed: UdpFramed<DNSCodec<Message>, Arc<UdpSocket>>,
-}
-
-impl ConnectionDriver {
-    fn poll_recv(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(Message, SocketAddr), DNSClientError>> {
-        match ready!(self.as_mut().project().framed.poll_next(cx)) {
-            Some(Ok((message, sender))) => match message {
-                crate::codec::MessageDecoded::Message(message) => {
-                    Poll::Ready(Ok((message, sender)))
-                }
-                crate::codec::MessageDecoded::Failed(header, response_code) => {
-                    Poll::Ready(Err(DNSClientError::Response(header, response_code)))
-                }
-            },
-            Some(Err(CodecError::DropMessage(error))) => {
-                Poll::Ready(Err(DNSClientError::Protocol(error)))
-            }
-            Some(Err(CodecError::IO(io))) => Poll::Ready(Err(DNSClientError::Protocol(io.into()))),
-            None => Poll::Ready(Err(DNSClientError::Closed)),
-        }
-    }
-}
-
-#[derive(Debug)]
-#[pin_project::pin_project]
-struct Sender {
-    #[pin]
-    framed: UdpFramed<DNSCodec<Message>, Arc<UdpSocket>>,
-    address: SocketAddr,
-}
-
-impl Sender {
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), DNSClientError>> {
-        self.project().framed.poll_ready(cx).map_err(Into::into)
-    }
-
-    fn start_send(mut self: Pin<&mut Self>, item: Message) -> Result<(), DNSClientError> {
-        let this = self.as_mut().project();
-        this.framed
-            .start_send((item, *this.address))
-            .map_err(Into::into)
-    }
-}
-
-enum ResponseState {
-    Request(Option<DnsRequest>),
-    Pending(u16),
-}
-
-impl fmt::Debug for ResponseState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ResponseState::Request(_) => f.write_str("Request"),
-            ResponseState::Pending(_) => f.write_str("Pending"),
-        }
-    }
-}
-
-#[derive(Debug)]
-#[pin_project::pin_project]
-pub struct ResponseHandle {
-    #[pin]
-    sender: Sender,
-    client: Arc<InnerClient>,
-    state: ResponseState,
-}
-
-impl Future for ResponseHandle {
-    type Output = Result<DnsResponse, DNSClientError>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut this = self.as_mut().project();
-        loop {
-            match &mut this.state {
-                ResponseState::Request(dns_request) => {
-                    ready!(this.sender.as_mut().poll_ready(cx))?;
-                    let request = dns_request.take().expect("state error: missing message");
-
-                    let queries = request
-                        .original_query()
-                        .cloned()
-                        .and_then(|q| request.query().cloned().map(|m| (q, m)));
-                    let id = request.id();
-                    let (message, _) = request.into_parts();
-                    this.sender.as_mut().start_send(message)?;
-                    this.client.pending(id, queries, cx.waker().clone());
-                    *this.state = ResponseState::Pending(id);
-                }
-                ResponseState::Pending(id) => {
-                    trace!("Checking if {id} is ready");
-                    if let Some(response) = this.client.check(*id, cx.waker()) {
-                        return Poll::Ready(response);
-                    }
-
-                    let (response, sender) = {
-                        let mut driver = this.client.driver.lock().expect("driver poisoned");
-
-                        match driver.as_mut().poll_recv(cx) {
-                            Poll::Ready(Ok((response, sender))) => (response, sender),
-                            Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                            Poll::Pending => break,
-                        }
-                    };
-
-                    trace!("Received DNS response from {sender}");
-
-                    if this.sender.address != sender {
-                        warn!("Received response from unknown sender, dropping");
-                    }
-
-                    this.client.insert(response);
-                }
-            }
-        }
-
-        // At this point, we are returning pending from recv, but we should try to flush if there is work to do.
-        match ready!(this.sender.as_mut().project().framed.poll_flush(cx)) {
-            Ok(()) => {
-                // Already pending recv above,
-                Poll::Pending
-            }
-            Err(error) => Poll::Ready(Err(error.into())),
+            CodecError::IO(_) => DNSClientError::Closed,
         }
     }
 }

@@ -268,8 +268,7 @@ name = "chateau"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "futures-core",
- "futures-util",
+ "futures",
  "parking_lot",
  "pin-project",
  "rustls",

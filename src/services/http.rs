@@ -337,6 +337,11 @@ where
                         crate::codec::CodecError::DropMessage(proto_error) => {
                             return Poll::Ready(Err(HickoryError::Protocol(proto_error)));
                         }
+                        crate::codec::CodecError::FailedMessage(header, response_code) => {
+                            let response =
+                                Message::error_msg(header.id(), header.op_code(), response_code);
+                            return Poll::Ready(self.respond(response));
+                        }
                         crate::codec::CodecError::IO(error) => {
                             return Poll::Ready(Err(HickoryError::Recv(error)));
                         }

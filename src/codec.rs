@@ -80,7 +80,10 @@ impl<M> DNSCodec<M> {
 #[derive(Debug, thiserror::Error)]
 pub enum CodecError {
     #[error("Failed to decode message, dropping")]
-    DropMessage(#[source] ProtoError),
+    DropMessage(#[from] ProtoError),
+
+    #[error("Failed to handle message {}: {}", .0.id(), .1)]
+    FailedMessage(Header, ResponseCode),
 
     #[error(transparent)]
     IO(#[from] std::io::Error),
