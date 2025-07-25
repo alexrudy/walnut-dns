@@ -8,7 +8,6 @@ use std::{fmt, io};
 use chateau::server::{Accept, Protocol};
 use futures::Sink;
 use futures::Stream;
-use hickory_proto::ProtoError;
 use hickory_proto::op::Message;
 use hickory_server::authority::MessageRequest;
 use hickory_server::server::Request;
@@ -65,7 +64,7 @@ impl DNSFramedUdp {
 }
 
 impl Sink<(Message, SocketAddr)> for DNSFramedUdp {
-    type Error = ProtoError;
+    type Error = CodecError;
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.project().framed.poll_ready(cx)

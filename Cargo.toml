@@ -64,6 +64,7 @@ features = ["env-filter", "json", "fmt", "ansi", "std"]
 optional = true
 
 [dependencies.chateau]
+features = ["codec", "client", "server"]
 version = "0.1.0"
 path = "../chateau"
 # git = "https://github.com/alexrudy/chateau.git"
@@ -103,6 +104,16 @@ bundled = ["rusqlite/bundled"]
 cli = ["dep:clap", "dep:tracing-subscriber", "tokio/signal"]
 
 [[bin]]
-name = "walnut-dns"
+name = "walnut-manage"
 path = "src/bin/manage.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "walnut"
+path = "src/bin/client.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "walnut-server"
+path = "src/bin/server.rs"
 required-features = ["cli"]

@@ -9,7 +9,6 @@ use chateau::info::HasConnectionInfo;
 use chateau::server::Connection;
 use futures::stream::FuturesUnordered;
 use futures::{Sink, Stream, TryStream};
-use hickory_proto::ProtoError;
 use hickory_proto::op::Message;
 use hickory_proto::xfer::Protocol;
 use hickory_server::authority::MessageRequest;
@@ -50,7 +49,7 @@ impl<IO> Sink<(Message, SocketAddr)> for DNSFramedStream<IO>
 where
     IO: AsyncRead + AsyncWrite,
 {
-    type Error = ProtoError;
+    type Error = CodecError;
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.project().codec.poll_ready(cx)
@@ -59,7 +58,7 @@ where
     fn start_send(self: Pin<&mut Self>, item: (Message, SocketAddr)) -> Result<(), Self::Error> {
         let (message, addr) = item;
         if addr != self.addr {
-            return Err(ProtoError::from(io::Error::new(
+            return Err(CodecError::IO(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("Incorrect address for stream ({}): {addr}", self.addr),
             )));
@@ -296,7 +295,7 @@ where
 impl<S, F> DNSConnection<S, F>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
-    F: Sink<(Message, SocketAddr), Error = ProtoError>,
+    F: Sink<(Message, SocketAddr), Error = CodecError>,
 {
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -319,9 +318,7 @@ where
             let this = self.as_mut().project();
             trace!(id=%message.0.id(), "Writing message");
             *this.codec_send_ready = false;
-            this.codec
-                .start_send(message)
-                .map_err(HickoryError::Protocol)?;
+            this.codec.start_send(message).map_err(HickoryError::from)?;
         }
     }
 
@@ -333,7 +330,7 @@ where
             .project()
             .codec
             .poll_close(cx)
-            .map_err(HickoryError::Protocol)
+            .map_err(Into::into)
     }
 }
 
@@ -341,7 +338,7 @@ impl<S, F> Future for DNSConnection<S, F>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
     F: Stream<Item = Result<DNSRequest, CodecError>>
-        + Sink<(Message, SocketAddr), Error = ProtoError>,
+        + Sink<(Message, SocketAddr), Error = CodecError>,
 {
     type Output = Result<(), HickoryError>;
 

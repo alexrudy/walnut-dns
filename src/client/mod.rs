@@ -1,153 +1,49 @@
-use std::future::ready;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::pin::{Pin, pin};
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
-use chateau::client::codec::{FramedProtocol, Tagged};
-use futures::{FutureExt, Sink, SinkExt, Stream, StreamExt, TryStreamExt, future::BoxFuture};
+use chateau::client::conn::ConnectionError;
+use chateau::client::conn::dns::StaticResolver;
+use chateau::client::conn::protocol::framed::FramedConnection;
+use chateau::services::ResolvedAddressableLayer;
 use hickory_proto::ProtoError;
 use hickory_proto::op::{Edns, Header, Message, Query, ResponseCode};
 use hickory_proto::xfer::{DnsRequest, DnsRequestOptions, DnsResponse};
 use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 use tower::ServiceExt;
+use tracing::trace;
 
 use crate::codec::{CodecError, DNSCodec};
 
-struct DnsCodecItem {
-    message: Message,
-    address: SocketAddr,
-}
+use self::codec::{CodecStreamAdapter, DnsCodecLayer};
 
-impl Tagged for DnsCodecItem {
-    type Tag = u16;
-    fn tag(&self) -> Self::Tag {
-        self.message.id()
-    }
-}
+mod codec;
 
 type DNSService = chateau::services::SharedService<DnsRequest, DnsResponse, DNSClientError>;
 
 pub async fn client(address: SocketAddr) -> Result<DNSService, io::Error> {
     let bind = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
     let socket = UdpSocket::bind(bind).await?;
-    let codec = DNSCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp);
-    let (sink, stream) = UdpFramed::new(socket, codec).split();
-    let sink = sink.with(|req: DnsCodecItem| ready(Ok((req.message, req.address))));
-    let stream = stream
-        .map(|res| {
-            res.and_then(|(md, addr)| match md {
-                crate::codec::MessageDecoded::Message(message) => Ok((message, addr)),
-                crate::codec::MessageDecoded::Failed(header, response_code) => {
-                    Err(CodecError::FailedMessage(header, response_code))
-                }
-            })
-        })
-        .map_ok(|(message, address)| DnsCodecItem { message, address });
+    let codec: DNSCodec<Message> = DNSCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp);
 
-    let joined = Joined::new(stream, sink);
-    let protocol = FramedProtocol::new(joined);
+    let protocol = FramedConnection::new(CodecStreamAdapter::new(UdpFramed::new(socket, codec)));
 
-    tokio::spawn(protocol.driver());
-
+    let driver = protocol.driver();
+    tokio::spawn(async move { driver.await });
+    trace!("spawned driver");
     Ok(tower::ServiceBuilder::new()
         .layer(chateau::services::SharedService::layer())
-        .layer_fn(|svc| UdpAddressService {
-            inner: svc,
-            address,
+        .map_err(|error| match error {
+            ConnectionError::Resolving(e) => match e {},
+            ConnectionError::Connecting(e) => match e {},
+            ConnectionError::Handshaking(e) => match e {},
+            ConnectionError::Service(svc) => svc,
+            _ => panic!("Unprocessable"),
         })
+        .layer(ResolvedAddressableLayer::new(StaticResolver::new(address)))
+        .layer(DnsCodecLayer::new())
         .service(protocol))
-}
-
-#[pin_project::pin_project]
-#[derive(Debug, Clone)]
-pub struct Joined<St, Si> {
-    #[pin]
-    stream: St,
-    #[pin]
-    sink: Si,
-}
-
-impl<St, Si> Joined<St, Si> {
-    pub fn new(stream: St, sink: Si) -> Self {
-        Self { stream, sink }
-    }
-}
-
-impl<St, Si, I> Sink<I> for Joined<St, Si>
-where
-    Si: Sink<I>,
-{
-    type Error = Si::Error;
-
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.project().sink.poll_ready(cx)
-    }
-
-    fn start_send(self: Pin<&mut Self>, item: I) -> Result<(), Self::Error> {
-        self.project().sink.start_send(item)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.project().sink.poll_flush(cx)
-    }
-
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.project().sink.poll_close(cx)
-    }
-}
-
-impl<St, Si> Stream for Joined<St, Si>
-where
-    St: Stream,
-{
-    type Item = St::Item;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.project().stream.poll_next(cx)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct UdpAddressService<S> {
-    inner: S,
-    address: SocketAddr,
-}
-
-impl<S> tower::Service<DnsRequest> for UdpAddressService<S>
-where
-    S: tower::Service<DnsCodecItem, Response = DnsCodecItem, Error = CodecError>,
-    S::Future: Send + 'static,
-{
-    type Response = DnsResponse;
-
-    type Error = DNSClientError;
-
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx).map_err(Into::into)
-    }
-
-    fn call(&mut self, req: DnsRequest) -> Self::Future {
-        let (message, _) = req.into_parts();
-        let future = self.inner.call(DnsCodecItem {
-            message,
-            address: self.address,
-        });
-        Box::pin(async move {
-            future
-                .map(|r| {
-                    r.and_then(|DnsCodecItem { message, .. }| {
-                        DnsResponse::from_message(message).map_err(CodecError::DropMessage)
-                    })
-                })
-                .await
-                .map_err(Into::into)
-        })
-    }
 }
 
 #[derive(Debug, Clone)]

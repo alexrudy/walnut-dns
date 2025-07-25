@@ -2,9 +2,10 @@ use std::{net::SocketAddr, time::Duration};
 
 use clap::arg;
 use hickory_proto::{op::Query, rr::RecordType, xfer::DnsRequestOptions};
+use tracing::trace;
 use tracing_subscriber::EnvFilter;
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), ()> {
     tracing_subscriber::fmt()
         .compact()
@@ -44,18 +45,12 @@ async fn lookup(
     record: RecordType,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = walnut_dns::client::Client::new_udp_client(address).await?;
+    trace!("client constructed");
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let query = Query::query(query.parse()?, record);
-    let mut rf = client.lookup(query, DnsRequestOptions::default());
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let response = match futures::poll!(&mut rf) {
-        std::task::Poll::Ready(response) => response?,
-        std::task::Poll::Pending => {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            rf.await?
-        }
-    };
+    trace!("client send request");
+    let response = client.lookup(query, DnsRequestOptions::default()).await?;
 
     response.queries().iter().for_each(|query| {
         println!(

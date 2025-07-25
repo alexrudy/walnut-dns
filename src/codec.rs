@@ -172,7 +172,7 @@ where
 }
 
 impl<M> Encoder<Message> for DNSCodec<M> {
-    type Error = ProtoError;
+    type Error = CodecError;
 
     fn encode(&mut self, response: Message, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
         let id = response.header().id();
