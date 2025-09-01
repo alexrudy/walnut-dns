@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use chrono::Utc;
 use clap::arg;
 use hickory_proto::{op::Query, rr::RecordType, xfer::DnsRequestOptions};
 use tracing::trace;
@@ -71,7 +70,10 @@ async fn lookup(
     let config_file: Vec<u8> = tokio::fs::read(config).await?;
     let config: ClientConfiguration = toml_edit::de::from_slice(&config_file)?;
 
-    let client = walnut_dns::client::Client::new(config);
+    let mut client = walnut_dns::client::Client::new(config);
+    if let Some(cache) = cache {
+        client = client.with_cache(cache);
+    }
     trace!("client constructed");
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -89,12 +91,6 @@ async fn lookup(
     });
 
     if response.answer_count() > 0 {
-        if let Some(cache) = cache {
-            let lookup = response.clone().try_into()?;
-            let now = Utc::now();
-            cache.insert(&lookup, now).await?;
-        }
-
         println!("Answers:");
     }
     response.answers().iter().for_each(|answer| {

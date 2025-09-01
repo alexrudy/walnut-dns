@@ -13,9 +13,11 @@ use crate::rr::TimeToLive;
 
 pub use self::config::CacheConfig;
 pub use self::lookup::{CacheTimestamp, CachedQuery, EntryMeta, Lookup, NxDomain};
+pub use self::service::DnsCacheService;
 
 mod config;
 mod lookup;
+mod service;
 
 #[derive(Debug, Error)]
 pub enum CacheError {

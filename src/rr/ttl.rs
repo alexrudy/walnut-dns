@@ -29,6 +29,21 @@ impl TimeToLive {
         TimeToLive(secs)
     }
 
+    /// Create a TimeToLive from days
+    ///
+    /// Creates a new TimeToLive value from the specified number of days.
+    ///
+    /// # Arguments
+    ///
+    /// * `days` - The TTL value in days
+    ///
+    /// # Returns
+    ///
+    /// A new TimeToLive instance
+    pub fn from_days(days: u32) -> Self {
+        TimeToLive(days * 86400)
+    }
+
     /// Calculate the deadline for this TTL
     ///
     /// Returns the UTC timestamp when a record with this TTL would expire

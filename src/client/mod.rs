@@ -15,6 +15,7 @@ use tokio_util::udp::UdpFramed;
 use tower::ServiceExt;
 use tracing::trace;
 
+use crate::cache::{DNSCache, DnsCacheService};
 use crate::codec::{CodecError, DNSCodec};
 
 use self::codec::{DnsCodecLayer, TaggedMessage};
@@ -105,6 +106,13 @@ impl Client {
         }
     }
 
+    pub fn with_cache(self, cache: DNSCache) -> Self {
+        Self {
+            inner: SharedService::new(DnsCacheService::new(self.inner, cache)),
+            config: self.config,
+        }
+    }
+
     pub fn lookup(
         &self,
         mut query: Query,
@@ -167,6 +175,9 @@ pub enum DNSClientError {
 
     #[error("Unavailalbe: {0}")]
     Unavailable(String),
+
+    #[error("Cache: {0}")]
+    Cache(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl From<CodecError> for DNSClientError {

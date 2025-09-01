@@ -7,7 +7,7 @@ use std::{
 use chrono::{DateTime, TimeDelta, TimeZone as _, Utc};
 use hickory_proto::{
     ProtoError, ProtoErrorKind,
-    op::{Query, ResponseCode},
+    op::{Message, Query, ResponseCode},
     rr::{DNSClass, Name, RData, RecordType},
     xfer::DnsResponse,
 };
@@ -19,7 +19,7 @@ use thiserror::Error;
 
 use crate::{
     database::FromRow,
-    rr::{QueryID, Record, SqlName, TimeToLive},
+    rr::{AsHickory as _, QueryID, Record, SqlName, TimeToLive},
 };
 
 /// Result of a DNS query when querying for any record type supported by the Hickory DNS Proto library.
@@ -64,6 +64,15 @@ impl Lookup {
 
     pub fn valid_until(&self) -> CacheTimestamp {
         self.valid_until
+    }
+}
+
+impl From<Lookup> for Message {
+    fn from(lookup: Lookup) -> Self {
+        let mut msg = Message::new();
+        msg.add_query(lookup.query)
+            .add_answers(lookup.records.into_iter().map(|r| r.as_hickory()));
+        msg
     }
 }
 
@@ -249,6 +258,31 @@ impl NxDomain {
 
     pub fn records(&self) -> NxDomainRecords<'_> {
         NxDomainRecords::new(self)
+    }
+}
+
+impl From<NxDomain> for Message {
+    fn from(nxdomain: NxDomain) -> Self {
+        let mut msg = Message::new();
+        msg.add_query(nxdomain.query);
+
+        if let Some(soa) = nxdomain.soa {
+            msg.add_answer(soa.as_hickory());
+        }
+        if let Some(auth) = nxdomain.authorities {
+            msg.add_additionals(auth.into_iter().map(|r| r.as_hickory()));
+        }
+
+        if let Some(ns) = nxdomain.ns {
+            for nsd in ns {
+                msg.add_name_server(nsd.ns.as_hickory());
+                msg.add_additionals(nsd.glue.into_iter().map(|r| r.as_hickory()));
+            }
+        }
+
+        msg.set_response_code(nxdomain.response_code);
+
+        msg
     }
 }
 
@@ -475,6 +509,13 @@ impl CachedQuery {
         match &self.lookup {
             Ok(lookup) => lookup.query(),
             Err(nxdomain) => nxdomain.query(),
+        }
+    }
+
+    pub fn into_response(self) -> Result<DnsResponse, ProtoError> {
+        match self.lookup {
+            Ok(lookup) => DnsResponse::from_message(lookup.into()),
+            Err(nxdomain) => DnsResponse::from_message(nxdomain.into()),
         }
     }
 }
