@@ -15,13 +15,22 @@ use http::HeaderMap;
 use tokio_util::codec::{Decoder, Encoder as _};
 use tracing::debug;
 
-use crate::{codec::DNSCodec, error::HickoryError};
+use crate::{
+    codec::{DNSCodec, DNSCodecRecovery},
+    error::HickoryError,
+};
 
 const MIME_APPLICATION_DNS: &str = "application/dns-message";
 
 #[derive(Debug)]
 pub struct DNSBody {
     data: Option<Bytes>,
+}
+
+impl DNSBody {
+    pub fn new(data: Bytes) -> Self {
+        Self { data: Some(data) }
+    }
 }
 
 impl http_body::Body for DNSBody {
@@ -71,7 +80,7 @@ impl<S> tower::Layer<S> for DNSOverHTTPLayer {
 pub struct DNSOverHTTP<S> {
     dns_service: S,
     version: http::Version,
-    codec: DNSCodec<MessageRequest>,
+    codec: DNSCodecRecovery<Message, MessageRequest>,
 }
 
 impl<S> DNSOverHTTP<S> {
@@ -79,7 +88,7 @@ impl<S> DNSOverHTTP<S> {
         Self {
             dns_service,
             version,
-            codec: DNSCodec::new(false, None),
+            codec: DNSCodec::new(false, None).with_recovery(),
         }
     }
 }
@@ -195,7 +204,7 @@ where
     state: DoHFState<B, S>,
     version: http::Version,
     address: SocketAddr,
-    codec: DNSCodec<MessageRequest>,
+    codec: DNSCodecRecovery<Message, MessageRequest>,
 }
 
 impl<B, S> DNSOverHTTPFuture<B, S>
@@ -206,7 +215,7 @@ where
         error: HickoryError,
         version: http::Version,
         address: SocketAddr,
-        codec: DNSCodec<MessageRequest>,
+        codec: DNSCodecRecovery<Message, MessageRequest>,
     ) -> Self {
         Self {
             state: DoHFState::Error { error: Some(error) },
@@ -221,7 +230,7 @@ where
         service: S,
         version: http::Version,
         address: SocketAddr,
-        codec: DNSCodec<MessageRequest>,
+        codec: DNSCodecRecovery<Message, MessageRequest>,
     ) -> Self {
         Self {
             state: DoHFState::Decode { bytes, service },
@@ -236,7 +245,7 @@ where
         service: S,
         version: http::Version,
         address: SocketAddr,
-        codec: DNSCodec<MessageRequest>,
+        codec: DNSCodecRecovery<Message, MessageRequest>,
     ) -> Self {
         Self {
             state: DoHFState::Collect {
@@ -334,7 +343,8 @@ where
                         ))));
                     }
                     Err(error) => match error {
-                        crate::codec::CodecError::DropMessage(proto_error) => {
+                        crate::codec::CodecError::DropMessage(proto_error, _)
+                        | crate::codec::CodecError::Protocol(proto_error) => {
                             return Poll::Ready(Err(HickoryError::Protocol(proto_error)));
                         }
                         crate::codec::CodecError::FailedMessage(header, response_code) => {

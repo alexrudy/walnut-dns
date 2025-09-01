@@ -37,7 +37,8 @@ impl From<CodecError> for HickoryError {
     fn from(err: CodecError) -> Self {
         match err {
             CodecError::IO(err) => HickoryError::Send(err),
-            CodecError::DropMessage(proto_error) => HickoryError::Protocol(proto_error),
+            CodecError::DropMessage(proto_error, _) => HickoryError::Protocol(proto_error),
+            CodecError::Protocol(proto_error) => HickoryError::Protocol(proto_error),
             CodecError::FailedMessage(_, _) => HickoryError::NotDNSMessage,
         }
     }

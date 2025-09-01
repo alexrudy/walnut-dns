@@ -1,32 +1,107 @@
 use std::{
     net::SocketAddr,
+    ops::{Deref, DerefMut},
     pin::Pin,
     task::{Context, Poll, ready},
 };
 
 use chateau::client::conn::protocol::framed::Tagged;
-use futures::{Sink, Stream};
 use hickory_proto::{
+    ProtoError,
     op::Message,
+    serialize::binary::{BinDecodable, BinEncodable},
     xfer::{DnsRequest, DnsResponse},
 };
 
-use crate::codec::{CodecError, MessageDecoded};
+use crate::codec::{CodecError, DNSMessage};
 
 use super::DNSClientError;
 
-pub struct DnsCodecItem {
-    message: Message,
-    address: SocketAddr,
-}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaggedMessage(Message);
 
-impl Tagged for DnsCodecItem {
+impl Tagged for TaggedMessage {
     type Tag = u16;
+
     fn tag(&self) -> Self::Tag {
-        self.message.id()
+        self.0.id()
     }
 }
 
+impl From<DnsRequest> for TaggedMessage {
+    fn from(request: DnsRequest) -> Self {
+        let (message, _) = request.into_parts();
+        message.into()
+    }
+}
+
+impl TryFrom<TaggedMessage> for DnsResponse {
+    type Error = ProtoError;
+
+    fn try_from(message: TaggedMessage) -> Result<Self, Self::Error> {
+        DnsResponse::from_message(message.into())
+    }
+}
+
+impl From<TaggedMessage> for Message {
+    fn from(tagged: TaggedMessage) -> Self {
+        tagged.0
+    }
+}
+
+impl From<Message> for TaggedMessage {
+    fn from(message: Message) -> Self {
+        TaggedMessage(message)
+    }
+}
+
+impl Deref for TaggedMessage {
+    type Target = Message;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for TaggedMessage {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl DNSMessage for TaggedMessage {
+    fn header(&self) -> &hickory_proto::op::Header {
+        self.0.header()
+    }
+
+    fn extensions(&self) -> Option<&hickory_proto::op::Edns> {
+        self.0.extensions().as_ref()
+    }
+}
+
+impl BinEncodable for TaggedMessage {
+    fn emit(
+        &self,
+        encoder: &mut hickory_proto::serialize::binary::BinEncoder<'_>,
+    ) -> Result<(), ProtoError> {
+        self.0.emit(encoder)
+    }
+}
+
+impl<'a> BinDecodable<'a> for TaggedMessage {
+    fn read(
+        decoder: &mut hickory_proto::serialize::binary::BinDecoder<'a>,
+    ) -> Result<Self, ProtoError> {
+        Message::read(decoder).map(TaggedMessage)
+    }
+}
+
+/// A layer which converts requests and responses to [`DnsCodecItem`]
+/// for inner services.
+///
+/// This is designed to be paired with [`CodecStreamAdapter`] which wraps
+/// a Framed protocol codec so that it accepts and returns [`DnsCodecItem`]
+/// instead of the inner types.
 pub struct DnsCodecLayer {
     _priv: (),
 }
@@ -45,6 +120,12 @@ impl<S> tower::Layer<S> for DnsCodecLayer {
     }
 }
 
+/// A service which converts requests and responses to [`DnsCodecItem`]
+/// for inner services.
+///
+/// This is designed to be paired with [`CodecStreamAdapter`] which wraps
+/// a Framed protocol codec so that it accepts and returns [`DnsCodecItem`]
+/// instead of the inner types.
 #[derive(Debug, Clone)]
 pub struct DnsCodecService<S> {
     inner: S,
@@ -58,7 +139,11 @@ impl<S> DnsCodecService<S> {
 
 impl<S> tower::Service<(DnsRequest, SocketAddr)> for DnsCodecService<S>
 where
-    S: tower::Service<DnsCodecItem, Response = DnsCodecItem, Error = CodecError>,
+    S: tower::Service<
+            (TaggedMessage, SocketAddr),
+            Response = (TaggedMessage, SocketAddr),
+            Error = CodecError,
+        >,
 {
     type Response = (DnsResponse, SocketAddr);
 
@@ -71,8 +156,7 @@ where
     }
 
     fn call(&mut self, (req, address): (DnsRequest, SocketAddr)) -> Self::Future {
-        let (message, _) = req.into_parts();
-        let future = self.inner.call(DnsCodecItem { message, address });
+        let future = self.inner.call((req.into(), address));
         DnsCodecFuture { future }
     }
 }
@@ -86,83 +170,25 @@ pub struct DnsCodecFuture<F> {
 
 impl<F> Future for DnsCodecFuture<F>
 where
-    F: Future<Output = Result<DnsCodecItem, CodecError>>,
+    F: Future<Output = Result<(TaggedMessage, SocketAddr), CodecError>>,
 {
     type Output = Result<(DnsResponse, SocketAddr), DNSClientError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match ready!(self.project().future.poll(cx)) {
-            Ok(DnsCodecItem { message, address }) => Poll::Ready(
-                DnsResponse::from_message(message)
+            Ok((message, address)) => Poll::Ready(
+                DnsResponse::try_from(message)
                     .map(|response| (response, address))
                     .map_err(Into::into),
             ),
-            Err(CodecError::DropMessage(proto_error)) => {
-                Poll::Ready(Err(DNSClientError::Protocol(proto_error)))
+            Err(CodecError::DropMessage(proto_error, _))
+            | Err(CodecError::Protocol(proto_error)) => {
+                Poll::Ready(Err(DNSClientError::DNSProtocol(proto_error)))
             }
             Err(CodecError::FailedMessage(header, response_code)) => {
                 Poll::Ready(Err(DNSClientError::Response(header, response_code)))
             }
             Err(CodecError::IO(_)) => Poll::Ready(Err(DNSClientError::Closed)),
         }
-    }
-}
-
-#[derive(Debug, Clone)]
-#[pin_project::pin_project]
-pub struct CodecStreamAdapter<C> {
-    #[pin]
-    framed: C,
-}
-
-impl<C> CodecStreamAdapter<C> {
-    pub fn new(framed: C) -> Self {
-        Self { framed }
-    }
-}
-
-impl<C> Sink<DnsCodecItem> for CodecStreamAdapter<C>
-where
-    C: Sink<(Message, SocketAddr), Error = CodecError>,
-{
-    type Error = CodecError;
-
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.project().framed.poll_ready(cx)
-    }
-
-    fn start_send(self: Pin<&mut Self>, item: DnsCodecItem) -> Result<(), Self::Error> {
-        let DnsCodecItem { message, address } = item;
-        self.project().framed.start_send((message, address))
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.project().framed.poll_flush(cx)
-    }
-
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.project().framed.poll_close(cx)
-    }
-}
-
-impl<C> Stream for CodecStreamAdapter<C>
-where
-    C: Stream<Item = Result<(MessageDecoded<Message>, SocketAddr), CodecError>>
-        + Sink<(Message, SocketAddr)>,
-{
-    type Item = Result<DnsCodecItem, CodecError>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.project().framed.poll_next(cx).map(|item| {
-            item.map(|result| match result {
-                Ok((MessageDecoded::Message(message), address)) => {
-                    Ok(DnsCodecItem { message, address })
-                }
-                Ok((MessageDecoded::Failed(hdr, code), _)) => {
-                    Err(CodecError::FailedMessage(hdr, code))
-                }
-                Err(error) => Err(error),
-            })
-        })
     }
 }

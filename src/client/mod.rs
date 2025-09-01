@@ -5,10 +5,11 @@ use std::sync::Arc;
 use chateau::client::conn::ConnectionError;
 use chateau::client::conn::dns::StaticResolver;
 use chateau::client::conn::protocol::framed::FramedConnection;
-use chateau::services::ResolvedAddressableLayer;
+use chateau::services::{ResolvedAddressableLayer, SharedService};
 use hickory_proto::ProtoError;
 use hickory_proto::op::{Edns, Header, Message, Query, ResponseCode};
 use hickory_proto::xfer::{DnsRequest, DnsRequestOptions, DnsResponse};
+use serde::Deserialize;
 use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 use tower::ServiceExt;
@@ -16,18 +17,26 @@ use tracing::trace;
 
 use crate::codec::{CodecError, DNSCodec};
 
-use self::codec::{CodecStreamAdapter, DnsCodecLayer};
+use self::codec::{DnsCodecLayer, TaggedMessage};
+use self::messages::DNSRequestMiddleware;
+use self::nameserver::{NameServerConnection, NameserverConfig, NameserverPool};
 
 mod codec;
+mod connection;
+mod messages;
+// mod http;
+mod nameserver;
+mod udp;
 
 type DNSService = chateau::services::SharedService<DnsRequest, DnsResponse, DNSClientError>;
 
 pub async fn client(address: SocketAddr) -> Result<DNSService, io::Error> {
     let bind = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
     let socket = UdpSocket::bind(bind).await?;
-    let codec: DNSCodec<Message> = DNSCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp);
+    let codec: DNSCodec<TaggedMessage, TaggedMessage> =
+        DNSCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp);
 
-    let protocol = FramedConnection::new(CodecStreamAdapter::new(UdpFramed::new(socket, codec)));
+    let protocol = FramedConnection::new(UdpFramed::new(socket, codec));
 
     let driver = protocol.driver();
     tokio::spawn(async move { driver.await });
@@ -46,15 +55,18 @@ pub async fn client(address: SocketAddr) -> Result<DNSService, io::Error> {
         .service(protocol))
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ClientConfiguration {
+    #[serde(default)]
     max_payload_len: u16,
+    nameserver: Vec<NameserverConfig>,
 }
 
 impl Default for ClientConfiguration {
     fn default() -> Self {
         ClientConfiguration {
             max_payload_len: 2048,
+            nameserver: Vec::new(),
         }
     }
 }
@@ -75,13 +87,34 @@ impl Client {
         })
     }
 
+    pub fn new(configuration: ClientConfiguration) -> Client {
+        let mut connections = Vec::new();
+        for ns in &configuration.nameserver {
+            for connection in &ns.connections {
+                connections.push(NameServerConnection::from_config(
+                    ns.address,
+                    connection.clone(),
+                ))
+            }
+        }
+
+        let svc = NameserverPool::new(connections, Default::default());
+        Client {
+            inner: SharedService::new(DNSRequestMiddleware::new(svc)),
+            config: Arc::new(ClientConfiguration::default()),
+        }
+    }
+
     pub fn lookup(
         &self,
         mut query: Query,
         options: DnsRequestOptions,
     ) -> tower::util::Oneshot<DNSService, DnsRequest> {
+        use rand::prelude::*;
+
+        let mut rng = rand::rng();
         let mut message = Message::new();
-        message.set_id(12345u16);
+        message.set_id(rng.random());
         let mut original_query = None;
 
         if options.case_randomization {
@@ -110,20 +143,38 @@ impl Client {
 
 #[derive(Debug, thiserror::Error)]
 pub enum DNSClientError {
-    #[error("Protocol: {0}")]
-    Protocol(#[from] ProtoError),
+    #[error("DNS Protocol: {0}")]
+    DNSProtocol(#[from] ProtoError),
 
     #[error("Invalid response for message {}: {}", .0.id(), .1)]
     Response(Header, ResponseCode),
 
+    #[cfg(feature = "h2")]
+    #[error("Http Request Error: {0}")]
+    Http(#[from] hyper::Error),
+
+    #[error(transparent)]
+    Service(Box<dyn std::error::Error + Send + Sync>),
+
+    #[error("Transport Error: {0}")]
+    Transport(#[source] Box<dyn std::error::Error + Send + Sync>),
+
+    #[error("Protocol Error: {0}")]
+    Protocol(#[source] Box<dyn std::error::Error + Send + Sync>),
+
     #[error("Connection closed")]
     Closed,
+
+    #[error("Unavailalbe: {0}")]
+    Unavailable(String),
 }
 
 impl From<CodecError> for DNSClientError {
     fn from(value: CodecError) -> Self {
         match value {
-            CodecError::DropMessage(proto_error) => DNSClientError::Protocol(proto_error),
+            CodecError::DropMessage(proto_error, _) | CodecError::Protocol(proto_error) => {
+                DNSClientError::DNSProtocol(proto_error)
+            }
             CodecError::FailedMessage(header, response_code) => {
                 DNSClientError::Response(header, response_code)
             }

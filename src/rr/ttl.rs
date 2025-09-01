@@ -60,6 +60,12 @@ impl From<TimeToLive> for u32 {
     }
 }
 
+impl From<TimeToLive> for i64 {
+    fn from(value: TimeToLive) -> Self {
+        value.0 as i64
+    }
+}
+
 impl From<Duration> for TimeToLive {
     fn from(value: Duration) -> Self {
         TimeToLive(

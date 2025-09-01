@@ -1,22 +1,21 @@
 //! Database Catalogs for DNS
 
 use std::{
-    collections::BTreeMap,
     ops::{Deref, DerefMut},
     sync::{Arc, Mutex},
 };
 
 use camino::Utf8PathBuf;
-use hickory_proto::serialize::binary::BinEncodable;
 use monarch_db::{MonarchDB, StaticMonarchConfiguration};
-use rusqlite::named_params;
 use serde::Deserialize;
 
 pub use self::dnssec::{DNSKey, DNSSecStore};
 use self::journal::SqliteJournal;
-use crate::authority::{Lookup as _, ZoneAuthority, ZoneInfo as _};
+use self::record::RecordPersistence;
+use self::zone::ZonePersistence;
+use crate::authority::ZoneAuthority;
 use crate::catalog::{CatalogError, CatalogStore};
-use crate::rr::{LowerName, Name, Record, SerialNumber, SqlName, Zone, ZoneID};
+use crate::rr::{LowerName, Name, Zone, ZoneID};
 
 pub mod dnssec;
 pub mod journal;
@@ -33,6 +32,10 @@ mod pool;
 
 #[cfg(feature = "pool")]
 pub use pool::RusqliteConnectionManager;
+
+pub(crate) mod query;
+pub(crate) mod record;
+pub(crate) mod zone;
 
 /// Trait for deserializing objects from SQLite rows
 ///
@@ -61,7 +64,7 @@ pub(crate) trait FromRow {
         Self: Sized;
 }
 
-const MONARCH: StaticMonarchConfiguration<1> = StaticMonarchConfiguration {
+pub(crate) const MONARCH: StaticMonarchConfiguration<1> = StaticMonarchConfiguration {
     name: "walnut",
     enable_foreign_keys: true,
     migrations: [include_str!("../migrations/01.zone.sql")],
@@ -532,6 +535,20 @@ impl<const N: usize> QueryBuilder<N> {
         )
     }
 
+    fn insert_or_replace(&self) -> String {
+        let columns = self.columns.join(", ");
+        let params = self
+            .columns
+            .iter()
+            .map(|c| format!(":{c}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "INSERT OR REPLACE INTO {table} ({columns}) VALUES ({params})",
+            table = self.table
+        )
+    }
+
     fn upsert(&self) -> String {
         let conflicts = self
             .columns
@@ -556,287 +573,13 @@ impl<const N: usize> QueryBuilder<N> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct ZonePersistence<'c> {
-    connection: &'c rusqlite::Connection,
-}
-
-impl<'c> ZonePersistence<'c> {
-    pub(crate) fn new(connection: &'c rusqlite::Connection) -> Self {
-        Self { connection }
-    }
-
-    const TABLE: QueryBuilder<5> = QueryBuilder {
-        table: "zone",
-        columns: ["id", "name", "zone_type", "allow_axfr", "dns_class"],
-        primary: "id",
-    };
-
-    /// Get a single zone by ID
-    #[tracing::instrument(skip_all, fields(zone=%id), level = "trace")]
-    pub(crate) fn get(&self, id: ZoneID) -> rusqlite::Result<Zone> {
-        let mut stmt = self
-            .connection
-            .prepare(&Self::TABLE.select("WHERE id = :zone_id"))?;
-        let mut zone = stmt.query_one(named_params! { ":zone_id": id }, Zone::from_row)?;
-
-        let rx = RecordPersistence::new(self.connection);
-        rx.populate_zone(&mut zone)?;
-
-        Ok(zone)
-    }
-
-    /// Find zones based on zone name
-    #[tracing::instrument(skip_all, fields(zone=%name), level = "trace")]
-    pub(crate) fn find(&self, name: &LowerName) -> rusqlite::Result<Option<Vec<Zone>>> {
-        let mut stmt = self
-            .connection
-            .prepare(&Self::TABLE.select("WHERE lower(name) = lower(:name)"))?;
-
-        let mut name = name.clone();
-        loop {
-            let mut zones = stmt
-                .query_map(
-                    named_params! { ":name": SqlName::from(name.clone()) },
-                    Zone::from_row,
-                )?
-                .collect::<Result<Vec<_>, _>>()?;
-
-            if !zones.is_empty() {
-                let rx = RecordPersistence::new(self.connection);
-                rx.populate_zones(&name, zones.as_mut_slice())?;
-                return Ok(Some(zones));
-            }
-
-            if !name.is_root() {
-                name = name.base_name();
-            } else {
-                return Ok(None);
-            }
-        }
-    }
-
-    #[tracing::instrument(skip_all, fields(zone=%zone.name()), level = "trace")]
-    pub(crate) fn upsert(&self, zone: &Zone) -> rusqlite::Result<usize> {
-        let guard = tracing::trace_span!("zone").entered();
-
-        let mut stmt = self.connection.prepare(&Self::TABLE.upsert())?;
-        tracing::trace!("preparing statement for insert with name={}", zone.name());
-        let n = stmt.execute(named_params! { ":id": zone.id(), ":name": SqlName::from(zone.name().clone()), ":zone_type": zone.zone_type(), ":allow_axfr": zone.allow_axfr(), ":dns_class": u16::from(zone.dns_class()) })?;
-        if n > 0 {
-            tracing::trace!("affected {} rows", n);
-        } else {
-            tracing::trace!("no rows affected")
-        }
-        drop(guard);
-
-        if !zone.is_empty() {
-            let rx = RecordPersistence::new(self.connection);
-            rx.upsert_records(zone)?;
-        }
-
-        Ok(n)
-    }
-
-    #[tracing::instrument(skip_all, fields(zone=%id), level = "trace")]
-    pub(crate) fn delete(&self, id: ZoneID) -> rusqlite::Result<usize> {
-        // CASCADE will handle deleting the associated records.
-        let mut stmt = self.connection.prepare(&Self::TABLE.delete())?;
-        let n = stmt.execute(named_params! { ":id": id })?;
-        Ok(n)
-    }
-
-    #[tracing::instrument(skip_all, fields(zone=%name), level = "trace")]
-    pub(crate) fn clear(&self, name: &LowerName) -> rusqlite::Result<usize> {
-        // CASCADE will handle deleting the associated records.
-        let mut stmt = self.connection.prepare(&format!(
-            "DELETE FROM {} WHERE lower(name) = lower(:name)",
-            Self::TABLE.table
-        ))?;
-        let n = stmt.execute(named_params! { ":name": SqlName::from(name.clone()) })?;
-        Ok(n)
-    }
-
-    #[tracing::instrument(skip_all, level = "trace")]
-    pub(crate) fn list(&self, root: &LowerName) -> rusqlite::Result<Vec<Name>> {
-        let mut stmt = self.connection.prepare(&format!(
-            "SELECT DISTINCT name FROM {table} WHERE lower(name) LIKE :name",
-            table = Self::TABLE.table
-        ))?;
-
-        let name = format!("%{root}");
-        tracing::trace!("Listing records for root: {}", name);
-
-        let names = stmt
-            .query_map(named_params! {":name": name}, |row| {
-                Ok(row.get::<_, SqlName>("name")?.into())
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(names)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct RecordPersistence<'c> {
-    connection: &'c rusqlite::Connection,
-}
-
-impl<'c> RecordPersistence<'c> {
-    fn new(connection: &'c rusqlite::Connection) -> Self {
-        Self { connection }
-    }
-
-    const TABLE: QueryBuilder<10> = QueryBuilder {
-        table: "record",
-        columns: [
-            "id",
-            "zone_id",
-            "soa_serial",
-            "name_labels",
-            "dns_class",
-            "ttl",
-            "record_type",
-            "rdata",
-            "mdns_cache_flush",
-            "expires",
-        ],
-        primary: "id",
-    };
-
-    /// Populate a series of zones with records
-    #[tracing::instrument("populate_many", skip_all, level = "trace")]
-    pub(crate) fn populate_zones(
-        &self,
-        origin: &LowerName,
-        zones: &mut [Zone],
-    ) -> rusqlite::Result<()> {
-        tracing::trace!("Joined load for {} zones", zones.len());
-        let mut stmt = self.connection.prepare(&Self::TABLE.select_for_join(
-            "JOIN zone ON record.zone_id = zone.id WHERE lower(zone.name) == lower(:name)",
-        ))?;
-
-        let riter = stmt.query_map(
-            named_params! { ":name": SqlName::from(origin.clone()) },
-            |row| {
-                let record = Record::from_row(row)?;
-                let zone_id: ZoneID = row.get("zone_id")?;
-                let serial: SerialNumber = row.get("soa_serial")?;
-                Ok((zone_id, record, serial))
-            },
-        )?;
-
-        let mut records: BTreeMap<_, Vec<_>> = BTreeMap::new();
-        let mut n = 0usize;
-        for result in riter {
-            let (zone, record, serial) = result?;
-            records.entry(zone).or_default().push((record, serial));
-            n += 1;
-        }
-        tracing::trace!("Populating {} zones from {} records", records.len(), n);
-        for zone in zones {
-            for (record, serial) in records.remove(&zone.id()).unwrap_or_default() {
-                if record.expired() {
-                    continue;
-                }
-                zone.upsert(record, serial)
-                    .expect("Zone and record mismatch during DB Load");
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Populate a single zone with records
-    #[tracing::instrument("populate", skip_all, level = "trace")]
-    pub(crate) fn populate_zone(&self, zone: &mut Zone) -> rusqlite::Result<()> {
-        let mut stmt = self
-            .connection
-            .prepare(&Self::TABLE.select("WHERE zone_id = :zone_id"))?;
-        let records = stmt
-            .query_map(named_params! { ":zone_id": zone.id() }, Record::from_row)?
-            .collect::<Result<Vec<_>, _>>()?;
-        for record in records {
-            if record.expired() {
-                continue;
-            }
-            zone.upsert(record, SerialNumber::ZERO)
-                .expect("Zone and record mismatch during DB Load");
-        }
-
-        Ok(())
-    }
-
-    #[tracing::instrument("delete_orphans", skip_all, level = "trace")]
-    pub(crate) fn delete_orphaned_records(&self, zone: &Zone) -> rusqlite::Result<()> {
-        let params: Vec<_> = zone
-            .records()
-            .filter(|r| !r.expired())
-            .map(|record| record.id())
-            .collect();
-        let param_template = std::iter::repeat_n("?", params.len())
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        let query = format!(
-            "DELETE FROM {table} WHERE zone_id = :zone_id AND id NOT IN ({param_template})",
-            table = Self::TABLE.table
-        );
-        let mut stmt = self.connection.prepare(&query)?;
-        stmt.raw_bind_parameter(c":zone_id", zone.id())?;
-        tracing::trace!("retaining {} records", params.len());
-        for (idx, param) in params.into_iter().enumerate() {
-            let pidx = idx + 2;
-            stmt.raw_bind_parameter(pidx, param)?;
-        }
-        let nrows = stmt.raw_execute()?;
-        tracing::trace!("dropped {} records", nrows);
-        Ok(())
-    }
-
-    /// Upsert the set of records which belong to this zone.
-    #[tracing::instrument("upsert", skip_all, level = "trace")]
-    pub(crate) fn upsert_records(&self, zone: &Zone) -> rusqlite::Result<()> {
-        self.delete_orphaned_records(zone)?;
-        self.insert_records(zone, zone.records())?;
-
-        Ok(())
-    }
-
-    #[tracing::instrument("insert", skip_all, level = "trace")]
-    pub(crate) fn insert_records<'z>(
-        &self,
-        zone: &'z Zone,
-        records: impl Iterator<Item = &'z Record>,
-    ) -> rusqlite::Result<()> {
-        let mut stmt = self.connection.prepare(&Self::TABLE.upsert())?;
-        let mut n = 0;
-        for record in records {
-            if record.expired() {
-                continue;
-            }
-            n += stmt.execute(named_params! {
-                ":id": record.id(),
-                ":zone_id": zone.id(),
-                ":soa_serial": zone.serial(),
-                ":name_labels": SqlName::from(record.name().clone()),
-                ":dns_class": u16::from(record.dns_class()),
-                ":ttl": record.ttl(),
-                ":record_type": u16::from(record.record_type()),
-                ":rdata": record.rdata().to_bytes().map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?,
-                ":mdns_cache_flush": record.mdns_cache_flush(),
-                ":expires": record.expires()
-            })?;
-        }
-
-        tracing::trace!("inserted {n} records");
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rr::{Record, TimeToLive, Zone, ZoneType};
+    use crate::{
+        Lookup as _, ZoneInfo as _,
+        rr::{Record, SerialNumber, TimeToLive, Zone, ZoneType},
+    };
     use hickory_proto::rr::{RecordType, rdata};
     use std::path::Path;
     use tempfile::TempDir;

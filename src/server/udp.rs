@@ -14,7 +14,7 @@ use hickory_server::server::Request;
 use tokio_util::udp::UdpFramed;
 use tracing::trace;
 
-use crate::codec::{CodecError, DNSCodec, DNSRequest};
+use crate::codec::{CodecError, DNSCodec, DNSCodecRecovery, DNSRequest};
 use crate::error::HickoryError;
 
 use super::connection::DNSConnection;
@@ -44,7 +44,7 @@ where
     fn serve_connection(&self, stream: UdpSocket, service: S) -> Self::Connection {
         let codec = UdpFramed::new(
             stream,
-            DNSCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp),
+            DNSCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp).with_recovery(),
         );
         DNSConnection::new(service, DNSFramedUdp::new(codec))
     }
@@ -54,11 +54,11 @@ where
 #[pin_project::pin_project]
 pub struct DNSFramedUdp {
     #[pin]
-    framed: UdpFramed<DNSCodec<MessageRequest>, UdpSocket>,
+    framed: UdpFramed<DNSCodecRecovery<Message, MessageRequest>, UdpSocket>,
 }
 
 impl DNSFramedUdp {
-    pub fn new(framed: UdpFramed<DNSCodec<MessageRequest>, UdpSocket>) -> Self {
+    pub fn new(framed: UdpFramed<DNSCodecRecovery<Message, MessageRequest>, UdpSocket>) -> Self {
         Self { framed }
     }
 }

@@ -1,0 +1,7 @@
+[[nameserver]]
+address = "1.1.1.1"
+connections = [{ protocol = "tcp", port = 53 }, { protocol = "udp", port = 53 }]
+
+[[nameserver]]
+address = "8.8.8.8"
+connections = [{ protocol = "tcp", port = 53 }, { protocol = "udp", port = 53 }]

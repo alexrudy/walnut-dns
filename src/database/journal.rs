@@ -31,7 +31,7 @@ where
             let tx = conn.transaction()?;
             let rx = RecordPersistence::new(&tx);
             let zone = zone.as_ref();
-            rx.insert_records(zone, records.iter())?;
+            rx.insert_records_for_zone(zone, records.iter())?;
             tx.commit()?;
             Ok(())
         })

@@ -8,7 +8,7 @@ mod sql;
 mod ttl;
 mod zone;
 
-pub use self::id::{RecordID, ZoneID};
+pub use self::id::{QueryID, RecordID, ZoneID};
 pub use self::record::Record;
 pub use self::rset::{Mismatch, RecordSet};
 pub use self::sequence::SerialNumber;

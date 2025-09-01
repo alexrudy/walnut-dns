@@ -354,6 +354,19 @@ impl<R: RecordData> Record<R> {
         &mut self.rdata
     }
 
+    pub fn map_rdata<RR: RecordData>(self, f: impl FnOnce(R) -> Option<RR>) -> Option<Record<RR>> {
+        f(self.rdata).map(|rdata| Record {
+            rdata,
+            id: self.id,
+            name_labels: self.name_labels,
+            dns_class: self.dns_class,
+            ttl: self.ttl,
+            mdns_cache_flush: self.mdns_cache_flush,
+            proof: self.proof,
+            expires: self.expires,
+        })
+    }
+
     /// Get the record type for this record
     ///
     /// Returns the DNS record type (A, AAAA, CNAME, MX, etc.) that

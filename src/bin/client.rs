@@ -1,9 +1,12 @@
-use std::{net::SocketAddr, time::Duration};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
+use chrono::Utc;
 use clap::arg;
 use hickory_proto::{op::Query, rr::RecordType, xfer::DnsRequestOptions};
 use tracing::trace;
 use tracing_subscriber::EnvFilter;
+use walnut_dns::client::ClientConfiguration;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), ()> {
@@ -13,8 +16,15 @@ async fn main() -> Result<(), ()> {
         .init();
 
     let cmd = clap::Command::new("walnut-client")
-        .about("Simple UDP DNS Client")
-        .arg(arg!(<ADDR> "Server to query").value_parser(clap::value_parser!(SocketAddr)))
+        .about("Simple DNS Client")
+        .arg(
+            arg!(--db <DATABASE> "Path to SQLite Database for cache")
+                .value_parser(clap::value_parser!(PathBuf)),
+        )
+        .arg(
+            arg!(--cfg <PATH> "DNS Configuration file to use")
+                .value_parser(clap::value_parser!(PathBuf)),
+        )
         .arg(arg!(<QUERY> "DNS Name to query"))
         .arg(
             arg!([TYPE] "DNS record type to query")
@@ -23,15 +33,28 @@ async fn main() -> Result<(), ()> {
         );
 
     let args = cmd.get_matches();
-    let address = args
-        .get_one::<SocketAddr>("ADDR")
-        .expect("server is required");
+    let config_path = args
+        .get_one::<PathBuf>("cfg")
+        .cloned()
+        .unwrap_or("walnut.toml".into());
+
     let query = args.get_one::<String>("QUERY").expect("query is required");
     let record_type = args
         .get_one::<RecordType>("TYPE")
         .expect("type is required");
 
-    if let Err(error) = lookup(*address, query, *record_type).await {
+    let cache = if let Some(database) = args.get_one::<PathBuf>("db") {
+        let connection = rusqlite::Connection::open(database).expect("unable to open db");
+        Some(
+            walnut_dns::cache::DNSCache::new(connection.into(), Default::default())
+                .await
+                .unwrap(),
+        )
+    } else {
+        None
+    };
+
+    if let Err(error) = lookup(&config_path, query, *record_type, cache).await {
         eprintln!("{error}");
         Err(())
     } else {
@@ -40,11 +63,15 @@ async fn main() -> Result<(), ()> {
 }
 
 async fn lookup(
-    address: SocketAddr,
+    config: &Path,
     query: &str,
     record: RecordType,
+    cache: Option<walnut_dns::cache::DNSCache>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let client = walnut_dns::client::Client::new_udp_client(address).await?;
+    let config_file: Vec<u8> = tokio::fs::read(config).await?;
+    let config: ClientConfiguration = toml_edit::de::from_slice(&config_file)?;
+
+    let client = walnut_dns::client::Client::new(config);
     trace!("client constructed");
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -62,6 +89,12 @@ async fn lookup(
     });
 
     if response.answer_count() > 0 {
+        if let Some(cache) = cache {
+            let lookup = response.clone().try_into()?;
+            let now = Utc::now();
+            cache.insert(&lookup, now).await?;
+        }
+
         println!("Answers:");
     }
     response.answers().iter().for_each(|answer| {

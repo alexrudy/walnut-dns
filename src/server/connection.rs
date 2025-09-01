@@ -18,7 +18,7 @@ use tokio_util::codec::Framed;
 use tracing::instrument::Instrumented;
 use tracing::{Instrument, debug, debug_span, trace, trace_span, warn};
 
-use crate::codec::{CodecError, DNSCodec, DNSRequest};
+use crate::codec::{CodecError, DNSCodec, DNSCodecRecovery, DNSRequest};
 use crate::error::HickoryError;
 
 #[pin_project::pin_project]
@@ -26,7 +26,7 @@ pub struct DNSFramedStream<IO> {
     addr: SocketAddr,
 
     #[pin]
-    codec: Framed<IO, DNSCodec<MessageRequest>>,
+    codec: Framed<IO, DNSCodecRecovery<Message, MessageRequest>>,
     protocol: hickory_proto::xfer::Protocol,
 }
 
@@ -39,7 +39,10 @@ where
         let remote = stream.info().remote_addr().clone().into();
         Self {
             addr: remote,
-            codec: Framed::new(stream, DNSCodec::new_for_protocol(protocol)),
+            codec: Framed::new(
+                stream,
+                DNSCodecRecovery::new(DNSCodec::new_for_protocol(protocol)),
+            ),
             protocol,
         }
     }
@@ -250,7 +253,8 @@ where
                     return Ok(ReadAction::Spawned).into();
                 }
 
-                Some(Err(CodecError::DropMessage(error))) => {
+                Some(Err(CodecError::DropMessage(error, _)))
+                | Some(Err(CodecError::Protocol(error))) => {
                     trace!("Dropping message, codec error: {error}");
                 }
                 Some(Err(CodecError::IO(error))) => {

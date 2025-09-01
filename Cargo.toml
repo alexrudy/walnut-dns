@@ -22,10 +22,13 @@ chrono = "0.4"
 clap = { version = "4", optional = true }
 data-encoding = { version = "2.2.0", default-features = false }
 futures = "0.3"
+future-eyeballs = "0.1"
 hickory-proto = { version = "0.25", features = ["mdns", "dnssec-ring"] }
 hickory-server = { version = "0.25", features = ["dnssec-ring"] }
 http = { version = "1", optional = true }
 http-body = { version = "1", optional = true }
+http-body-util = { version = "0.1", optional = true }
+hyper = { version = "1", optional = true }
 pin-project = "1.1.10"
 rusqlite = { version = "0.37", features = ["blob", "chrono", "uuid", "trace"] }
 rustls-pki-types = "1.10"
@@ -34,7 +37,10 @@ thiserror = "2"
 tokio-util = { version = "0.7.15", features = ["codec", "net"] }
 tower = "0.5"
 tracing = "0.1"
+webpki-roots = { version = "1", optional = true }
 zeroize = "1"
+toml_edit = { version = "0.23.4", features = ["serde"] }
+rand = "0.9.2"
 
 [dependencies.uuid]
 version = "^1"
@@ -92,16 +98,16 @@ features = ["env-filter", "json", "fmt", "ansi", "std"]
 
 [features]
 default = []
-tls = []
+tls = ["dep:webpki-roots"]
 tls-ring = ["tls", "chateau/tls-ring", "hickory-proto/tls-ring"]
 tls-awc-lc = ["tls", "chateau/tls-aws-lc", "hickory-proto/tls-aws-lc-rs"]
-http = ["dep:http", "dep:http-body"]
-h2 = ["http"]
+http = ["dep:http", "dep:http-body", "dep:http-body-util"]
+h2 = ["http", "dep:hyper"]
 h2-ring = ["hickory-proto/https-ring", "h2"]
 h2-aws-lc = ["hickory-proto/https-aws-lc-rs", "h2"]
 pool = ["dep:bb8"]
 bundled = ["rusqlite/bundled"]
-cli = ["dep:clap", "dep:tracing-subscriber", "tokio/signal"]
+cli = ["dep:clap", "dep:tracing-subscriber", "tokio/signal", "tokio/fs"]
 
 [[bin]]
 name = "walnut-manage"

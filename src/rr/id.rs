@@ -98,6 +98,11 @@ impl_id! {
     pub struct RecordID
 }
 
+impl_id! {
+    #[doc="DNS Query ID for the SQLite Database"]
+    pub struct QueryID
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

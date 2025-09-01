@@ -1,4 +1,5 @@
 pub mod authority;
+pub mod cache;
 pub mod catalog;
 pub mod client;
 pub mod codec;
