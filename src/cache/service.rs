@@ -1,3 +1,8 @@
+//! Tower service layer for transparent DNS query caching.
+//!
+//! This module provides a Tower service layer that transparently caches DNS queries
+//! and responses.
+
 use std::task::{Context, Poll};
 
 use chrono::Utc;
@@ -11,6 +16,22 @@ use crate::{client::DnsClientError, rr::TimeToLive};
 
 use super::DnsCache;
 
+/// Tower layer for adding DNS caching to a service.
+///
+/// This layer wraps any DNS service and adds caching functionality.
+/// It can be used in a service stack to provide transparent caching
+/// without modifying the underlying service implementation.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use tower::ServiceBuilder;
+///
+/// let cache_layer = DnsCacheLayer { cache };
+/// let service = ServiceBuilder::new()
+///     .layer(cache_layer)
+///     .service(dns_service);
+/// ```
 #[derive(Debug, Clone)]
 pub struct DnsCacheLayer {
     cache: DnsCache,
@@ -27,6 +48,16 @@ impl<S> tower::Layer<S> for DnsCacheLayer {
     }
 }
 
+/// A DNS service with caching capabilities.
+///
+/// This service wraps another DNS service and provides transparent caching.
+/// On cache hits, it returns cached responses without calling the underlying service.
+/// On cache misses, it forwards the request to the underlying service and caches
+/// the response for future requests.
+///
+/// # Type Parameters
+///
+/// * `S` - The underlying DNS service type
 #[derive(Debug, Clone)]
 pub struct DnsCacheService<S> {
     service: S,
@@ -34,6 +65,12 @@ pub struct DnsCacheService<S> {
 }
 
 impl<S> DnsCacheService<S> {
+    /// Creates a new caching DNS service.
+    ///
+    /// # Arguments
+    ///
+    /// * `service` - The underlying DNS service to wrap
+    /// * `cache` - The DNS cache to use for storing responses
     pub fn new(service: S, cache: DnsCache) -> Self {
         Self { service, cache }
     }
@@ -55,11 +92,27 @@ where
         self.service.poll_ready(cx)
     }
 
+    /// Handles a DNS request with caching logic.
+    ///
+    /// This method implements the core caching behavior:
+    /// 1. Check cache for existing valid response
+    /// 2. Return cached response if found (cache hit)
+    /// 3. Forward request to underlying service if not cached (cache miss)
+    /// 4. Cache the response for future requests
+    ///
+    /// # Arguments
+    ///
+    /// * `req` - The DNS request to process
+    ///
+    /// # Returns
+    ///
+    /// A future that resolves to either a cached or freshly retrieved DNS response.
     fn call(&mut self, req: DnsRequest) -> Self::Future {
         let cache = self.cache.clone();
         let service = self.service.clone();
         let mut service = std::mem::replace(&mut self.service, service);
         Box::pin(async move {
+            // Check cache first
             match cache
                 .get(
                     req.query().expect("no query in DnsRequest").clone(),
@@ -68,6 +121,7 @@ where
                 .await
             {
                 Ok(Some(answer)) => {
+                    // Cache hit - return cached response
                     tracing::trace!("Cache hit, reconstructing answer message");
                     let mut msg = answer
                         .into_response()
@@ -77,11 +131,13 @@ where
                 }
                 Err(error) => Err(DnsClientError::Cache(error.into())),
                 Ok(None) => {
+                    // Cache miss - forward to underlying service
                     tracing::trace!("Cache miss");
 
                     let response = service.call(req).await?;
                     let now = Utc::now();
 
+                    // Cache the response if it has answers
                     if response.answer_count() > 0 {
                         let ttl = response
                             .soa()
@@ -105,5 +161,36 @@ where
                 }
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cache::CacheConfig;
+    use std::sync::Arc;
+
+    async fn create_test_cache() -> DnsCache {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        let manager = crate::database::ConnectionManager::from(connection);
+        let config = CacheConfig::default();
+        DnsCache::new(manager, config).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_cache_construction() {
+        let cache = create_test_cache().await;
+        assert!(Arc::strong_count(&cache.config) >= 1);
+    }
+
+    #[test]
+    fn test_cache_layer_construction() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        let manager = crate::database::ConnectionManager::from(connection);
+        let cache = DnsCache {
+            manager,
+            config: Arc::new(CacheConfig::default()),
+        };
+        let _layer = DnsCacheLayer { cache };
     }
 }
