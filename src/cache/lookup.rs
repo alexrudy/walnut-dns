@@ -726,6 +726,24 @@ impl CacheTimestamp {
     pub fn now() -> Self {
         CacheTimestamp(Utc::now())
     }
+
+    /// Checks if this timestamp represents an expired cache entry.
+    ///
+    /// # Arguments
+    ///
+    /// * `now` - Current timestamp to check against
+    ///
+    /// # Returns
+    ///
+    /// `true` if this timestamp is in the past relative to `now`.
+    pub fn is_expired(&self, now: DateTime<Utc>) -> bool {
+        self.0 <= now
+    }
+
+    /// Returns the underlying UTC timestamp.
+    pub fn as_utc(&self) -> DateTime<Utc> {
+        self.0
+    }
 }
 
 impl Add<TimeToLive> for CacheTimestamp {
@@ -879,5 +897,23 @@ mod tests {
         assert_eq!(nxdomain.response_code(), ResponseCode::NXDomain);
         assert!(nxdomain.soa().is_some());
         assert_eq!(nxdomain.negative_ttl(), Some(TimeToLive::from_secs(3600)));
+    }
+
+    #[test]
+    fn test_cache_timestamp_is_expired() {
+        let now = Utc::now();
+        let past = CacheTimestamp::from(now - chrono::Duration::seconds(300));
+        let future = CacheTimestamp::from(now + chrono::Duration::seconds(300));
+
+        assert!(past.is_expired(now));
+        assert!(!future.is_expired(now));
+        assert!(CacheTimestamp::from(now).is_expired(now));
+    }
+
+    #[test]
+    fn test_cache_timestamp_as_utc() {
+        let now = Utc::now();
+        let timestamp = CacheTimestamp::from(now);
+        assert_eq!(timestamp.as_utc(), now);
     }
 }

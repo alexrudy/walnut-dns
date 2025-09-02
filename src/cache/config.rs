@@ -74,6 +74,70 @@ impl CacheConfig {
             .negative
             .range()
     }
+
+    /// Sets positive TTL bounds for a specific record type.
+    ///
+    /// # Arguments
+    ///
+    /// * `record_type` - The DNS record type to configure
+    /// * `min` - Minimum TTL value
+    /// * `max` - Maximum TTL value
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining.
+    pub fn with_positive_ttl(mut self, record_type: RecordType, min: TimeToLive, max: TimeToLive) -> Self {
+        let bounds = self.records.entry(record_type).or_default();
+        bounds.positive = TTLBounds::between(min, max);
+        self
+    }
+
+    /// Sets negative TTL bounds for a specific record type.
+    ///
+    /// # Arguments
+    ///
+    /// * `record_type` - The DNS record type to configure
+    /// * `min` - Minimum TTL value
+    /// * `max` - Maximum TTL value
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining.
+    pub fn with_negative_ttl(mut self, record_type: RecordType, min: TimeToLive, max: TimeToLive) -> Self {
+        let bounds = self.records.entry(record_type).or_default();
+        bounds.negative = TTLBounds::between(min, max);
+        self
+    }
+
+    /// Sets default positive TTL bounds for all record types.
+    ///
+    /// # Arguments
+    ///
+    /// * `min` - Minimum TTL value
+    /// * `max` - Maximum TTL value
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining.
+    pub fn with_default_positive_ttl(mut self, min: TimeToLive, max: TimeToLive) -> Self {
+        self.default.positive = TTLBounds::between(min, max);
+        self
+    }
+
+    /// Sets default negative TTL bounds for all record types.
+    ///
+    /// # Arguments
+    ///
+    /// * `min` - Minimum TTL value
+    /// * `max` - Maximum TTL value
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining.
+    pub fn with_default_negative_ttl(mut self, min: TimeToLive, max: TimeToLive) -> Self {
+        self.default.negative = TTLBounds::between(min, max);
+        self
+    }
 }
 
 /// TTL bounds with optional minimum and maximum values.
@@ -87,6 +151,29 @@ pub struct TTLBounds {
 }
 
 impl TTLBounds {
+    /// Creates new TTL bounds with optional minimum and maximum values.
+    ///
+    /// # Arguments
+    ///
+    /// * `min` - Optional minimum TTL value
+    /// * `max` - Optional maximum TTL value
+    pub fn new(min: Option<TimeToLive>, max: Option<TimeToLive>) -> Self {
+        Self { min, max }
+    }
+
+    /// Creates TTL bounds with specific minimum and maximum values.
+    ///
+    /// # Arguments
+    ///
+    /// * `min` - Minimum TTL value
+    /// * `max` - Maximum TTL value
+    pub fn between(min: TimeToLive, max: TimeToLive) -> Self {
+        Self {
+            min: Some(min),
+            max: Some(max),
+        }
+    }
+
     /// Converts the bounds into an inclusive range.
     ///
     /// Missing bounds are filled with appropriate defaults.
@@ -103,6 +190,18 @@ impl TTLBounds {
 pub struct CacheTTLBounds {
     positive: TTLBounds,
     negative: TTLBounds,
+}
+
+impl CacheTTLBounds {
+    /// Creates new cache TTL bounds.
+    ///
+    /// # Arguments
+    ///
+    /// * `positive` - TTL bounds for successful lookups
+    /// * `negative` - TTL bounds for NXDOMAIN responses
+    pub fn new(positive: TTLBounds, negative: TTLBounds) -> Self {
+        Self { positive, negative }
+    }
 }
 
 #[cfg(test)]
@@ -149,5 +248,38 @@ mod tests {
         assert_eq!(config.positive_ttl(RecordType::A), TimeToLive::from_secs(60)..=TimeToLive::from_secs(1800));
         assert_eq!(config.negative_ttl(RecordType::A), TimeToLive::from_secs(30)..=TimeToLive::from_secs(300));
         assert_eq!(config.positive_ttl(RecordType::AAAA), TimeToLive::ZERO..=TimeToLive::MAX);
+    }
+
+    #[test]
+    fn test_cache_config_builder_methods() {
+        let config = CacheConfig::default()
+            .with_positive_ttl(RecordType::A, TimeToLive::from_secs(60), TimeToLive::from_secs(1800))
+            .with_negative_ttl(RecordType::A, TimeToLive::from_secs(30), TimeToLive::from_secs(300))
+            .with_default_positive_ttl(TimeToLive::from_secs(300), TimeToLive::from_secs(3600))
+            .with_default_negative_ttl(TimeToLive::from_secs(60), TimeToLive::from_secs(600));
+
+        assert_eq!(config.positive_ttl(RecordType::A), TimeToLive::from_secs(60)..=TimeToLive::from_secs(1800));
+        assert_eq!(config.negative_ttl(RecordType::A), TimeToLive::from_secs(30)..=TimeToLive::from_secs(300));
+        assert_eq!(config.positive_ttl(RecordType::AAAA), TimeToLive::from_secs(300)..=TimeToLive::from_secs(3600));
+        assert_eq!(config.negative_ttl(RecordType::AAAA), TimeToLive::from_secs(60)..=TimeToLive::from_secs(600));
+    }
+
+    #[test]
+    fn test_ttl_bounds_constructors() {
+        let bounds1 = TTLBounds::new(Some(TimeToLive::from_secs(60)), Some(TimeToLive::from_secs(300)));
+        let bounds2 = TTLBounds::between(TimeToLive::from_secs(60), TimeToLive::from_secs(300));
+        
+        assert_eq!(bounds1, bounds2);
+        assert_eq!(bounds1.range(), TimeToLive::from_secs(60)..=TimeToLive::from_secs(300));
+    }
+
+    #[test]
+    fn test_cache_ttl_bounds_constructor() {
+        let positive = TTLBounds::between(TimeToLive::from_secs(60), TimeToLive::from_secs(1800));
+        let negative = TTLBounds::between(TimeToLive::from_secs(30), TimeToLive::from_secs(300));
+        let bounds = CacheTTLBounds::new(positive, negative);
+        
+        assert_eq!(bounds.positive, positive);
+        assert_eq!(bounds.negative, negative);
     }
 }

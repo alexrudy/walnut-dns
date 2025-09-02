@@ -27,7 +27,7 @@ use super::DnsCache;
 /// ```rust,ignore
 /// use tower::ServiceBuilder;
 ///
-/// let cache_layer = DnsCacheLayer { cache };
+/// let cache_layer = DnsCacheLayer::new(cache);
 /// let service = ServiceBuilder::new()
 ///     .layer(cache_layer)
 ///     .service(dns_service);
@@ -35,6 +35,17 @@ use super::DnsCache;
 #[derive(Debug, Clone)]
 pub struct DnsCacheLayer {
     cache: DnsCache,
+}
+
+impl DnsCacheLayer {
+    /// Creates a new DNS cache layer.
+    ///
+    /// # Arguments
+    ///
+    /// * `cache` - The DNS cache to use for caching operations
+    pub fn new(cache: DnsCache) -> Self {
+        Self { cache }
+    }
 }
 
 impl<S> tower::Layer<S> for DnsCacheLayer {
@@ -73,6 +84,49 @@ impl<S> DnsCacheService<S> {
     /// * `cache` - The DNS cache to use for storing responses
     pub fn new(service: S, cache: DnsCache) -> Self {
         Self { service, cache }
+    }
+
+    /// Converts a cache error to a DNS client error.
+    fn cache_error(error: super::CacheError) -> DnsClientError {
+        DnsClientError::Cache(error.into())
+    }
+
+    /// Caches a DNS response if it should be cached.
+    ///
+    /// Only caches responses that have answers and are either successful (NoError)
+    /// or negative (NXDomain) responses.
+    async fn cache_response(cache: &DnsCache, response: &DnsResponse) -> Result<(), DnsClientError> {
+        let now = Utc::now();
+
+        // Only cache responses with answers
+        if response.answer_count() > 0 {
+            let ttl = response
+                .soa()
+                .map(|r| TimeToLive::from_secs(r.ttl()))
+                .unwrap_or(TimeToLive::from_days(1));
+
+            match response.response_code() {
+                ResponseCode::NoError => {
+                    let lookup = response.clone().try_into()?;
+                    cache
+                        .insert_query(&lookup, now, ttl)
+                        .await
+                        .map_err(Self::cache_error)?;
+                }
+                ResponseCode::NXDomain => {
+                    let nxdomain = response.clone().try_into()?;
+                    cache
+                        .insert_nxdomain(&nxdomain, now, ttl)
+                        .await
+                        .map_err(Self::cache_error)?;
+                }
+                _ => {
+                    // Don't cache other response codes
+                }
+            }
+        }
+        
+        Ok(())
     }
 }
 
@@ -129,34 +183,16 @@ where
                     msg.set_id(req.id());
                     Ok(msg)
                 }
-                Err(error) => Err(DnsClientError::Cache(error.into())),
+                Err(error) => Err(Self::cache_error(error)),
                 Ok(None) => {
                     // Cache miss - forward to underlying service
                     tracing::trace!("Cache miss");
 
                     let response = service.call(req).await?;
-                    let now = Utc::now();
-
-                    // Cache the response if it has answers
-                    if response.answer_count() > 0 {
-                        let ttl = response
-                            .soa()
-                            .map(|r| TimeToLive::from_secs(r.ttl()))
-                            .unwrap_or(TimeToLive::from_days(1));
-                        if matches!(response.response_code(), ResponseCode::NoError) {
-                            let lookup = response.clone().try_into()?;
-                            cache
-                                .insert_query(&lookup, now, ttl)
-                                .await
-                                .map_err(|error| DnsClientError::Cache(error.into()))?;
-                        } else if matches!(response.response_code(), ResponseCode::NXDomain) {
-                            let nxdomain = response.clone().try_into()?;
-                            cache
-                                .insert_nxdomain(&nxdomain, now, ttl)
-                                .await
-                                .map_err(|error| DnsClientError::Cache(error.into()))?;
-                        }
-                    }
+                    
+                    // Cache the response for future requests
+                    Self::cache_response(&cache, &response).await?;
+                    
                     Ok(response)
                 }
             }
@@ -191,6 +227,6 @@ mod tests {
             manager,
             config: Arc::new(CacheConfig::default()),
         };
-        let _layer = DnsCacheLayer { cache };
+        let _layer = DnsCacheLayer::new(cache);
     }
 }
