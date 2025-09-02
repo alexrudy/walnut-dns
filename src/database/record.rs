@@ -24,7 +24,7 @@ impl<'c> RecordPersistence<'c> {
         Self { connection }
     }
 
-    const TABLE: QueryBuilder<11> = QueryBuilder {
+    const TABLE: QueryBuilder<12> = QueryBuilder {
         table: "record",
         columns: [
             "id",
@@ -38,6 +38,7 @@ impl<'c> RecordPersistence<'c> {
             "rdata",
             "mdns_cache_flush",
             "expires",
+            "glue",
         ],
         primary: "id",
     };
@@ -177,7 +178,8 @@ impl<'c> RecordPersistence<'c> {
                 ":record_type": u16::from(record.record_type()),
                 ":rdata": record.rdata().to_bytes().map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?,
                 ":mdns_cache_flush": record.mdns_cache_flush(),
-                ":expires": record.expires()
+                ":expires": record.expires(),
+                ":glue": record.is_glue(),
             })?;
         }
 
@@ -208,7 +210,8 @@ impl<'c> RecordPersistence<'c> {
                 ":record_type": u16::from(record.record_type()),
                 ":rdata": record.rdata().to_bytes().map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?,
                 ":mdns_cache_flush": record.mdns_cache_flush(),
-                ":expires": record.expires()
+                ":expires": record.expires(),
+                ":glue": record.is_glue(),
             })?;
         }
 

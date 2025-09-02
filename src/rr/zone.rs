@@ -18,6 +18,8 @@ use super::{
 };
 
 /// The authoratative nature of this zone.
+///
+/// This type exists to provide a canonical form to write to a database.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 pub enum ZoneType {
     /// This is a primary nameserver, and holds the zone files of record.

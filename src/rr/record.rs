@@ -38,6 +38,7 @@ pub struct Record<R: RecordData = RData> {
     mdns_cache_flush: bool,
     proof: Proof,
     expires: Option<DateTime<Utc>>,
+    glue: bool,
 }
 
 /// [RFC 1033](https://tools.ietf.org/html/rfc1033)
@@ -86,7 +87,7 @@ impl<R: RecordData> fmt::Display for Record<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         write!(
             f,
-            "{name} {ttl} {class} {ty} {rdata} ; {id}{sp}{expires}",
+            "{name} {ttl} {class} {ty} {rdata} {glue}; {id}{sp}{expires}",
             name = self.name_labels,
             ttl = self.ttl,
             class = self.dns_class,
@@ -95,6 +96,7 @@ impl<R: RecordData> fmt::Display for Record<R> {
             id = self.id,
             sp = self.expires.map(|_| " ").unwrap_or(""),
             expires = self.expires.map(|dt| dt.to_rfc3339()).unwrap_or("".into()),
+            glue = if self.glue { "(g) " } else { "" },
         )?;
 
         Ok(())
@@ -126,6 +128,7 @@ impl<R: RecordData> Record<R> {
             mdns_cache_flush: false,
             proof: Proof::default(),
             expires: None,
+            glue: false,
         }
     }
 }
@@ -155,6 +158,7 @@ impl Record {
             mdns_cache_flush: false,
             proof: Proof::default(),
             expires: None,
+            glue: false,
         }
     }
 }
@@ -178,6 +182,7 @@ impl<R: RecordData> Record<R> {
             mdns_cache_flush: self.mdns_cache_flush,
             proof: self.proof,
             expires: self.expires,
+            glue: self.glue,
         }
     }
 
@@ -270,6 +275,31 @@ impl<R: RecordData> Record<R> {
     pub fn set_data(&mut self, rdata: R) -> &mut Self {
         self.rdata = rdata;
         self
+    }
+
+    /// Set a bit identifying this record as glue.
+    ///
+    /// Glue records are sent along with a response but not as part of the response,
+    /// instead as a way for DNS servers to find other nameservers who might be able
+    /// to answer the query.
+    ///
+    /// This flag is used when reconstructing responses for caching, or for sending glue
+    /// records with a known zone.
+    ///
+    /// # Parameters
+    /// - `glue`: Is this record a glue record?
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to this record for method chaining
+    pub fn set_glue(&mut self, glue: bool) -> &mut Self {
+        self.glue = glue;
+        self
+    }
+
+    /// Checks if this is a glue record.
+    pub fn is_glue(&self) -> bool {
+        self.glue
     }
 }
 
@@ -364,6 +394,7 @@ impl<R: RecordData> Record<R> {
             mdns_cache_flush: self.mdns_cache_flush,
             proof: self.proof,
             expires: self.expires,
+            glue: self.glue,
         })
     }
 
@@ -497,6 +528,7 @@ impl FromRow for Record<RData> {
             mdns_cache_flush: row.get("mdns_cache_flush")?,
             proof: Proof::default(),
             expires: row.get("expires")?,
+            glue: row.get("glue")?,
         })
     }
 }
@@ -513,6 +545,7 @@ impl From<hickory_proto::rr::Record<RData>> for Record<RData> {
             mdns_cache_flush: parts.mdns_cache_flush,
             proof: parts.proof,
             expires: None,
+            glue: false,
         }
     }
 }

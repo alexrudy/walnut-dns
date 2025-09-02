@@ -2456,6 +2456,7 @@ dependencies = [
  "hyper",
  "hyperdriver",
  "monarch-db",
+ "once_cell",
  "pin-project",
  "rand",
  "rusqlite",

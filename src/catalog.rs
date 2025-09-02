@@ -177,8 +177,7 @@ async fn lookup_response(
     // We no longer need the context from LookupControlFlow, so decompose into a standard Result
     // to clean up the rest of the match conditions
     let Some(result) = response.map_result() else {
-        tracing::error!("impossible skip detected after final lookup result");
-        return Err(LookupError::ResponseCode(ResponseCode::ServFail));
+        unreachable!("impossible skip detected after final lookup result");
     };
 
     let (response_header, sections) =

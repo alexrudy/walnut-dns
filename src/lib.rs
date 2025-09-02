@@ -5,6 +5,7 @@ pub mod client;
 pub mod codec;
 pub mod database;
 pub mod error;
+pub mod resolver;
 pub mod rr;
 pub mod server;
 pub mod services;

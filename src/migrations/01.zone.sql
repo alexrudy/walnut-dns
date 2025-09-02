@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS record (
     record_type INTEGER NOT NULL,
     rdata BLOB NOT NULL,
     mdns_cache_flush BOOLEAN NOT NULL,
-    expires STRING
+    expires STRING,
+    glue BOOLEAN NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_record_zone_id ON record (zone_id);
 CREATE INDEX IF NOT EXISTS idx_cache_record_query_id ON record (query_id);
