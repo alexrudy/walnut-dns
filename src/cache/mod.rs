@@ -46,7 +46,7 @@ use crate::database::{MONARCH, Result};
 use crate::rr::TimeToLive;
 
 pub use self::config::CacheConfig;
-pub use self::lookup::{CacheTimestamp, CachedQuery, EntryMeta, Lookup, NxDomain};
+pub use self::lookup::{CacheTimestamp, EntryMeta, Lookup};
 pub use self::service::{DnsCacheLayer, DnsCacheService};
 
 mod config;
@@ -132,75 +132,42 @@ impl DnsCache {
         })
     }
 
-    /// Inserts a successful DNS lookup into the cache.
+    /// Inserts a lookup into the cache.
     ///
-    /// The TTL is clamped to the configured bounds for the record type to prevent
-    /// excessively short or long cache times.
-    async fn insert_query(
-        &self,
-        lookup: &Lookup,
-        now: DateTime<Utc>,
-        ttl: TimeToLive,
-    ) -> Result<(), CacheError> {
-        let rng = self.config.positive_ttl(lookup.query().query_type());
-
-        let mut connection = self.manager.get().await?;
-
-        crate::block_in_place(|| {
-            let tx = connection.transaction()?;
-            let qx = QueryPersistence::new(&tx);
-            qx.insert_lookup(lookup, now.into(), ttl.clamp(*rng.start(), *rng.end()))?;
-            tx.commit()?;
-            Ok(())
-        })
-    }
-
-    /// Inserts an NXDOMAIN response into the cache.
-    ///
-    /// The TTL is clamped to the configured negative TTL bounds for the record type.
-    async fn insert_nxdomain(
-        &self,
-        nxdomain: &NxDomain,
-        now: DateTime<Utc>,
-        ttl: TimeToLive,
-    ) -> Result<(), CacheError> {
-        let rng = self.config.negative_ttl(nxdomain.query().query_type());
-
-        let mut connection = self.manager.get().await?;
-        crate::block_in_place(|| {
-            let tx = connection.transaction()?;
-            let qx = QueryPersistence::new(&tx);
-            qx.insert_nxdomain(nxdomain, now.into(), ttl.clamp(*rng.start(), *rng.end()))?;
-            tx.commit()?;
-            Ok(())
-        })
-    }
-
-    /// Inserts a cached query (either successful lookup or NXDOMAIN) into the cache.
-    ///
-    /// This method automatically determines whether the query represents a successful
-    /// lookup or an NXDOMAIN response and calls the appropriate internal method.
+    /// The TTL is clamped to the configured bounds for the record type based on
+    /// whether this is a positive or negative response.
     ///
     /// # Arguments
     ///
-    /// * `query` - The cached query result to store
+    /// * `lookup` - The lookup result to store
     /// * `now` - Current timestamp for TTL calculations
     ///
     /// # Errors
     ///
     /// Returns a `CacheError` if the database operation fails.
-    pub async fn insert(&self, query: &CachedQuery, now: DateTime<Utc>) -> Result<(), CacheError> {
-        match query.lookup() {
-            Ok(lookup) => self.insert_query(lookup, now, lookup.ttl(now)).await,
-            Err(nx_domain) => {
-                self.insert_nxdomain(
-                    nx_domain,
-                    now,
-                    nx_domain.negative_ttl().unwrap_or(TimeToLive::MIN),
-                )
-                .await
-            }
-        }
+    pub async fn insert(&self, lookup: &Lookup, now: DateTime<Utc>) -> Result<(), CacheError> {
+        let ttl = if lookup.is_success() {
+            lookup.ttl(now)
+        } else {
+            lookup.negative_ttl().unwrap_or(TimeToLive::MIN)
+        };
+
+        let rng = if lookup.is_success() {
+            self.config.positive_ttl(lookup.query_type())
+        } else {
+            self.config.negative_ttl(lookup.query_type())
+        };
+
+        let clamped_ttl = ttl.clamp(*rng.start(), *rng.end());
+
+        let mut connection = self.manager.get().await?;
+        crate::block_in_place(|| {
+            let tx = connection.transaction()?;
+            let qx = QueryPersistence::new(&tx);
+            qx.insert_lookup(lookup, now.into(), clamped_ttl)?;
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Retrieves a cached query result if available and not expired.
@@ -215,7 +182,7 @@ impl DnsCache {
     ///
     /// # Returns
     ///
-    /// * `Ok(Some(cached_query))` - If a valid cached result is found
+    /// * `Ok(Some(lookup))` - If a valid cached result is found
     /// * `Ok(None)` - If no matching or valid cached result exists
     /// * `Err(cache_error)` - If a database error occurs
     ///
@@ -226,7 +193,7 @@ impl DnsCache {
         &self,
         query: Query,
         now: DateTime<Utc>,
-    ) -> Result<Option<CachedQuery>, CacheError> {
+    ) -> Result<Option<Lookup>, CacheError> {
         let mut connection = self.manager.get().await?;
         crate::block_in_place(|| {
             let tx = connection.transaction()?;
@@ -294,11 +261,11 @@ mod tests {
             QueryID::new(),
             query.clone(),
             vec![record.into()],
+            hickory_proto::op::ResponseCode::NoError,
             CacheTimestamp::from(now + chrono::Duration::seconds(300)),
         );
-        let cached_query = CachedQuery::new(Ok(lookup));
 
-        cache.insert(&cached_query, now).await.unwrap();
+        cache.insert(&lookup, now).await.unwrap();
 
         let result = cache.get(query, now).await.unwrap();
         assert!(result.is_some());
@@ -312,21 +279,20 @@ mod tests {
         let now = Utc::now();
 
         let query = Query::query(Name::from_str("nonexistent.com.").unwrap(), RecordType::A);
-        let nxdomain = NxDomain::new(
+        let nxdomain = Lookup::new(
             QueryID::new(),
             query.clone(),
             vec![],
             hickory_proto::op::ResponseCode::NXDomain,
             CacheTimestamp::from(now + chrono::Duration::seconds(300)),
         );
-        let cached_query = CachedQuery::new(Err(nxdomain));
 
-        cache.insert(&cached_query, now).await.unwrap();
+        cache.insert(&nxdomain, now).await.unwrap();
 
         let result = cache.get(query, now).await.unwrap();
         assert!(result.is_some());
         let retrieved = result.unwrap();
-        assert!(retrieved.lookup().is_err());
+        assert!(retrieved.is_nxdomain());
     }
 
     #[tokio::test]
@@ -340,11 +306,11 @@ mod tests {
             QueryID::new(),
             query.clone(),
             vec![],
+            hickory_proto::op::ResponseCode::NoError,
             CacheTimestamp::from(past),
         );
-        let cached_query = CachedQuery::new(Ok(lookup));
 
-        cache.insert(&cached_query, past).await.unwrap();
+        cache.insert(&lookup, past).await.unwrap();
 
         let result_before = cache.get(query.clone(), now).await.unwrap();
         assert!(result_before.is_none());

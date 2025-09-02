@@ -4,7 +4,7 @@ use hickory_proto::rr::LowerName;
 use hickory_proto::serialize::binary::BinEncodable;
 use rusqlite::named_params;
 
-use crate::cache::{CachedQuery, EntryMeta};
+use crate::cache::{EntryMeta, Lookup};
 use crate::rr::QueryID;
 use crate::{
     Lookup as _, ZoneInfo as _,
@@ -108,7 +108,7 @@ impl<'c> RecordPersistence<'c> {
 
     /// Populate a single zone with records
     #[tracing::instrument("populate", skip_all, level = "trace")]
-    pub(crate) fn populate_query(&self, params: EntryMeta) -> rusqlite::Result<CachedQuery> {
+    pub(crate) fn populate_lookup(&self, params: EntryMeta) -> rusqlite::Result<Lookup> {
         let mut stmt = self
             .connection
             .prepare(&Self::TABLE.select("WHERE query_id = :query_id"))?;
@@ -116,7 +116,7 @@ impl<'c> RecordPersistence<'c> {
             .query_map(named_params! { ":query_id": params.id() }, Record::from_row)?
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(CachedQuery::new(params.from_stored_records(records)))
+        Ok(params.into_lookup(records))
     }
 
     #[tracing::instrument("delete_orphans", skip_all, level = "trace")]

@@ -12,7 +12,7 @@ use hickory_proto::{
     xfer::{DnsRequest, DnsResponse},
 };
 
-use crate::{client::DnsClientError, rr::TimeToLive};
+use crate::client::DnsClientError;
 
 use super::DnsCache;
 
@@ -37,13 +37,8 @@ pub struct DnsCacheLayer {
     cache: DnsCache,
 }
 
-impl DnsCacheLayer {
-    /// Creates a new DNS cache layer.
-    ///
-    /// # Arguments
-    ///
-    /// * `cache` - The DNS cache to use for caching operations
-    pub fn new(cache: DnsCache) -> Self {
+impl From<DnsCache> for DnsCacheLayer {
+    fn from(cache: DnsCache) -> Self {
         Self { cache }
     }
 }
@@ -93,39 +88,27 @@ impl<S> DnsCacheService<S> {
 
     /// Caches a DNS response if it should be cached.
     ///
-    /// Only caches responses that have answers and are either successful (NoError)
+    /// Only caches responses that have either successful (NoError) answers
     /// or negative (NXDomain) responses.
-    async fn cache_response(cache: &DnsCache, response: &DnsResponse) -> Result<(), DnsClientError> {
+    async fn cache_response(
+        cache: &DnsCache,
+        response: &DnsResponse,
+    ) -> Result<(), DnsClientError> {
         let now = Utc::now();
 
-        // Only cache responses with answers
-        if response.answer_count() > 0 {
-            let ttl = response
-                .soa()
-                .map(|r| TimeToLive::from_secs(r.ttl()))
-                .unwrap_or(TimeToLive::from_days(1));
-
-            match response.response_code() {
-                ResponseCode::NoError => {
-                    let lookup = response.clone().try_into()?;
-                    cache
-                        .insert_query(&lookup, now, ttl)
-                        .await
-                        .map_err(Self::cache_error)?;
-                }
-                ResponseCode::NXDomain => {
-                    let nxdomain = response.clone().try_into()?;
-                    cache
-                        .insert_nxdomain(&nxdomain, now, ttl)
-                        .await
-                        .map_err(Self::cache_error)?;
-                }
-                _ => {
-                    // Don't cache other response codes
-                }
+        match response.response_code() {
+            ResponseCode::NoError | ResponseCode::NXDomain => {
+                let lookup: super::Lookup = response.clone().try_into()?;
+                cache
+                    .insert(&lookup, now)
+                    .await
+                    .map_err(Self::cache_error)?;
+            }
+            _ => {
+                // Don't cache other response codes
             }
         }
-        
+
         Ok(())
     }
 }
@@ -177,11 +160,12 @@ where
                 Ok(Some(answer)) => {
                     // Cache hit - return cached response
                     tracing::trace!("Cache hit, reconstructing answer message");
-                    let mut msg = answer
-                        .into_response()
-                        .expect("protocol error from cached response");
+                    let mut msg: hickory_proto::op::Message = answer.into();
                     msg.set_id(req.id());
-                    Ok(msg)
+                    Ok(
+                        DnsResponse::from_message(msg)
+                            .expect("protocol error from cached response"),
+                    )
                 }
                 Err(error) => Err(Self::cache_error(error)),
                 Ok(None) => {
@@ -189,10 +173,10 @@ where
                     tracing::trace!("Cache miss");
 
                     let response = service.call(req).await?;
-                    
+
                     // Cache the response for future requests
                     Self::cache_response(&cache, &response).await?;
-                    
+
                     Ok(response)
                 }
             }
@@ -227,6 +211,6 @@ mod tests {
             manager,
             config: Arc::new(CacheConfig::default()),
         };
-        let _layer = DnsCacheLayer::new(cache);
+        let _layer = DnsCacheLayer::from(cache);
     }
 }

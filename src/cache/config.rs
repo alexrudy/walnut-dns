@@ -151,16 +151,6 @@ pub struct TTLBounds {
 }
 
 impl TTLBounds {
-    /// Creates new TTL bounds with optional minimum and maximum values.
-    ///
-    /// # Arguments
-    ///
-    /// * `min` - Optional minimum TTL value
-    /// * `max` - Optional maximum TTL value
-    pub fn new(min: Option<TimeToLive>, max: Option<TimeToLive>) -> Self {
-        Self { min, max }
-    }
-
     /// Creates TTL bounds with specific minimum and maximum values.
     ///
     /// # Arguments
@@ -193,15 +183,6 @@ pub struct CacheTTLBounds {
 }
 
 impl CacheTTLBounds {
-    /// Creates new cache TTL bounds.
-    ///
-    /// # Arguments
-    ///
-    /// * `positive` - TTL bounds for successful lookups
-    /// * `negative` - TTL bounds for NXDOMAIN responses
-    pub fn new(positive: TTLBounds, negative: TTLBounds) -> Self {
-        Self { positive, negative }
-    }
 }
 
 #[cfg(test)]
@@ -266,7 +247,10 @@ mod tests {
 
     #[test]
     fn test_ttl_bounds_constructors() {
-        let bounds1 = TTLBounds::new(Some(TimeToLive::from_secs(60)), Some(TimeToLive::from_secs(300)));
+        let bounds1 = TTLBounds {
+            min: Some(TimeToLive::from_secs(60)),
+            max: Some(TimeToLive::from_secs(300)),
+        };
         let bounds2 = TTLBounds::between(TimeToLive::from_secs(60), TimeToLive::from_secs(300));
         
         assert_eq!(bounds1, bounds2);
@@ -277,7 +261,7 @@ mod tests {
     fn test_cache_ttl_bounds_constructor() {
         let positive = TTLBounds::between(TimeToLive::from_secs(60), TimeToLive::from_secs(1800));
         let negative = TTLBounds::between(TimeToLive::from_secs(30), TimeToLive::from_secs(300));
-        let bounds = CacheTTLBounds::new(positive, negative);
+        let bounds = CacheTTLBounds { positive, negative };
         
         assert_eq!(bounds.positive, positive);
         assert_eq!(bounds.negative, negative);

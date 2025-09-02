@@ -1,21 +1,16 @@
 //! DNS lookup and response types for the cache system.
 //!
-//! This module defines the core data structures used to represent cached DNS query
-//! results, including successful lookups, NXDOMAIN responses, and timestamp handling.
-//! It provides conversions between the hickory-proto types and the cache's internal
-//! representation.
+//! This module defines a unified data structure for representing all types of cached DNS query
+//! results, including successful lookups, NXDOMAIN responses, and other negative responses.
+//! It provides conversions between the hickory-proto types and the cache's internal representation.
 
-use std::{
-    collections::HashMap,
-    ops::{Add, Deref as _},
-    time::Duration,
-};
+use std::{ops::Add, time::Duration};
 
 use chrono::{DateTime, TimeDelta, TimeZone as _, Utc};
 use hickory_proto::{
     ProtoError, ProtoErrorKind,
     op::{Message, Query, ResponseCode},
-    rr::{DNSClass, Name, RData, RecordType},
+    rr::{DNSClass, Name, RecordType},
     xfer::DnsResponse,
 };
 use rusqlite::{
@@ -29,29 +24,39 @@ use crate::{
     rr::{AsHickory as _, QueryID, Record, SqlName, TimeToLive},
 };
 
-/// Result of a successful DNS query.
+/// A unified DNS lookup result that can represent any type of DNS response.
 ///
-/// Contains the query information, DNS records returned, and cache expiration timestamp.
-/// This type represents positive DNS responses that can be cached.
+/// This type consolidates successful lookups, NXDOMAIN responses, and other negative
+/// responses into a single structure. It contains the query information, DNS records,
+/// response code, and cache expiration timestamp.
 ///
 /// # Examples
 ///
 /// ```rust,ignore
+/// // Successful lookup
 /// let lookup = Lookup::new(
 ///     QueryID::new(),
 ///     query,
 ///     records,
+///     ResponseCode::NoError,
 ///     valid_until_timestamp
 /// );
 ///
-/// // Get remaining TTL
-/// let ttl = lookup.ttl(Utc::now());
+/// // Check if it's a successful response
+/// if lookup.is_success() {
+///     for record in lookup.answer_records() {
+///         // Process answer records
+///     }
+/// } else if lookup.is_nxdomain() {
+///     // Handle NXDOMAIN response
+/// }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Lookup {
     id: QueryID,
     query: Query,
     records: Vec<Record>,
+    response_code: ResponseCode,
     valid_until: CacheTimestamp,
 }
 
@@ -63,17 +68,20 @@ impl Lookup {
     /// * `id` - Unique identifier for this query
     /// * `query` - The original DNS query
     /// * `records` - DNS records returned in the response
+    /// * `response_code` - DNS response code indicating success or failure type
     /// * `valid_until` - When this cache entry expires
     pub fn new(
         id: QueryID,
         query: Query,
         records: Vec<Record>,
+        response_code: ResponseCode,
         valid_until: CacheTimestamp,
     ) -> Self {
-        Lookup {
+        Self {
             id,
             query,
             records,
+            response_code,
             valid_until,
         }
     }
@@ -81,6 +89,41 @@ impl Lookup {
     /// Returns the unique identifier for this lookup.
     pub fn id(&self) -> QueryID {
         self.id
+    }
+
+    /// Returns a reference to the original query.
+    pub fn query(&self) -> &Query {
+        &self.query
+    }
+
+    /// Returns the domain name being queried.
+    pub fn name(&self) -> &Name {
+        self.query.name()
+    }
+
+    /// Returns the DNS record type being queried.
+    pub fn query_type(&self) -> RecordType {
+        self.query.query_type()
+    }
+
+    /// Returns the DNS class of the query.
+    pub fn query_class(&self) -> DNSClass {
+        self.query.query_class()
+    }
+
+    /// Returns the DNS response code.
+    pub fn response_code(&self) -> ResponseCode {
+        self.response_code
+    }
+
+    /// Returns all DNS records in this lookup result.
+    pub fn records(&self) -> &[Record] {
+        &self.records
+    }
+
+    /// Returns the cache expiration timestamp.
+    pub fn valid_until(&self) -> CacheTimestamp {
+        self.valid_until
     }
 
     /// Calculates the remaining TTL from the given timestamp.
@@ -96,27 +139,116 @@ impl Lookup {
         self.valid_until.since(now).into()
     }
 
-    /// Returns a reference to the original query.
-    pub fn query(&self) -> &Query {
-        &self.query
+    /// Checks if this represents a successful DNS response.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the response code indicates success (NoError).
+    pub fn is_success(&self) -> bool {
+        matches!(self.response_code, ResponseCode::NoError)
     }
 
-    /// Returns the DNS records in this lookup result.
-    pub fn records(&self) -> &[Record<RData>] {
-        &self.records
+    /// Checks if this represents an NXDOMAIN response.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the response code indicates the domain does not exist.
+    pub fn is_nxdomain(&self) -> bool {
+        matches!(self.response_code, ResponseCode::NXDomain)
     }
 
-    /// Returns the cache expiration timestamp.
-    pub fn valid_until(&self) -> CacheTimestamp {
-        self.valid_until
+    /// Checks if this represents a negative response (no records found).
+    ///
+    /// # Returns
+    ///
+    /// `true` if this is any type of negative response (NXDOMAIN, NODATA, etc.).
+    pub fn is_negative(&self) -> bool {
+        !self.is_success()
+    }
+
+    /// Returns answer records for successful lookups.
+    ///
+    /// Filters records to only include those that match the query type
+    /// and are appropriate for the answer section.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over answer records, or empty if this is a negative response.
+    pub fn answer_records(&self) -> Box<dyn Iterator<Item = &Record> + '_> {
+        if self.is_success() {
+            Box::new(
+                self.records
+                    .iter()
+                    .filter(|r| r.record_type() == self.query_type()),
+            )
+        } else {
+            Box::new([].iter())
+        }
+    }
+
+    /// Returns the SOA record if present.
+    ///
+    /// The SOA record provides authoritative information about the domain
+    /// and is used to determine negative caching TTL.
+    ///
+    /// # Returns
+    ///
+    /// The SOA record if present, or `None` if not found.
+    pub fn soa(&self) -> Option<&Record> {
+        self.records
+            .iter()
+            .find(|r| r.record_type() == RecordType::SOA)
+    }
+
+    /// Returns authority records (nameservers, SOA, etc.).
+    ///
+    /// # Returns
+    ///
+    /// An iterator over authority records.
+    pub fn authority_records(&self) -> impl Iterator<Item = &Record> {
+        self.records.iter().filter(|r| {
+            matches!(
+                r.record_type(),
+                RecordType::SOA | RecordType::NS | RecordType::DS
+            )
+        })
+    }
+
+    /// Returns the negative caching TTL for negative responses.
+    ///
+    /// Derives the TTL from the SOA record's minimum field, which is used
+    /// for negative caching according to RFC 2308.
+    ///
+    /// # Returns
+    ///
+    /// The negative TTL if this is a negative response with an SOA record.
+    pub fn negative_ttl(&self) -> Option<TimeToLive> {
+        if self.is_negative() {
+            self.soa().and_then(|soa| {
+                soa.data()
+                    .as_soa()
+                    .map(|soa_data| soa.ttl().min(soa_data.minimum().into()))
+            })
+        } else {
+            None
+        }
     }
 }
 
 impl From<Lookup> for Message {
     fn from(lookup: Lookup) -> Self {
         let mut msg = Message::new();
-        msg.add_query(lookup.query)
-            .add_answers(lookup.records.into_iter().map(|r| r.as_hickory()));
+        msg.add_query(lookup.query.clone());
+        msg.set_response_code(lookup.response_code);
+
+        if lookup.is_success() {
+            // Add answer records for successful responses
+            msg.add_answers(lookup.answer_records().map(|r| r.as_hickory()));
+        }
+
+        // Add authority records for all response types
+        msg.add_name_servers(lookup.authority_records().map(|r| r.as_hickory()));
+
         msg
     }
 }
@@ -125,14 +257,23 @@ impl TryFrom<DnsResponse> for Lookup {
     type Error = ProtoError;
 
     fn try_from(response: DnsResponse) -> Result<Self, Self::Error> {
+        let response_code = response.response_code();
+        let negative_ttl = response.negative_ttl().map(|ttl| ttl.into());
         let (message, _) = response.into_parts();
-        let ttl = message
-            .answers()
-            .iter()
-            .map(|rr| rr.ttl().into())
-            .min()
-            .unwrap_or(TimeToLive::MIN);
         let parts = message.into_parts();
+
+        let ttl = if matches!(response_code, ResponseCode::NoError) {
+            // For successful responses, use minimum TTL from answer records
+            parts
+                .answers
+                .iter()
+                .map(|rr| rr.ttl().into())
+                .min()
+                .unwrap_or(TimeToLive::MIN)
+        } else {
+            // For negative responses, use negative TTL from response
+            negative_ttl.unwrap_or(TimeToLive::MIN)
+        };
 
         let deadline = ttl.deadline();
 
@@ -146,361 +287,13 @@ impl TryFrom<DnsResponse> for Lookup {
             records: parts
                 .answers
                 .into_iter()
-                .chain(parts.additionals)
                 .chain(parts.name_servers)
+                .chain(parts.additionals)
                 .map(Record::from)
                 .collect(),
+            response_code,
             valid_until: deadline.into(),
         })
-    }
-}
-
-/// Nameserver data with associated glue records.
-///
-/// Used in NXDOMAIN responses to provide referral information.
-#[derive(Clone, Debug)]
-pub struct ForwardNSData {
-    ns: Record,
-    glue: Vec<Record>,
-}
-
-struct NxDomainRecordValues {
-    soa: Option<Record>,
-    ns: Option<Vec<ForwardNSData>>,
-    authorities: Option<Vec<Record>>,
-}
-
-impl NxDomainRecordValues {
-    fn from_records(records: impl Iterator<Item = Record>) -> Self {
-        let mut mapped: HashMap<RecordType, Vec<_>> =
-            records.into_iter().fold(HashMap::new(), |mut map, record| {
-                map.entry(record.record_type()).or_default().push(record);
-                map
-            });
-
-        let soa = mapped
-            .remove(&RecordType::SOA)
-            .and_then(|records| records.into_iter().next());
-
-        let mut referral_nameservers = Vec::new();
-        mapped
-            .remove(&RecordType::NS)
-            .into_iter()
-            .flatten()
-            .for_each(|ns| {
-                if let Some(ns_name) = ns.data().as_ns() {
-                    let mut glue = Vec::new();
-                    glue.extend(
-                        mapped
-                            .get(&RecordType::A)
-                            .into_iter()
-                            .flatten()
-                            .filter(|record| record.name() == ns_name.deref())
-                            .cloned(),
-                    );
-                    glue.extend(
-                        mapped
-                            .get(&RecordType::AAAA)
-                            .into_iter()
-                            .flatten()
-                            .filter(|record| record.name() == ns_name.deref())
-                            .cloned(),
-                    );
-
-                    referral_nameservers.push(ForwardNSData { ns, glue })
-                }
-            });
-
-        let ns = if referral_nameservers.is_empty() {
-            None
-        } else {
-            Some(referral_nameservers)
-        };
-
-        let authorities = {
-            let authorities: Vec<Record> = mapped.into_values().flatten().collect();
-            if authorities.is_empty() {
-                None
-            } else {
-                Some(authorities)
-            }
-        };
-
-        NxDomainRecordValues {
-            soa,
-            ns,
-            authorities,
-        }
-    }
-}
-
-/// Represents a negative DNS response (NXDOMAIN, NODATA, etc.).
-///
-/// Contains the query information, authority records, and negative caching TTL.
-/// This type represents DNS responses indicating that a requested record does not exist.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// let nxdomain = NxDomain::new(
-///     QueryID::new(),
-///     query,
-///     authority_records,
-///     ResponseCode::NXDomain,
-///     valid_until_timestamp
-/// );
-///
-/// // Get negative TTL from SOA record
-/// if let Some(ttl) = nxdomain.negative_ttl() {
-///     // Use negative TTL
-/// }
-/// ```
-#[derive(Clone, Debug)]
-pub struct NxDomain {
-    id: QueryID,
-    query: Query,
-    soa: Option<Record>,
-    ns: Option<Vec<ForwardNSData>>,
-    negative_ttl: Option<TimeToLive>,
-    response_code: ResponseCode,
-    authorities: Option<Vec<Record>>,
-    valid_until: CacheTimestamp,
-}
-
-impl NxDomain {
-    /// Creates a new NXDOMAIN response.
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - Unique identifier for this query
-    /// * `query` - The original DNS query
-    /// * `records` - Authority records from the response
-    /// * `response_code` - DNS response code (typically NXDOMAIN)
-    /// * `valid_until` - When this cache entry expires
-    pub fn new(
-        id: QueryID,
-        query: Query,
-        records: Vec<Record>,
-        response_code: ResponseCode,
-        valid_until: CacheTimestamp,
-    ) -> Self {
-        let records = NxDomainRecordValues::from_records(records.into_iter());
-        let negative_ttl = records
-            .soa
-            .as_ref()
-            .map(|rr| rr.ttl().min(rr.data().as_soa().unwrap().minimum().into()));
-
-        Self {
-            id,
-            query,
-            soa: records.soa,
-            ns: records.ns,
-            negative_ttl,
-            response_code,
-            authorities: records.authorities,
-            valid_until,
-        }
-    }
-
-    /// Returns a reference to the original query.
-    pub fn query(&self) -> &Query {
-        &self.query
-    }
-
-    /// Returns the SOA record if present.
-    ///
-    /// The SOA record provides authoritative information about the domain
-    /// and is used to determine negative caching TTL.
-    pub fn soa(&self) -> Option<&Record> {
-        self.soa.as_ref()
-    }
-
-    /// Returns nameserver data with glue records if present.
-    pub fn ns(&self) -> Option<&Vec<ForwardNSData>> {
-        self.ns.as_ref()
-    }
-
-    /// Returns the negative caching TTL derived from the SOA record.
-    ///
-    /// This TTL determines how long the NXDOMAIN response should be cached.
-    pub fn negative_ttl(&self) -> Option<TimeToLive> {
-        self.negative_ttl
-    }
-
-    /// Returns the DNS response code.
-    pub fn response_code(&self) -> ResponseCode {
-        self.response_code
-    }
-
-    /// Returns additional authority records if present.
-    pub fn authorities(&self) -> Option<&Vec<Record<RData>>> {
-        self.authorities.as_ref()
-    }
-
-    /// Returns the cache expiration timestamp.
-    pub fn valid_until(&self) -> CacheTimestamp {
-        self.valid_until
-    }
-
-    /// Returns the unique identifier for this query.
-    pub fn id(&self) -> QueryID {
-        self.id
-    }
-
-    /// Returns an iterator over all records in this NXDOMAIN response.
-    ///
-    /// Iterates through SOA, authority, and nameserver records in order.
-    pub fn records(&self) -> NxDomainRecords<'_> {
-        NxDomainRecords::new(self)
-    }
-}
-
-impl From<NxDomain> for Message {
-    fn from(nxdomain: NxDomain) -> Self {
-        let mut msg = Message::new();
-        msg.add_query(nxdomain.query);
-
-        if let Some(soa) = nxdomain.soa {
-            msg.add_answer(soa.as_hickory());
-        }
-        if let Some(auth) = nxdomain.authorities {
-            msg.add_additionals(auth.into_iter().map(|r| r.as_hickory()));
-        }
-
-        if let Some(ns) = nxdomain.ns {
-            for nsd in ns {
-                msg.add_name_server(nsd.ns.as_hickory());
-                msg.add_additionals(nsd.glue.into_iter().map(|r| r.as_hickory()));
-            }
-        }
-
-        msg.set_response_code(nxdomain.response_code);
-
-        msg
-    }
-}
-
-impl TryFrom<DnsResponse> for NxDomain {
-    type Error = ProtoError;
-
-    fn try_from(response: DnsResponse) -> Result<Self, Self::Error> {
-        let response_code = response.response_code();
-        let negative_ttl = response.negative_ttl().map(|ttl| ttl.into());
-        let (message, _) = response.into_parts();
-        let parts = message.into_parts();
-        let record_fields = NxDomainRecordValues::from_records(
-            parts
-                .answers
-                .into_iter()
-                .chain(parts.additionals)
-                .chain(parts.name_servers)
-                .map(Record::from),
-        );
-
-        Ok(NxDomain {
-            id: QueryID::new(),
-            query: parts
-                .queries
-                .into_iter()
-                .next()
-                .ok_or_else(|| ProtoErrorKind::BadQueryCount(0))?,
-            soa: record_fields.soa,
-            ns: record_fields.ns,
-            negative_ttl,
-            response_code,
-            authorities: record_fields.authorities,
-            valid_until: negative_ttl
-                .map(|ttl| ttl.deadline().into())
-                .unwrap_or(CacheTimestamp::now()),
-        })
-    }
-}
-
-enum GlueState<'n> {
-    #[allow(clippy::upper_case_acronyms)]
-    NS,
-    Glue(std::slice::Iter<'n, Record>),
-    End,
-}
-
-enum State<'n> {
-    #[allow(clippy::upper_case_acronyms)]
-    SOA,
-    Authorities(Option<std::slice::Iter<'n, Record>>),
-    Glue(
-        Option<std::slice::Iter<'n, ForwardNSData>>,
-        Option<&'n ForwardNSData>,
-        GlueState<'n>,
-    ),
-    End,
-}
-
-pub struct NxDomainRecords<'n> {
-    nxdomain: &'n NxDomain,
-    state: State<'n>,
-}
-
-impl<'n> NxDomainRecords<'n> {
-    fn new(nxdomain: &'n NxDomain) -> Self {
-        Self {
-            nxdomain,
-            state: State::SOA,
-        }
-    }
-}
-
-impl<'n> Iterator for NxDomainRecords<'n> {
-    type Item = &'n Record;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            match &mut self.state {
-                State::SOA => {
-                    self.state =
-                        State::Authorities(self.nxdomain.authorities.as_ref().map(|rr| rr.iter()));
-                    if let Some(soa) = &self.nxdomain.soa {
-                        return Some(soa);
-                    }
-                }
-                State::Authorities(auth) => {
-                    if let Some(record) = auth.as_mut().and_then(|i| i.next()) {
-                        return Some(record);
-                    } else {
-                        self.state = State::Glue(
-                            self.nxdomain.ns.as_ref().map(|rr| rr.iter()),
-                            None,
-                            GlueState::NS,
-                        );
-                    }
-                }
-                State::Glue(iter, current, state) => {
-                    if let Some(forwards) = current.or_else(|| iter.as_mut().and_then(|i| i.next()))
-                    {
-                        match state {
-                            GlueState::NS => {
-                                *state = GlueState::Glue(forwards.glue.iter());
-                                return Some(&forwards.ns);
-                            }
-                            GlueState::Glue(iter) => {
-                                if let Some(record) = iter.next() {
-                                    return Some(record);
-                                } else {
-                                    *state = GlueState::End
-                                }
-                            }
-                            GlueState::End => {
-                                *current = iter.as_mut().and_then(|i| i.next());
-                            }
-                        }
-                    } else {
-                        self.state = State::End;
-                    }
-                }
-                State::End => {
-                    return None;
-                }
-            }
-        }
     }
 }
 
@@ -528,29 +321,21 @@ impl EntryMeta {
 
     /// Constructs a complete lookup result from metadata and associated records.
     ///
-    /// Based on the response code, creates either a successful `Lookup` or an `NxDomain`.
-    ///
     /// # Arguments
     ///
     /// * `records` - DNS records associated with this cache entry
     ///
     /// # Returns
     ///
-    /// * `Ok(Lookup)` - For successful responses (NoError)
-    /// * `Err(NxDomain)` - For negative responses (NXDOMAIN, etc.)
-    #[allow(clippy::result_large_err)]
-    pub fn from_stored_records(self: EntryMeta, records: Vec<Record>) -> Result<Lookup, NxDomain> {
-        if matches!(self.response_code, ResponseCode::NoError) {
-            Ok(Lookup::new(self.id, self.query, records, self.expires))
-        } else {
-            Err(NxDomain::new(
-                self.id,
-                self.query,
-                records,
-                self.response_code,
-                self.expires,
-            ))
-        }
+    /// A unified `Lookup` that can represent any response type.
+    pub fn into_lookup(self, records: Vec<Record>) -> Lookup {
+        Lookup::new(
+            self.id,
+            self.query,
+            records,
+            self.response_code,
+            self.expires,
+        )
     }
 }
 
@@ -574,114 +359,6 @@ impl FromRow for EntryMeta {
             response_code: row.get::<_, u16>("response_code")?.into(),
             expires: row.get("expires")?,
         })
-    }
-}
-
-/// A cached DNS query result that can be either successful or negative.
-///
-/// This type unifies successful lookups and NXDOMAIN responses into a single
-/// cacheable type. It provides a convenient interface for working with cached
-/// DNS query results regardless of their success or failure.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// // Successful lookup
-/// let cached = CachedQuery::new(Ok(lookup));
-///
-/// // NXDOMAIN response
-/// let cached = CachedQuery::new(Err(nxdomain));
-///
-/// // Check query type regardless of success/failure
-/// let record_type = cached.query_type();
-/// ```
-#[derive(Debug, Clone)]
-pub struct CachedQuery {
-    lookup: Result<Lookup, NxDomain>,
-}
-
-impl From<Result<Lookup, NxDomain>> for CachedQuery {
-    fn from(lookup: Result<Lookup, NxDomain>) -> Self {
-        Self { lookup }
-    }
-}
-
-impl CachedQuery {
-    /// Creates a new cached query from a lookup result.
-    ///
-    /// # Arguments
-    ///
-    /// * `lookup` - Either a successful lookup or an NXDOMAIN response
-    pub fn new(lookup: Result<Lookup, NxDomain>) -> Self {
-        Self { lookup }
-    }
-
-    /// Returns the unique identifier for this query.
-    pub fn id(&self) -> QueryID {
-        match &self.lookup {
-            Ok(lookup) => lookup.id(),
-            Err(nxdomain) => nxdomain.id(),
-        }
-    }
-
-    /// Returns a reference to the underlying lookup result.
-    pub fn lookup(&self) -> &Result<Lookup, NxDomain> {
-        &self.lookup
-    }
-
-    /// Returns the domain name being queried.
-    pub fn name(&self) -> &Name {
-        self.query().name()
-    }
-
-    /// Returns the DNS record type being queried.
-    pub fn query_type(&self) -> RecordType {
-        self.query().query_type()
-    }
-
-    /// Returns the DNS class of the query.
-    pub fn query_class(&self) -> DNSClass {
-        self.query().query_class()
-    }
-
-    /// Returns a reference to the original query.
-    pub fn query(&self) -> &Query {
-        match &self.lookup {
-            Ok(lookup) => lookup.query(),
-            Err(nxdomain) => nxdomain.query(),
-        }
-    }
-
-    /// Converts this cached query into a DNS response.
-    ///
-    /// # Returns
-    ///
-    /// A `DnsResponse` suitable for sending to DNS clients.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `ProtoError` if the response cannot be constructed.
-    pub fn into_response(self) -> Result<DnsResponse, ProtoError> {
-        match self.lookup {
-            Ok(lookup) => DnsResponse::from_message(lookup.into()),
-            Err(nxdomain) => DnsResponse::from_message(nxdomain.into()),
-        }
-    }
-}
-
-impl TryFrom<DnsResponse> for CachedQuery {
-    type Error = ProtoError;
-
-    fn try_from(response: DnsResponse) -> Result<Self, Self::Error> {
-        match response.response_code() {
-            ResponseCode::NoError => Ok(CachedQuery {
-                lookup: Ok(response.try_into()?),
-            }),
-            ResponseCode::NXDomain => Ok(CachedQuery {
-                lookup: Err(response.try_into()?),
-            }),
-            _ => Err(ProtoError::from_response(response, false).unwrap_err()),
-        }
     }
 }
 
@@ -820,86 +497,6 @@ mod tests {
     }
 
     #[test]
-    fn test_lookup_construction() {
-        let query = Query::query(Name::from_str("example.com.").unwrap(), RecordType::A);
-        let record = Record::from_rdata(
-            Name::from_str("example.com.").unwrap(),
-            300,
-            RData::A(A::new(192, 168, 1, 1)),
-        );
-        let valid_until = CacheTimestamp::now();
-        let id = QueryID::new();
-
-        let lookup = Lookup::new(id, query.clone(), vec![record.into()], valid_until);
-
-        assert_eq!(lookup.id(), id);
-        assert_eq!(lookup.query(), &query);
-        assert_eq!(lookup.valid_until(), valid_until);
-        assert_eq!(lookup.records().len(), 1);
-    }
-
-    #[test]
-    fn test_lookup_ttl_calculation() {
-        let now = Utc::now();
-        let future = now + chrono::Duration::seconds(300);
-        let lookup = Lookup::new(
-            QueryID::new(),
-            Query::query(Name::from_str("example.com.").unwrap(), RecordType::A),
-            vec![],
-            CacheTimestamp::from(future),
-        );
-
-        let ttl = lookup.ttl(now);
-        assert_eq!(ttl, TimeToLive::from_secs(300));
-    }
-
-    #[test]
-    fn test_cached_query_construction() {
-        let lookup = Lookup::new(
-            QueryID::new(),
-            Query::query(Name::from_str("example.com.").unwrap(), RecordType::A),
-            vec![],
-            CacheTimestamp::now(),
-        );
-        let cached = CachedQuery::new(Ok(lookup.clone()));
-
-        assert_eq!(cached.id(), lookup.id());
-        assert_eq!(cached.query(), lookup.query());
-        assert_eq!(cached.name(), lookup.query().name());
-        assert_eq!(cached.query_type(), RecordType::A);
-    }
-
-    #[test]
-    fn test_nxdomain_construction() {
-        let query = Query::query(Name::from_str("nonexistent.com.").unwrap(), RecordType::A);
-        let soa_record = Record::from_rdata(
-            Name::from_str("nonexistent.com.").unwrap(),
-            3600,
-            RData::SOA(hickory_proto::rr::rdata::SOA::new(
-                Name::from_str("ns1.nonexistent.com.").unwrap(),
-                Name::from_str("admin.nonexistent.com.").unwrap(),
-                1,
-                3600,
-                1800,
-                604800,
-                86400,
-            )),
-        );
-
-        let nxdomain = NxDomain::new(
-            QueryID::new(),
-            query,
-            vec![soa_record.into()],
-            ResponseCode::NXDomain,
-            CacheTimestamp::now(),
-        );
-
-        assert_eq!(nxdomain.response_code(), ResponseCode::NXDomain);
-        assert!(nxdomain.soa().is_some());
-        assert_eq!(nxdomain.negative_ttl(), Some(TimeToLive::from_secs(3600)));
-    }
-
-    #[test]
     fn test_cache_timestamp_is_expired() {
         let now = Utc::now();
         let past = CacheTimestamp::from(now - chrono::Duration::seconds(300));
@@ -915,5 +512,105 @@ mod tests {
         let now = Utc::now();
         let timestamp = CacheTimestamp::from(now);
         assert_eq!(timestamp.as_utc(), now);
+    }
+
+    #[test]
+    fn test_successful_lookup_construction() {
+        let query = Query::query(Name::from_str("example.com.").unwrap(), RecordType::A);
+        let record = Record::from_rdata(
+            Name::from_str("example.com.").unwrap(),
+            300,
+            RData::A(A::new(192, 168, 1, 1)),
+        );
+        let valid_until = CacheTimestamp::now();
+        let id = QueryID::new();
+
+        let lookup = Lookup::new(
+            id,
+            query.clone(),
+            vec![record.into()],
+            ResponseCode::NoError,
+            valid_until,
+        );
+
+        assert_eq!(lookup.id(), id);
+        assert_eq!(lookup.query(), &query);
+        assert_eq!(lookup.response_code(), ResponseCode::NoError);
+        assert_eq!(lookup.valid_until(), valid_until);
+        assert_eq!(lookup.records().len(), 1);
+        assert!(lookup.is_success());
+        assert!(!lookup.is_nxdomain());
+        assert!(!lookup.is_negative());
+        assert_eq!(lookup.answer_records().count(), 1);
+    }
+
+    #[test]
+    fn test_nxdomain_lookup_construction() {
+        let query = Query::query(Name::from_str("nonexistent.com.").unwrap(), RecordType::A);
+        let soa_record = Record::from_rdata(
+            Name::from_str("nonexistent.com.").unwrap(),
+            3600,
+            RData::SOA(hickory_proto::rr::rdata::SOA::new(
+                Name::from_str("ns1.nonexistent.com.").unwrap(),
+                Name::from_str("admin.nonexistent.com.").unwrap(),
+                1,
+                3600,
+                1800,
+                604800,
+                86400,
+            )),
+        );
+
+        let lookup = Lookup::new(
+            QueryID::new(),
+            query,
+            vec![soa_record.into()],
+            ResponseCode::NXDomain,
+            CacheTimestamp::now(),
+        );
+
+        assert_eq!(lookup.response_code(), ResponseCode::NXDomain);
+        assert!(lookup.is_nxdomain());
+        assert!(lookup.is_negative());
+        assert!(!lookup.is_success());
+        assert!(lookup.soa().is_some());
+        assert_eq!(lookup.negative_ttl(), Some(TimeToLive::from_secs(3600)));
+        assert_eq!(lookup.answer_records().count(), 0);
+    }
+
+    #[test]
+    fn test_lookup_ttl_calculation() {
+        let now = Utc::now();
+        let future = now + chrono::Duration::seconds(300);
+        let lookup = Lookup::new(
+            QueryID::new(),
+            Query::query(Name::from_str("example.com.").unwrap(), RecordType::A),
+            vec![],
+            ResponseCode::NoError,
+            CacheTimestamp::from(future),
+        );
+
+        let ttl = lookup.ttl(now);
+        assert_eq!(ttl, TimeToLive::from_secs(300));
+    }
+
+    #[test]
+    fn test_entry_meta_into_lookup() {
+        let query = Query::query(Name::from_str("example.com.").unwrap(), RecordType::A);
+        let expires = CacheTimestamp::now();
+        let id = QueryID::new();
+
+        let meta = EntryMeta {
+            id,
+            query: query.clone(),
+            response_code: ResponseCode::NoError,
+            expires,
+        };
+
+        let lookup = meta.into_lookup(vec![]);
+        assert_eq!(lookup.id(), id);
+        assert_eq!(lookup.query(), &query);
+        assert_eq!(lookup.response_code(), ResponseCode::NoError);
+        assert_eq!(lookup.valid_until(), expires);
     }
 }
