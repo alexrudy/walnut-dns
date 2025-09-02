@@ -14,10 +14,10 @@ use hickory_server::server::Request;
 use tokio_util::udp::UdpFramed;
 use tracing::trace;
 
-use crate::codec::{CodecError, DNSCodec, DNSCodecRecovery, DNSRequest};
+use crate::codec::{CodecError, DnsCodec, DnsCodecRecovery, DnsRequest};
 use crate::error::HickoryError;
 
-use super::connection::DNSConnection;
+use super::connection::DnsConnection;
 
 #[derive(Debug, Clone, Default)]
 pub struct DnsOverUdp {
@@ -39,31 +39,31 @@ where
 
     type Error = HickoryError;
 
-    type Connection = DNSConnection<S, DNSFramedUdp>;
+    type Connection = DnsConnection<S, DnsFramedUdp>;
 
     fn serve_connection(&self, stream: UdpSocket, service: S) -> Self::Connection {
         let codec = UdpFramed::new(
             stream,
-            DNSCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp).with_recovery(),
+            DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp).with_recovery(),
         );
-        DNSConnection::new(service, DNSFramedUdp::new(codec))
+        DnsConnection::new(service, DnsFramedUdp::new(codec))
     }
 }
 
 #[derive(Debug)]
 #[pin_project::pin_project]
-pub struct DNSFramedUdp {
+pub struct DnsFramedUdp {
     #[pin]
-    framed: UdpFramed<DNSCodecRecovery<Message, MessageRequest>, UdpSocket>,
+    framed: UdpFramed<DnsCodecRecovery<Message, MessageRequest>, UdpSocket>,
 }
 
-impl DNSFramedUdp {
-    pub fn new(framed: UdpFramed<DNSCodecRecovery<Message, MessageRequest>, UdpSocket>) -> Self {
+impl DnsFramedUdp {
+    pub fn new(framed: UdpFramed<DnsCodecRecovery<Message, MessageRequest>, UdpSocket>) -> Self {
         Self { framed }
     }
 }
 
-impl Sink<(Message, SocketAddr)> for DNSFramedUdp {
+impl Sink<(Message, SocketAddr)> for DnsFramedUdp {
     type Error = CodecError;
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -83,8 +83,8 @@ impl Sink<(Message, SocketAddr)> for DNSFramedUdp {
     }
 }
 
-impl Stream for DNSFramedUdp {
-    type Item = Result<DNSRequest, CodecError>;
+impl Stream for DnsFramedUdp {
+    type Item = Result<DnsRequest, CodecError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.project().framed.poll_next(cx).map(|r| {

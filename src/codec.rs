@@ -16,22 +16,22 @@ use tracing::{debug, error, trace};
 use crate::server::response::encode_fallback_servfail_response;
 
 /// The wire codec for standard DNS messages defined in RFC 1035.
-pub struct DNSCodec<Req, Res> {
+pub struct DnsCodec<Req, Res> {
     length_delimited: bool,
     max_response_size: Option<u16>,
     message: PhantomData<fn(Req) -> Res>,
 }
 
-impl<Req, Res> fmt::Debug for DNSCodec<Req, Res> {
+impl<Req, Res> fmt::Debug for DnsCodec<Req, Res> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DNSCodec")
+        f.debug_struct("DnsCodec")
             .field("length_delimited", &self.length_delimited)
             .field("max_response_size", &self.max_response_size)
             .finish()
     }
 }
 
-impl<Req, Res> Clone for DNSCodec<Req, Res> {
+impl<Req, Res> Clone for DnsCodec<Req, Res> {
     fn clone(&self) -> Self {
         Self {
             length_delimited: self.length_delimited,
@@ -41,7 +41,7 @@ impl<Req, Res> Clone for DNSCodec<Req, Res> {
     }
 }
 
-impl<Req, Res> DNSCodec<Req, Res> {
+impl<Req, Res> DnsCodec<Req, Res> {
     pub fn new_for_protocol(protocol: Protocol) -> Self {
         let (length_delimited, max_response_size) = match protocol {
             Protocol::Tcp => (true, Some(u16::MAX)),
@@ -66,8 +66,8 @@ impl<Req, Res> DNSCodec<Req, Res> {
         }
     }
 
-    pub fn with_recovery(self) -> DNSCodecRecovery<Req, Res> {
-        DNSCodecRecovery::new(self)
+    pub fn with_recovery(self) -> DnsCodecRecovery<Req, Res> {
+        DnsCodecRecovery::new(self)
     }
 
     fn parse_length(&mut self, src: &mut bytes::BytesMut) -> Option<usize> {
@@ -117,12 +117,12 @@ pub enum MessageDecoded<M> {
 }
 
 impl MessageDecoded<MessageRequest> {
-    pub fn with_address(self, addr: SocketAddr, protocol: Protocol) -> DNSRequest {
+    pub fn with_address(self, addr: SocketAddr, protocol: Protocol) -> DnsRequest {
         match self {
             MessageDecoded::Message(message_request) => {
-                DNSRequest::Message(Request::new(message_request, addr, protocol))
+                DnsRequest::Message(Request::new(message_request, addr, protocol))
             }
-            MessageDecoded::Failed(header, response_code) => DNSRequest::Failed((
+            MessageDecoded::Failed(header, response_code) => DnsRequest::Failed((
                 Message::error_msg(header.id(), header.op_code(), response_code),
                 addr,
             )),
@@ -148,12 +148,12 @@ where
 /// attached. This must be done after the codec, since the codec is agnostic
 /// to the underlying protocol.
 #[derive(Debug)]
-pub enum DNSRequest {
+pub enum DnsRequest {
     Message(Request),
     Failed((Message, SocketAddr)),
 }
 
-impl<Req, Res> Decoder for DNSCodec<Req, Res>
+impl<Req, Res> Decoder for DnsCodec<Req, Res>
 where
     Res: for<'a> BinDecodable<'a>,
 {
@@ -185,12 +185,12 @@ where
     }
 }
 
-pub trait DNSMessage {
+pub trait DnsMessage {
     fn header(&self) -> &Header;
     fn extensions(&self) -> Option<&Edns>;
 }
 
-impl DNSMessage for Message {
+impl DnsMessage for Message {
     fn header(&self) -> &Header {
         self.header()
     }
@@ -200,9 +200,9 @@ impl DNSMessage for Message {
     }
 }
 
-impl<T, A> DNSMessage for (T, A)
+impl<T, A> DnsMessage for (T, A)
 where
-    T: DNSMessage,
+    T: DnsMessage,
 {
     fn header(&self) -> &Header {
         self.0.header()
@@ -213,9 +213,9 @@ where
     }
 }
 
-impl<Req, Res> Encoder<Req> for DNSCodec<Req, Res>
+impl<Req, Res> Encoder<Req> for DnsCodec<Req, Res>
 where
-    Req: DNSMessage + BinEncodable,
+    Req: DnsMessage + BinEncodable,
 {
     type Error = CodecError;
 
@@ -275,25 +275,25 @@ where
     }
 }
 
-pub struct DNSCodecRecovery<Req, Res> {
-    codec: DNSCodec<Req, Res>,
+pub struct DnsCodecRecovery<Req, Res> {
+    codec: DnsCodec<Req, Res>,
 }
 
-impl<Req, Res> DNSCodecRecovery<Req, Res> {
-    pub fn new(codec: DNSCodec<Req, Res>) -> Self {
+impl<Req, Res> DnsCodecRecovery<Req, Res> {
+    pub fn new(codec: DnsCodec<Req, Res>) -> Self {
         Self { codec }
     }
 }
 
-impl<Req, Res> fmt::Debug for DNSCodecRecovery<Req, Res> {
+impl<Req, Res> fmt::Debug for DnsCodecRecovery<Req, Res> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DNSCodecRecovery")
+        f.debug_struct("DnsCodecRecovery")
             .field("codec", &self.codec)
             .finish()
     }
 }
 
-impl<Req, Res> Clone for DNSCodecRecovery<Req, Res> {
+impl<Req, Res> Clone for DnsCodecRecovery<Req, Res> {
     fn clone(&self) -> Self {
         Self {
             codec: self.codec.clone(),
@@ -301,7 +301,7 @@ impl<Req, Res> Clone for DNSCodecRecovery<Req, Res> {
     }
 }
 
-impl<Req, Res> Decoder for DNSCodecRecovery<Req, Res>
+impl<Req, Res> Decoder for DnsCodecRecovery<Req, Res>
 where
     Res: for<'a> BinDecodable<'a>,
 {
@@ -332,9 +332,9 @@ where
     }
 }
 
-impl<Req, Res> Encoder<Req> for DNSCodecRecovery<Req, Res>
+impl<Req, Res> Encoder<Req> for DnsCodecRecovery<Req, Res>
 where
-    Req: DNSMessage + BinEncodable,
+    Req: DnsMessage + BinEncodable,
 {
     type Error = CodecError;
 

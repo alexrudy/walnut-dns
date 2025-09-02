@@ -9,7 +9,7 @@ use camino::Utf8PathBuf;
 use monarch_db::{MonarchDB, StaticMonarchConfiguration};
 use serde::Deserialize;
 
-pub use self::dnssec::{DNSKey, DNSSecStore};
+pub use self::dnssec::{DnsKey, DnsSecStore};
 use self::journal::SqliteJournal;
 use self::record::RecordPersistence;
 use self::zone::ZonePersistence;

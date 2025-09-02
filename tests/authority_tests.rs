@@ -15,10 +15,10 @@ use hickory_server::server::RequestInfo;
 use walnut_dns::Lookup as _;
 use walnut_dns::SqliteStore;
 use walnut_dns::ZoneInfo as _;
-use walnut_dns::authority::DNSSecZone;
+use walnut_dns::authority::DnsSecZone;
 use walnut_dns::authority::ZoneAuthority;
 use walnut_dns::catalog::CatalogStore;
-use walnut_dns::database::DNSSecStore;
+use walnut_dns::database::DnsSecStore;
 
 mod support;
 use support::examples::{create_example, create_secure_example};
@@ -208,7 +208,7 @@ async fn test_authorize() {
 
     subscribe();
 
-    let authority = DNSSecZone::new(create_example());
+    let authority = DnsSecZone::new(create_example());
 
     let mut message = Message::new();
     message
@@ -236,7 +236,7 @@ async fn test_prerequisites() {
     let not_zone = Name::from_str("not.a.domain.com.").unwrap();
     let not_in_zone = Name::from_str("not.example.com.").unwrap();
 
-    let mut authority = DNSSecZone::new(create_example());
+    let mut authority = DnsSecZone::new(create_example());
     authority.set_allow_update(true);
 
     // first check the initial negatives, ttl = 0, and the zone is the same
@@ -410,7 +410,7 @@ async fn test_pre_scan() {
     let up_name = Name::from_str("www.example.com.").unwrap();
     let not_zone = Name::from_str("not.zone.com.").unwrap();
 
-    let authority = DNSSecZone::new(create_example());
+    let authority = DnsSecZone::new(create_example());
 
     assert_eq!(
         authority
@@ -589,7 +589,7 @@ async fn test_update() {
     subscribe();
     let new_name = Name::from_str("new.example.com.").unwrap();
     let www_name = Name::from_str("www.example.com.").unwrap();
-    let mut authority = DNSSecZone::new(create_example());
+    let mut authority = DnsSecZone::new(create_example());
     let serial = authority.serial();
 
     authority.set_allow_update(true);
@@ -938,13 +938,13 @@ async fn test_get_nsec() {
 async fn test_journal() {
     subscribe();
     // test that this message can be inserted
-    let catalog = DNSSecStore::new(
+    let catalog = DnsSecStore::new(
         SqliteStore::new_in_memory()
             .await
             .expect("could not create in memory DB"),
     );
 
-    let mut authority = DNSSecZone::new(create_example());
+    let mut authority = DnsSecZone::new(create_example());
     authority.set_journal(catalog.journal());
     authority.persist_to_journal().await.unwrap();
 
@@ -1015,13 +1015,13 @@ async fn test_journal() {
 async fn test_recovery() {
     subscribe();
     // test that this message can be inserted
-    let catalog = DNSSecStore::new(
+    let catalog = DnsSecStore::new(
         SqliteStore::new_in_memory()
             .await
             .expect("could not create in memory DB"),
     );
 
-    let mut authority = DNSSecZone::new(create_example());
+    let mut authority = DnsSecZone::new(create_example());
     authority.set_journal(catalog.journal());
     authority.persist_to_journal().await.unwrap();
 

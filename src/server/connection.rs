@@ -18,19 +18,19 @@ use tokio_util::codec::Framed;
 use tracing::instrument::Instrumented;
 use tracing::{Instrument, debug, debug_span, trace, trace_span, warn};
 
-use crate::codec::{CodecError, DNSCodec, DNSCodecRecovery, DNSRequest};
+use crate::codec::{CodecError, DnsCodec, DnsCodecRecovery, DnsRequest};
 use crate::error::HickoryError;
 
 #[pin_project::pin_project]
-pub struct DNSFramedStream<IO> {
+pub struct DnsFramedStream<IO> {
     addr: SocketAddr,
 
     #[pin]
-    codec: Framed<IO, DNSCodecRecovery<Message, MessageRequest>>,
+    codec: Framed<IO, DnsCodecRecovery<Message, MessageRequest>>,
     protocol: hickory_proto::xfer::Protocol,
 }
 
-impl<IO> DNSFramedStream<IO>
+impl<IO> DnsFramedStream<IO>
 where
     IO: AsyncRead + AsyncWrite + HasConnectionInfo,
     IO::Addr: Into<SocketAddr> + Clone,
@@ -41,14 +41,14 @@ where
             addr: remote,
             codec: Framed::new(
                 stream,
-                DNSCodecRecovery::new(DNSCodec::new_for_protocol(protocol)),
+                DnsCodecRecovery::new(DnsCodec::new_for_protocol(protocol)),
             ),
             protocol,
         }
     }
 }
 
-impl<IO> Sink<(Message, SocketAddr)> for DNSFramedStream<IO>
+impl<IO> Sink<(Message, SocketAddr)> for DnsFramedStream<IO>
 where
     IO: AsyncRead + AsyncWrite,
 {
@@ -79,11 +79,11 @@ where
     }
 }
 
-impl<IO> Stream for DNSFramedStream<IO>
+impl<IO> Stream for DnsFramedStream<IO>
 where
     IO: AsyncRead + AsyncWrite,
 {
-    type Item = Result<DNSRequest, CodecError>;
+    type Item = Result<DnsRequest, CodecError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
@@ -146,7 +146,7 @@ where
 }
 
 #[pin_project::pin_project]
-pub struct DNSConnection<S, F>
+pub struct DnsConnection<S, F>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
 {
@@ -160,7 +160,7 @@ where
     cancelled: bool,
 }
 
-impl<S, F> DNSConnection<S, F>
+impl<S, F> DnsConnection<S, F>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
 {
@@ -175,18 +175,18 @@ where
     }
 }
 
-impl<S, IO> DNSConnection<S, DNSFramedStream<IO>>
+impl<S, IO> DnsConnection<S, DnsFramedStream<IO>>
 where
     IO: AsyncRead + AsyncWrite + HasConnectionInfo,
     IO::Addr: Into<SocketAddr> + Clone,
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
 {
     pub fn streamed(service: S, stream: IO, protocol: Protocol) -> Self {
-        Self::new(service, DNSFramedStream::new(stream, protocol))
+        Self::new(service, DnsFramedStream::new(stream, protocol))
     }
 }
 
-impl<S, F> fmt::Debug for DNSConnection<S, F>
+impl<S, F> fmt::Debug for DnsConnection<S, F>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
 {
@@ -200,10 +200,10 @@ enum ReadAction {
     Terminated,
 }
 
-impl<S, F> DNSConnection<S, F>
+impl<S, F> DnsConnection<S, F>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
-    F: Stream<Item = Result<DNSRequest, CodecError>>,
+    F: Stream<Item = Result<DnsRequest, CodecError>>,
 {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -220,7 +220,7 @@ where
 
         loop {
             match ready!(this.codec.as_mut().try_poll_next(cx)) {
-                Some(Ok(DNSRequest::Message(message))) => {
+                Some(Ok(DnsRequest::Message(message))) => {
                     trace!("Recieved message");
 
                     let id = message.id();
@@ -243,7 +243,7 @@ where
                     *this.service = ServiceState::Pending(Some(svc));
                     return Ok(ReadAction::Spawned).into();
                 }
-                Some(Ok(DNSRequest::Failed((reply, addr)))) => {
+                Some(Ok(DnsRequest::Failed((reply, addr)))) => {
                     let id = reply.id();
                     this.tasks.push(
                         AddressedFuture::done(reply, addr)
@@ -273,7 +273,7 @@ where
     }
 }
 
-impl<S, F> DNSConnection<S, F>
+impl<S, F> DnsConnection<S, F>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
 {
@@ -296,7 +296,7 @@ where
     }
 }
 
-impl<S, F> DNSConnection<S, F>
+impl<S, F> DnsConnection<S, F>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
     F: Sink<(Message, SocketAddr), Error = CodecError>,
@@ -338,10 +338,10 @@ where
     }
 }
 
-impl<S, F> Future for DNSConnection<S, F>
+impl<S, F> Future for DnsConnection<S, F>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
-    F: Stream<Item = Result<DNSRequest, CodecError>>
+    F: Stream<Item = Result<DnsRequest, CodecError>>
         + Sink<(Message, SocketAddr), Error = CodecError>,
 {
     type Output = Result<(), HickoryError>;
@@ -400,7 +400,7 @@ where
     }
 }
 
-impl<S, F> Connection for DNSConnection<S, F>
+impl<S, F> Connection for DnsConnection<S, F>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
 {

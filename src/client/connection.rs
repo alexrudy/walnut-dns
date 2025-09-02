@@ -18,7 +18,7 @@ use chateau::client::conn::Transport;
 use tokio::sync::{oneshot, watch};
 use tracing::Instrument as _;
 
-use super::DNSClientError;
+use super::DnsClientError;
 use super::codec::TaggedMessage;
 use super::nameserver::ConnectionStatus;
 use super::nameserver::NameserverConnection;
@@ -81,7 +81,7 @@ impl<C> InnerConnector<C> {
     }
 }
 
-pub struct DNSConnector<A, T, P>
+pub struct DnsConnector<A, T, P>
 where
     T: Transport<A>,
     P: Protocol<T::IO, TaggedMessage>,
@@ -92,14 +92,14 @@ where
     connection: Arc<Mutex<InnerConnector<<P as Protocol<T::IO, TaggedMessage>>::Connection>>>,
 }
 
-impl<A, T, P> fmt::Debug for DNSConnector<A, T, P>
+impl<A, T, P> fmt::Debug for DnsConnector<A, T, P>
 where
     A: fmt::Debug,
     T: Transport<A> + fmt::Debug,
     P: Protocol<T::IO, TaggedMessage> + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DNSConnector")
+        f.debug_struct("DnsConnector")
             .field("address", &self.address)
             .field("transport", &self.transport)
             .field("protocol", &self.protocol)
@@ -108,7 +108,7 @@ where
     }
 }
 
-impl<A, T, P> Clone for DNSConnector<A, T, P>
+impl<A, T, P> Clone for DnsConnector<A, T, P>
 where
     A: Clone,
     T: Transport<A> + Clone,
@@ -124,7 +124,7 @@ where
     }
 }
 
-impl<A, T, P> DNSConnector<A, T, P>
+impl<A, T, P> DnsConnector<A, T, P>
 where
     A: Clone,
     T: Transport<A>,
@@ -259,7 +259,7 @@ where
     P: Protocol<T::IO, TaggedMessage>,
     <P as Protocol<T::IO, TaggedMessage>>::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    type Output = Result<DNSConnection<P::Connection>, DNSClientError>;
+    type Output = Result<DnsConnection<P::Connection>, DnsClientError>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -270,14 +270,14 @@ where
             match this.state.as_mut().project() {
                 StateProjection::Waiting { channel } => match ready!(channel.poll(cx)) {
                     Ok(connection) => {
-                        return Poll::Ready(Ok(DNSConnection::new(connection, this.inner.clone())));
+                        return Poll::Ready(Ok(DnsConnection::new(connection, this.inner.clone())));
                     }
                     Err(_) => {
-                        return Poll::Ready(Err(DNSClientError::Closed));
+                        return Poll::Ready(Err(DnsClientError::Closed));
                     }
                 },
                 StateProjection::Connection { connection } => {
-                    return Poll::Ready(Ok(DNSConnection::new(
+                    return Poll::Ready(Ok(DnsConnection::new(
                         connection.take().expect("connection stolen"),
                         this.inner.clone(),
                     )));
@@ -293,12 +293,12 @@ where
                                 manager.close();
                             }
                         }
-                        return Poll::Ready(Err(DNSClientError::Transport(error.into())));
+                        return Poll::Ready(Err(DnsClientError::Transport(error.into())));
                     }
                 },
                 StateProjection::Protocol { future } => match ready!(future.poll(cx)) {
                     Ok(connection) => {
-                        return Poll::Ready(Ok(DNSConnection::new(connection, this.inner.clone())));
+                        return Poll::Ready(Ok(DnsConnection::new(connection, this.inner.clone())));
                     }
                     Err(error) => {
                         if let Some(inner) = this.inner.upgrade() {
@@ -306,7 +306,7 @@ where
                                 manager.close();
                             }
                         }
-                        return Poll::Ready(Err(DNSClientError::Protocol(error.into())));
+                        return Poll::Ready(Err(DnsClientError::Protocol(error.into())));
                     }
                 },
             }
@@ -315,21 +315,21 @@ where
 }
 
 #[derive(Debug, Clone)]
-pub struct DNSConnection<C> {
+pub struct DnsConnection<C> {
     connection: Option<C>,
     inner: Weak<Mutex<InnerConnector<C>>>,
 }
 
-impl<C> DNSConnection<C> {
+impl<C> DnsConnection<C> {
     fn new(connection: C, inner: Weak<Mutex<InnerConnector<C>>>) -> Self {
-        DNSConnection {
+        DnsConnection {
             connection: Some(connection),
             inner,
         }
     }
 }
 
-impl<C> Deref for DNSConnection<C> {
+impl<C> Deref for DnsConnection<C> {
     type Target = C;
 
     fn deref(&self) -> &Self::Target {
@@ -337,13 +337,13 @@ impl<C> Deref for DNSConnection<C> {
     }
 }
 
-impl<C> DerefMut for DNSConnection<C> {
+impl<C> DerefMut for DnsConnection<C> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.connection.as_mut().unwrap()
     }
 }
 
-impl<C> Drop for DNSConnection<C> {
+impl<C> Drop for DnsConnection<C> {
     fn drop(&mut self) {
         if let Some(inner) = self.inner.upgrade() {
             if let Ok(mut conn) = inner.try_lock() {
@@ -356,25 +356,25 @@ impl<C> Drop for DNSConnection<C> {
 }
 
 #[derive(Debug, Clone)]
-pub struct DNSConnectorService<A, T, P>
+pub struct DnsConnectorService<A, T, P>
 where
     A: Clone,
     T: Transport<A>,
     P: Protocol<T::IO, TaggedMessage> + Clone,
 {
-    connector: DNSConnector<A, T, P>,
+    connector: DnsConnector<A, T, P>,
     tx: watch::Sender<ConnectionStatus>,
     rx: watch::Receiver<ConnectionStatus>,
     protocol: hickory_proto::xfer::Protocol,
 }
 
-impl<A, T, P> DNSConnectorService<A, T, P>
+impl<A, T, P> DnsConnectorService<A, T, P>
 where
     A: Clone,
     T: Transport<A>,
     P: Protocol<T::IO, TaggedMessage> + Clone,
 {
-    pub fn new(connector: DNSConnector<A, T, P>, protocol: hickory_proto::xfer::Protocol) -> Self {
+    pub fn new(connector: DnsConnector<A, T, P>, protocol: hickory_proto::xfer::Protocol) -> Self {
         let (tx, rx) = watch::channel(ConnectionStatus::NotConnected);
         Self {
             connector,
@@ -385,7 +385,7 @@ where
     }
 }
 
-impl<A, T, P> tower::Service<TaggedMessage> for DNSConnectorService<A, T, P>
+impl<A, T, P> tower::Service<TaggedMessage> for DnsConnectorService<A, T, P>
 where
     A: fmt::Debug + Clone + 'static,
     T: Transport<A> + 'static,
@@ -394,14 +394,14 @@ where
 {
     type Response = TaggedMessage;
 
-    type Error = DNSClientError;
+    type Error = DnsClientError;
 
-    type Future = DNSConnectorServiceFuture;
+    type Future = DnsConnectorServiceFuture;
 
     fn poll_ready(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.connector
             .poll_ready(cx)
-            .map_err(|error| DNSClientError::Protocol(error.into()))
+            .map_err(|error| DnsClientError::Protocol(error.into()))
     }
 
     fn call(&mut self, req: TaggedMessage) -> Self::Future {
@@ -409,7 +409,7 @@ where
         let connecting = self.connector.connect();
         let status = self.tx.clone();
 
-        DNSConnectorServiceFuture(Box::pin(
+        DnsConnectorServiceFuture(Box::pin(
             async move {
                 let mut conn = match connecting.await {
                     Ok(conn) => {
@@ -423,14 +423,14 @@ where
                 };
                 conn.send_request(req)
                     .await
-                    .map_err(|error| DNSClientError::Protocol(error.into()))
+                    .map_err(|error| DnsClientError::Protocol(error.into()))
             }
             .instrument(span),
         ))
     }
 }
 
-impl<A, T, P> NameserverConnection for DNSConnectorService<A, T, P>
+impl<A, T, P> NameserverConnection for DnsConnectorService<A, T, P>
 where
     A: fmt::Debug + Clone + 'static,
     T: Transport<A> + 'static,
@@ -446,12 +446,12 @@ where
     }
 }
 
-pub struct DNSConnectorServiceFuture(
-    Pin<Box<dyn Future<Output = Result<TaggedMessage, DNSClientError>> + Send>>,
+pub struct DnsConnectorServiceFuture(
+    Pin<Box<dyn Future<Output = Result<TaggedMessage, DnsClientError>> + Send>>,
 );
 
-impl Future for DNSConnectorServiceFuture {
-    type Output = Result<TaggedMessage, DNSClientError>;
+impl Future for DnsConnectorServiceFuture {
+    type Output = Result<TaggedMessage, DnsClientError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         self.0.as_mut().poll(cx)

@@ -7,9 +7,9 @@ use tracing::warn;
 
 use crate::Lookup;
 
-use super::DNSSecZone;
+use super::DnsSecZone;
 
-impl<Z> DNSSecZone<Z>
+impl<Z> DnsSecZone<Z>
 where
     Z: Lookup,
 {

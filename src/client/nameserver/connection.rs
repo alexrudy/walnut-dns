@@ -3,7 +3,7 @@ use std::{fmt, ops::Deref};
 use futures::future::BoxFuture;
 use hickory_proto::xfer::Protocol;
 
-use crate::client::{DNSClientError, codec::TaggedMessage};
+use crate::client::{DnsClientError, codec::TaggedMessage};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ConnectionStatus {
@@ -39,9 +39,9 @@ where
 {
     type Response = S::Response;
 
-    type Error = DNSClientError;
+    type Error = DnsClientError;
 
-    type Future = BoxFuture<'static, Result<S::Response, DNSClientError>>;
+    type Future = BoxFuture<'static, Result<S::Response, DnsClientError>>;
 
     fn poll_ready(
         &mut self,
@@ -49,14 +49,14 @@ where
     ) -> std::task::Poll<Result<(), Self::Error>> {
         self.0
             .poll_ready(cx)
-            .map_err(|error| DNSClientError::Service(error.into()))
+            .map_err(|error| DnsClientError::Service(error.into()))
     }
 
     fn call(&mut self, req: Req) -> Self::Future {
         let fut = self.0.call(req);
         Box::pin(async move {
             fut.await
-                .map_err(|error| DNSClientError::Service(error.into()))
+                .map_err(|error| DnsClientError::Service(error.into()))
         })
     }
 }
@@ -86,8 +86,8 @@ pub struct SharedNameserverService(
     Box<
         dyn CloneService<
                 Response = TaggedMessage,
-                Error = DNSClientError,
-                Future = BoxFuture<'static, Result<TaggedMessage, DNSClientError>>,
+                Error = DnsClientError,
+                Future = BoxFuture<'static, Result<TaggedMessage, DnsClientError>>,
             > + Send
             + Sync
             + 'static,
@@ -129,9 +129,9 @@ impl SharedNameserverService {
 impl tower::Service<TaggedMessage> for SharedNameserverService {
     type Response = TaggedMessage;
 
-    type Error = DNSClientError;
+    type Error = DnsClientError;
 
-    type Future = BoxFuture<'static, Result<TaggedMessage, DNSClientError>>;
+    type Future = BoxFuture<'static, Result<TaggedMessage, DnsClientError>>;
 
     fn poll_ready(
         &mut self,

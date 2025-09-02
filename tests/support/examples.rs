@@ -4,7 +4,7 @@ use hickory_proto::rr::RData;
 use hickory_server::dnssec::NxProofKind;
 use walnut_dns::{
     Lookup as _,
-    authority::DNSSecZone,
+    authority::DnsSecZone,
     rr::{Name, Zone, ZoneType},
 };
 
@@ -180,7 +180,7 @@ pub fn create_example() -> Zone {
     zone
 }
 
-pub fn create_secure_example() -> DNSSecZone<Zone> {
+pub fn create_secure_example() -> DnsSecZone<Zone> {
     use hickory_proto::dnssec::{
         Algorithm, PublicKey, SigSigner, SigningKey, crypto::RsaSigningKey, rdata::DNSKEY,
     };
@@ -188,7 +188,7 @@ pub fn create_secure_example() -> DNSSecZone<Zone> {
     use rustls_pki_types::PrivatePkcs8KeyDer;
     use std::time::Duration;
 
-    let mut authority = DNSSecZone::new(create_example());
+    let mut authority = DnsSecZone::new(create_example());
     authority.set_nx_proof_kind(Some(NxProofKind::Nsec));
 
     const KEY: &[u8] = include_bytes!("../data/rsa-2048.pk8");

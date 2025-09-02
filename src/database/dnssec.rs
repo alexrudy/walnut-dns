@@ -8,7 +8,7 @@ use hickory_proto::rr::{LowerName, Name};
 use rustls_pki_types::PrivateKeyDer;
 use zeroize::Zeroizing;
 
-use crate::authority::{DNSSecZone, DnsSecZoneError};
+use crate::authority::{DnsSecZone, DnsSecZoneError};
 use crate::catalog::{CatalogError, CatalogStore};
 use crate::database::journal::SqliteJournal;
 use crate::rr::{TimeToLive, Zone};
@@ -20,13 +20,13 @@ use crate::{SqliteStore, ZoneInfo as _};
 /// DNSSEC signers for zone signing operations. It securely stores private key
 /// data using zeroization to prevent key material from remaining in memory.
 #[derive(Clone)]
-pub struct DNSKey {
+pub struct DnsKey {
     key_data: Zeroizing<Box<[u8]>>,
     algorithm: Algorithm,
     ttl: TimeToLive,
 }
 
-impl fmt::Debug for DNSKey {
+impl fmt::Debug for DnsKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("KeyBuilder")
             .field("algorithm", &self.algorithm)
@@ -35,7 +35,7 @@ impl fmt::Debug for DNSKey {
     }
 }
 
-impl DNSKey {
+impl DnsKey {
     /// Create a new DNSSEC key
     ///
     /// Creates a new DNSSEC key from the provided key material, algorithm,
@@ -77,14 +77,14 @@ impl DNSKey {
 /// including key management and automatic zone signing. It provides the same
 /// storage interface as SqliteStore but returns DNSSEC-enabled zones.
 #[derive(Debug, Clone)]
-pub struct DNSSecStore {
+pub struct DnsSecStore {
     catalog: SqliteStore,
-    keys: Vec<Arc<DNSKey>>,
+    keys: Vec<Arc<DnsKey>>,
     allow_update: bool,
     dnssec_enabled: bool,
 }
 
-impl DNSSecStore {
+impl DnsSecStore {
     /// Create a new DNSSEC store from a regular SQLite store
     ///
     /// Wraps an existing SqliteStore to provide DNSSEC functionality.
@@ -124,7 +124,7 @@ impl DNSSecStore {
     /// Returns an error if the key is invalid or cannot be processed
     pub fn add_zone_signing_key(
         &mut self,
-        key: impl Into<Arc<DNSKey>>,
+        key: impl Into<Arc<DnsKey>>,
     ) -> Result<(), DnsSecZoneError> {
         self.keys.push(key.into());
         Ok(())
@@ -197,8 +197,8 @@ impl DNSSecStore {
         self.catalog.journal()
     }
 
-    fn map_zone(&self, zone: Zone) -> Result<DNSSecZone<Zone>, DnsSecZoneError> {
-        let mut dnsseczone = DNSSecZone::new(zone);
+    fn map_zone(&self, zone: Zone) -> Result<DnsSecZone<Zone>, DnsSecZoneError> {
+        let mut dnsseczone = DnsSecZone::new(zone);
         dnsseczone
             .set_allow_update(self.allow_update)
             .set_dnssec_enabled(self.dnssec_enabled)
@@ -211,12 +211,12 @@ impl DNSSecStore {
 }
 
 #[async_trait::async_trait]
-impl CatalogStore<DNSSecZone<Zone>> for DNSSecStore {
+impl CatalogStore<DnsSecZone<Zone>> for DnsSecStore {
     #[tracing::instrument(skip_all, fields(%origin), level = "debug")]
     async fn find(
         &self,
         origin: &LowerName,
-    ) -> Result<Option<Vec<DNSSecZone<Zone>>>, CatalogError> {
+    ) -> Result<Option<Vec<DnsSecZone<Zone>>>, CatalogError> {
         let zones = self.catalog.find(origin).await?;
         if let Some(zones) = zones {
             Ok(Some(
@@ -234,7 +234,7 @@ impl CatalogStore<DNSSecZone<Zone>> for DNSSecStore {
     async fn upsert(
         &self,
         name: LowerName,
-        zones: &[DNSSecZone<Zone>],
+        zones: &[DnsSecZone<Zone>],
     ) -> Result<(), CatalogError> {
         let mut conn = self.catalog.connection().await?;
         crate::block_in_place(|| {
@@ -260,11 +260,11 @@ impl CatalogStore<DNSSecZone<Zone>> for DNSSecStore {
     async fn remove(
         &self,
         name: &LowerName,
-    ) -> Result<Option<Vec<DNSSecZone<Zone>>>, CatalogError> {
+    ) -> Result<Option<Vec<DnsSecZone<Zone>>>, CatalogError> {
         self.catalog.remove(name).await.map(|dz| {
             dz.map(|zs| {
                 zs.into_iter()
-                    .map(|z| DNSSecZone::new(z.into_inner()))
+                    .map(|z| DnsSecZone::new(z.into_inner()))
                     .collect()
             })
         })

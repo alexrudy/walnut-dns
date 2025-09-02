@@ -7,13 +7,13 @@ use hickory_proto::{
     xfer::{DnsRequest, DnsResponse},
 };
 
-use crate::{client::DNSClientError, rr::TimeToLive};
+use crate::{client::DnsClientError, rr::TimeToLive};
 
-use super::DNSCache;
+use super::DnsCache;
 
 #[derive(Debug, Clone)]
 pub struct DnsCacheLayer {
-    cache: DNSCache,
+    cache: DnsCache,
 }
 
 impl<S> tower::Layer<S> for DnsCacheLayer {
@@ -30,25 +30,25 @@ impl<S> tower::Layer<S> for DnsCacheLayer {
 #[derive(Debug, Clone)]
 pub struct DnsCacheService<S> {
     service: S,
-    cache: DNSCache,
+    cache: DnsCache,
 }
 
 impl<S> DnsCacheService<S> {
-    pub fn new(service: S, cache: DNSCache) -> Self {
+    pub fn new(service: S, cache: DnsCache) -> Self {
         Self { service, cache }
     }
 }
 
 impl<S> tower::Service<DnsRequest> for DnsCacheService<S>
 where
-    S: tower::Service<DnsRequest, Response = DnsResponse, Error = DNSClientError>
+    S: tower::Service<DnsRequest, Response = DnsResponse, Error = DnsClientError>
         + Clone
         + Send
         + 'static,
     S::Future: Send + 'static,
 {
     type Response = DnsResponse;
-    type Error = DNSClientError;
+    type Error = DnsClientError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -75,7 +75,7 @@ where
                     msg.set_id(req.id());
                     Ok(msg)
                 }
-                Err(error) => Err(DNSClientError::Cache(error.into())),
+                Err(error) => Err(DnsClientError::Cache(error.into())),
                 Ok(None) => {
                     tracing::trace!("Cache miss");
 
@@ -92,13 +92,13 @@ where
                             cache
                                 .insert_query(&lookup, now, ttl)
                                 .await
-                                .map_err(|error| DNSClientError::Cache(error.into()))?;
+                                .map_err(|error| DnsClientError::Cache(error.into()))?;
                         } else if matches!(response.response_code(), ResponseCode::NXDomain) {
                             let nxdomain = response.clone().try_into()?;
                             cache
                                 .insert_nxdomain(&nxdomain, now, ttl)
                                 .await
-                                .map_err(|error| DNSClientError::Cache(error.into()))?;
+                                .map_err(|error| DnsClientError::Cache(error.into()))?;
                         }
                     }
                     Ok(response)

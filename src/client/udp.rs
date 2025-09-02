@@ -7,7 +7,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use crate::codec::DNSCodec;
+use crate::codec::DnsCodec;
 use chateau::{
     client::conn::{
         Connection,
@@ -21,7 +21,7 @@ use tokio::sync::Mutex;
 use tokio_util::udp::UdpFramed;
 
 use super::{
-    DNSClientError,
+    DnsClientError,
     codec::TaggedMessage,
     nameserver::{ConnectionStatus, NameserverConnection},
 };
@@ -95,12 +95,12 @@ impl HasConnectionInfo for DnsUdpAddressed {
 
 #[derive(Clone)]
 pub struct DnsUdpProtocol {
-    codec: DNSCodec<TaggedMessage, TaggedMessage>,
+    codec: DnsCodec<TaggedMessage, TaggedMessage>,
     spawn: bool,
 }
 
 impl DnsUdpProtocol {
-    pub fn new(codec: DNSCodec<TaggedMessage, TaggedMessage>, spawn: bool) -> Self {
+    pub fn new(codec: DnsCodec<TaggedMessage, TaggedMessage>, spawn: bool) -> Self {
         Self { codec, spawn }
     }
 }
@@ -129,48 +129,48 @@ impl tower::Service<DnsUdpAddressed> for DnsUdpProtocol {
     }
 }
 
-type FramedDNSConnection = FramedConnection<
-    UdpFramed<DNSCodec<TaggedMessage, TaggedMessage>, Arc<UdpSocket>>,
+type FramedDnsConnection = FramedConnection<
+    UdpFramed<DnsCodec<TaggedMessage, TaggedMessage>, Arc<UdpSocket>>,
     (TaggedMessage, SocketAddr),
     (TaggedMessage, SocketAddr),
 >;
 
 pub struct DnsUdpConnection {
-    connection: FramedDNSConnection,
+    connection: FramedDnsConnection,
     destination: SocketAddr,
 }
 
 impl tower::Service<TaggedMessage> for DnsUdpConnection {
     type Response = TaggedMessage;
 
-    type Error = DNSClientError;
+    type Error = DnsClientError;
 
-    type Future = DNSUdpConnectionFuture;
+    type Future = DnsUdpConnectionFuture;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         tower::Service::poll_ready(&mut self.connection, cx)
-            .map_err(|error| DNSClientError::Protocol(error.into()))
+            .map_err(|error| DnsClientError::Protocol(error.into()))
     }
 
     fn call(&mut self, req: TaggedMessage) -> Self::Future {
-        DNSUdpConnectionFuture(self.connection.send((req, self.destination)))
+        DnsUdpConnectionFuture(self.connection.send((req, self.destination)))
     }
 }
 
 impl Connection<TaggedMessage> for DnsUdpConnection {
     type Response = TaggedMessage;
 
-    type Error = DNSClientError;
+    type Error = DnsClientError;
 
-    type Future = DNSUdpConnectionFuture;
+    type Future = DnsUdpConnectionFuture;
 
     fn send_request(&mut self, request: TaggedMessage) -> Self::Future {
-        DNSUdpConnectionFuture(self.connection.send((request, self.destination)))
+        DnsUdpConnectionFuture(self.connection.send((request, self.destination)))
     }
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.connection
             .poll_ready(cx)
-            .map_err(|error| DNSClientError::Protocol(error.into()))
+            .map_err(|error| DnsClientError::Protocol(error.into()))
     }
 }
 
@@ -186,22 +186,22 @@ impl NameserverConnection for DnsUdpConnection {
 
 #[derive(Debug)]
 #[pin_project::pin_project]
-pub struct DNSUdpConnectionFuture(
+pub struct DnsUdpConnectionFuture(
     #[pin]
     ResponseFuture<
-        UdpFramed<DNSCodec<TaggedMessage, TaggedMessage>, Arc<UdpSocket>>,
+        UdpFramed<DnsCodec<TaggedMessage, TaggedMessage>, Arc<UdpSocket>>,
         (TaggedMessage, SocketAddr),
         (TaggedMessage, SocketAddr),
     >,
 );
 
-impl Future for DNSUdpConnectionFuture {
-    type Output = Result<TaggedMessage, DNSClientError>;
+impl Future for DnsUdpConnectionFuture {
+    type Output = Result<TaggedMessage, DnsClientError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match ready!(self.project().0.poll(cx)) {
             Ok((response, _)) => Poll::Ready(Ok(response)),
-            Err(error) => Poll::Ready(Err(DNSClientError::Protocol(error.into()))),
+            Err(error) => Poll::Ready(Err(DnsClientError::Protocol(error.into()))),
         }
     }
 }

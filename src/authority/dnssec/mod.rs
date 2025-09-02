@@ -95,7 +95,7 @@ pub enum DnsSecZoneError {
 /// - Operation journaling for auditing and recovery
 /// - Configurable DNSSEC settings
 #[derive(Clone)]
-pub struct DNSSecZone<Z> {
+pub struct DnsSecZone<Z> {
     zone: ZoneAuthority<Z>,
     secure_keys: Vec<Arc<SigSigner>>,
     nx_proof_kind: Option<NxProofKind>,
@@ -104,16 +104,16 @@ pub struct DNSSecZone<Z> {
     journal: Option<Arc<dyn Journal<Self> + Send + Sync + 'static>>,
 }
 
-impl<Z> From<Z> for DNSSecZone<Z>
+impl<Z> From<Z> for DnsSecZone<Z>
 where
     Z: ZoneInfo,
 {
     fn from(value: Z) -> Self {
-        DNSSecZone::new(value)
+        DnsSecZone::new(value)
     }
 }
 
-impl<Z> Deref for DNSSecZone<Z> {
+impl<Z> Deref for DnsSecZone<Z> {
     type Target = ZoneAuthority<Z>;
 
     fn deref(&self) -> &Self::Target {
@@ -121,19 +121,19 @@ impl<Z> Deref for DNSSecZone<Z> {
     }
 }
 
-impl<Z> DerefMut for DNSSecZone<Z> {
+impl<Z> DerefMut for DnsSecZone<Z> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.zone
     }
 }
 
-impl<Z> AsRef<Z> for DNSSecZone<Z> {
+impl<Z> AsRef<Z> for DnsSecZone<Z> {
     fn as_ref(&self) -> &Z {
         &self.zone
     }
 }
 
-impl<Z: ZoneInfo> fmt::Debug for DNSSecZone<Z> {
+impl<Z: ZoneInfo> fmt::Debug for DnsSecZone<Z> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DNSSecZone")
             .field("zone", &self.zone.origin())
@@ -143,7 +143,7 @@ impl<Z: ZoneInfo> fmt::Debug for DNSSecZone<Z> {
     }
 }
 
-impl<Z> DNSSecZone<Z>
+impl<Z> DnsSecZone<Z>
 where
     Z: ZoneInfo,
 {
@@ -314,7 +314,7 @@ where
 }
 
 /// DNSSEC helper functions
-impl<Z> DNSSecZone<Z>
+impl<Z> DnsSecZone<Z>
 where
     Z: ZoneInfo + Lookup,
 {
@@ -802,7 +802,7 @@ where
     }
 }
 
-impl<Z> DNSSecZone<Z>
+impl<Z> DnsSecZone<Z>
 where
     Z: ZoneInfo + Lookup,
 {
@@ -910,7 +910,7 @@ where
 }
 
 #[async_trait::async_trait]
-impl<Z> Authority for DNSSecZone<Z>
+impl<Z> Authority for DnsSecZone<Z>
 where
     Z: Lookup + ZoneInfo + Clone + Send + Sync + 'static,
 {

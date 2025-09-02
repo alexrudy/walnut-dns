@@ -38,12 +38,12 @@ impl From<bb8::RunError<rusqlite::Error>> for CacheError {
 }
 
 #[derive(Debug, Clone)]
-pub struct DNSCache {
+pub struct DnsCache {
     manager: ConnectionManager,
     config: Arc<CacheConfig>,
 }
 
-impl DNSCache {
+impl DnsCache {
     pub async fn new(manager: ConnectionManager, config: CacheConfig) -> Result<Self> {
         let db = MonarchDB::from(MONARCH);
         {

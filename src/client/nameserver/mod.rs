@@ -14,10 +14,10 @@ use self::connection::SharedNameserverService;
 pub use self::connection::{ConnectionStatus, NameserverConnection};
 pub use self::pool::NameserverPool;
 use super::{
-    connection::{DNSConnector, DNSConnectorService},
+    connection::{DnsConnector, DnsConnectorService},
     udp::{DnsUdpProtocol, DnsUdpTransport},
 };
-use crate::{client::codec::TaggedMessage, codec::DNSCodec};
+use crate::{client::codec::TaggedMessage, codec::DnsCodec};
 
 #[derive(Debug, Clone)]
 pub struct NameServerConnection {
@@ -47,14 +47,14 @@ impl NameServerConnection {
     fn new_udp(address: IpAddr, config: ConnectionConfig) -> Self {
         let addr = SocketAddr::new(address, config.port);
         let bind = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
-        let codec: DNSCodec<TaggedMessage, TaggedMessage> =
-            DNSCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp);
+        let codec: DnsCodec<TaggedMessage, TaggedMessage> =
+            DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp);
 
         let transport = DnsUdpTransport::new(bind);
         let protocol = DnsUdpProtocol::new(codec, false);
 
-        let connector = DNSConnector::new(addr, transport, protocol);
-        let svc = DNSConnectorService::new(connector, hickory_proto::xfer::Protocol::Udp);
+        let connector = DnsConnector::new(addr, transport, protocol);
+        let svc = DnsConnectorService::new(connector, hickory_proto::xfer::Protocol::Udp);
         Self {
             service: SharedNameserverService::new(svc),
             config: Arc::new(config),
@@ -63,11 +63,11 @@ impl NameServerConnection {
 
     fn new_tcp(address: IpAddr, config: ConnectionConfig) -> Self {
         let addr = SocketAddr::new(address, config.port);
-        let codec: DNSCodec<TaggedMessage, TaggedMessage> =
-            DNSCodec::new_for_protocol(hickory_proto::xfer::Protocol::Tcp);
+        let codec: DnsCodec<TaggedMessage, TaggedMessage> =
+            DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Tcp);
         let protocol = FramedProtocol::new(codec);
-        let connector = DNSConnector::new(addr, TcpTransport::default(), protocol);
-        let svc = DNSConnectorService::new(connector, hickory_proto::xfer::Protocol::Tcp);
+        let connector = DnsConnector::new(addr, TcpTransport::default(), protocol);
+        let svc = DnsConnectorService::new(connector, hickory_proto::xfer::Protocol::Tcp);
         Self {
             service: SharedNameserverService::new(svc),
             config: Arc::new(config),
@@ -77,8 +77,8 @@ impl NameServerConnection {
     #[cfg(feature = "tls")]
     fn new_tls(address: IpAddr, config: ConnectionConfig, server_name: Box<str>) -> Self {
         let addr = SocketAddr::new(address, config.port);
-        let codec: DNSCodec<TaggedMessage, TaggedMessage> =
-            DNSCodec::new_for_protocol(hickory_proto::xfer::Protocol::Tls);
+        let codec: DnsCodec<TaggedMessage, TaggedMessage> =
+            DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Tls);
         let mut tlsconfig = rustls::ClientConfig::builder()
             .with_root_certificates(rustls::RootCertStore {
                 roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
@@ -89,8 +89,8 @@ impl NameServerConnection {
         let transport =
             StaticHostTlsTransport::new(TcpTransport::default(), Arc::new(tlsconfig), server_name);
         let protocol = FramedProtocol::new(codec);
-        let connector = DNSConnector::new(addr, transport, protocol);
-        let svc = DNSConnectorService::new(connector, hickory_proto::xfer::Protocol::Tcp);
+        let connector = DnsConnector::new(addr, transport, protocol);
+        let svc = DnsConnectorService::new(connector, hickory_proto::xfer::Protocol::Tcp);
         Self {
             service: SharedNameserverService::new(svc),
             config: Arc::new(config),

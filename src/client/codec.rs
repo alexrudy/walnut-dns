@@ -13,9 +13,9 @@ use hickory_proto::{
     xfer::{DnsRequest, DnsResponse},
 };
 
-use crate::codec::{CodecError, DNSMessage};
+use crate::codec::{CodecError, DnsMessage};
 
-use super::DNSClientError;
+use super::DnsClientError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaggedMessage(Message);
@@ -69,7 +69,7 @@ impl DerefMut for TaggedMessage {
     }
 }
 
-impl DNSMessage for TaggedMessage {
+impl DnsMessage for TaggedMessage {
     fn header(&self) -> &hickory_proto::op::Header {
         self.0.header()
     }
@@ -147,7 +147,7 @@ where
 {
     type Response = (DnsResponse, SocketAddr);
 
-    type Error = DNSClientError;
+    type Error = DnsClientError;
 
     type Future = DnsCodecFuture<S::Future>;
 
@@ -172,7 +172,7 @@ impl<F> Future for DnsCodecFuture<F>
 where
     F: Future<Output = Result<(TaggedMessage, SocketAddr), CodecError>>,
 {
-    type Output = Result<(DnsResponse, SocketAddr), DNSClientError>;
+    type Output = Result<(DnsResponse, SocketAddr), DnsClientError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match ready!(self.project().future.poll(cx)) {
@@ -183,12 +183,12 @@ where
             ),
             Err(CodecError::DropMessage(proto_error, _))
             | Err(CodecError::Protocol(proto_error)) => {
-                Poll::Ready(Err(DNSClientError::DNSProtocol(proto_error)))
+                Poll::Ready(Err(DnsClientError::DnsProtocol(proto_error)))
             }
             Err(CodecError::FailedMessage(header, response_code)) => {
-                Poll::Ready(Err(DNSClientError::Response(header, response_code)))
+                Poll::Ready(Err(DnsClientError::Response(header, response_code)))
             }
-            Err(CodecError::IO(_)) => Poll::Ready(Err(DNSClientError::Closed)),
+            Err(CodecError::IO(_)) => Poll::Ready(Err(DnsClientError::Closed)),
         }
     }
 }

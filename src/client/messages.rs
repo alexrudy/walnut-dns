@@ -10,20 +10,20 @@ use hickory_proto::xfer::{DnsRequest, DnsResponse};
 use pin_project::pin_project;
 
 #[derive(Debug, Clone, Default)]
-pub struct DNSRequestLayer;
+pub struct DnsRequestLayer;
 
 #[derive(Debug, Clone)]
-pub struct DNSRequestMiddleware<S> {
+pub struct DnsRequestMiddleware<S> {
     inner: S,
 }
 
-impl<S> DNSRequestMiddleware<S> {
+impl<S> DnsRequestMiddleware<S> {
     pub fn new(inner: S) -> Self {
         Self { inner }
     }
 }
 
-impl<S> tower::Service<DnsRequest> for DNSRequestMiddleware<S>
+impl<S> tower::Service<DnsRequest> for DnsRequestMiddleware<S>
 where
     S: tower::Service<Message, Response = Message>,
     S::Error: From<ProtoError>,

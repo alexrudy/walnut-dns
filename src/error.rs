@@ -12,7 +12,7 @@ pub enum HickoryError {
     Protocol(#[from] ProtoError),
 
     #[error("udp message does not appear to be dns")]
-    NotDNSMessage,
+    NotDnsMessage,
 
     #[error("Recieved a response as a request message")]
     ResponseAsRequest,
@@ -39,7 +39,7 @@ impl From<CodecError> for HickoryError {
             CodecError::IO(err) => HickoryError::Send(err),
             CodecError::DropMessage(proto_error, _) => HickoryError::Protocol(proto_error),
             CodecError::Protocol(proto_error) => HickoryError::Protocol(proto_error),
-            CodecError::FailedMessage(_, _) => HickoryError::NotDNSMessage,
+            CodecError::FailedMessage(_, _) => HickoryError::NotDnsMessage,
         }
     }
 }

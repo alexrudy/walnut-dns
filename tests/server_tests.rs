@@ -510,7 +510,7 @@ async fn server_thread_https(
     shutdown: oneshot::Receiver<()>,
     cert_chain: Arc<dyn ResolvesServerCert>,
 ) {
-    use walnut_dns::services::http::DNSOverHTTPLayer;
+    use walnut_dns::services::http::DnsOverHttpLayer;
 
     let catalog = new_catalog().await;
     let mut tls_config = ServerConfig::builder_with_provider(default_provider().into())
@@ -528,7 +528,7 @@ async fn server_thread_https(
         .with_tokio()
         .with_shared_service(
             tower::ServiceBuilder::new()
-                .layer(DNSOverHTTPLayer::new(http::Version::HTTP_2))
+                .layer(DnsOverHttpLayer::new(http::Version::HTTP_2))
                 .service(catalog),
         )
         .with_graceful_shutdown(async move {

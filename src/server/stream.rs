@@ -10,7 +10,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::error::HickoryError;
 
-use super::connection::{DNSConnection, DNSFramedStream};
+use super::connection::{DnsConnection, DnsFramedStream};
 
 #[derive(Debug, Default)]
 pub struct DnsOverStream<IO> {
@@ -45,9 +45,9 @@ where
     type Response = Message;
     type Error = HickoryError;
 
-    type Connection = DNSConnection<S, DNSFramedStream<IO>>;
+    type Connection = DnsConnection<S, DnsFramedStream<IO>>;
 
     fn serve_connection(&self, stream: IO, service: S) -> Self::Connection {
-        DNSConnection::streamed(service, stream, self.protocol)
+        DnsConnection::streamed(service, stream, self.protocol)
     }
 }

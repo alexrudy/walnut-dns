@@ -16,24 +16,24 @@ use tokio_util::codec::{Decoder, Encoder as _};
 use tracing::debug;
 
 use crate::{
-    codec::{DNSCodec, DNSCodecRecovery},
+    codec::{DnsCodec, DnsCodecRecovery},
     error::HickoryError,
 };
 
 const MIME_APPLICATION_DNS: &str = "application/dns-message";
 
 #[derive(Debug)]
-pub struct DNSBody {
+pub struct DnsBody {
     data: Option<Bytes>,
 }
 
-impl DNSBody {
+impl DnsBody {
     pub fn new(data: Bytes) -> Self {
         Self { data: Some(data) }
     }
 }
 
-impl http_body::Body for DNSBody {
+impl http_body::Body for DnsBody {
     type Data = Bytes;
 
     type Error = Infallible;
@@ -58,53 +58,53 @@ impl http_body::Body for DNSBody {
 }
 
 #[derive(Debug, Clone)]
-pub struct DNSOverHTTPLayer {
+pub struct DnsOverHttpLayer {
     version: http::Version,
 }
 
-impl DNSOverHTTPLayer {
+impl DnsOverHttpLayer {
     pub fn new(version: http::Version) -> Self {
         Self { version }
     }
 }
 
-impl<S> tower::Layer<S> for DNSOverHTTPLayer {
-    type Service = DNSOverHTTP<S>;
+impl<S> tower::Layer<S> for DnsOverHttpLayer {
+    type Service = DnsOverHttp<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        DNSOverHTTP::new(inner, self.version)
+        DnsOverHttp::new(inner, self.version)
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct DNSOverHTTP<S> {
+pub struct DnsOverHttp<S> {
     dns_service: S,
     version: http::Version,
-    codec: DNSCodecRecovery<Message, MessageRequest>,
+    codec: DnsCodecRecovery<Message, MessageRequest>,
 }
 
-impl<S> DNSOverHTTP<S> {
+impl<S> DnsOverHttp<S> {
     pub fn new(dns_service: S, version: http::Version) -> Self {
         Self {
             dns_service,
             version,
-            codec: DNSCodec::new(false, None).with_recovery(),
+            codec: DnsCodec::new(false, None).with_recovery(),
         }
     }
 }
 
-impl<S, B> tower::Service<http::Request<B>> for DNSOverHTTP<S>
+impl<S, B> tower::Service<http::Request<B>> for DnsOverHttp<S>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError> + Clone,
     B: http_body::Body,
     B::Data: fmt::Debug + AsRef<[u8]>,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    type Response = http::Response<DNSBody>;
+    type Response = http::Response<DnsBody>;
 
     type Error = HickoryError;
 
-    type Future = DNSOverHTTPFuture<B, S>;
+    type Future = DnsOverHttpFuture<B, S>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.dns_service.poll_ready(cx)
@@ -129,7 +129,7 @@ where
                         match data_encoding::BASE64URL_NOPAD.decode(value.as_bytes()) {
                             Ok(data) => bytes::Bytes::from(data).into(),
                             Err(error) => {
-                                return DNSOverHTTPFuture::error(
+                                return DnsOverHttpFuture::error(
                                     HickoryError::Recv(io::Error::new(
                                         io::ErrorKind::InvalidData,
                                         error,
@@ -141,9 +141,9 @@ where
                             }
                         };
 
-                    DNSOverHTTPFuture::decode(data, service, self.version, addr, self.codec.clone())
+                    DnsOverHttpFuture::decode(data, service, self.version, addr, self.codec.clone())
                 }
-                None => DNSOverHTTPFuture::error(
+                None => DnsOverHttpFuture::error(
                     HickoryError::Recv(io::Error::new(
                         io::ErrorKind::InvalidData,
                         "No dns query on GET request",
@@ -155,9 +155,9 @@ where
             },
             &http::Method::POST => {
                 let body = req.into_body();
-                DNSOverHTTPFuture::post(body, service, self.version, addr, self.codec.clone())
+                DnsOverHttpFuture::post(body, service, self.version, addr, self.codec.clone())
             }
-            method => DNSOverHTTPFuture::error(
+            method => DnsOverHttpFuture::error(
                 HickoryError::Recv(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("Invalid method: {method}"),
@@ -196,7 +196,7 @@ where
 }
 
 #[pin_project::pin_project]
-pub struct DNSOverHTTPFuture<B, S>
+pub struct DnsOverHttpFuture<B, S>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
 {
@@ -204,10 +204,10 @@ where
     state: DoHFState<B, S>,
     version: http::Version,
     address: SocketAddr,
-    codec: DNSCodecRecovery<Message, MessageRequest>,
+    codec: DnsCodecRecovery<Message, MessageRequest>,
 }
 
-impl<B, S> DNSOverHTTPFuture<B, S>
+impl<B, S> DnsOverHttpFuture<B, S>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
 {
@@ -215,7 +215,7 @@ where
         error: HickoryError,
         version: http::Version,
         address: SocketAddr,
-        codec: DNSCodecRecovery<Message, MessageRequest>,
+        codec: DnsCodecRecovery<Message, MessageRequest>,
     ) -> Self {
         Self {
             state: DoHFState::Error { error: Some(error) },
@@ -230,7 +230,7 @@ where
         service: S,
         version: http::Version,
         address: SocketAddr,
-        codec: DNSCodecRecovery<Message, MessageRequest>,
+        codec: DnsCodecRecovery<Message, MessageRequest>,
     ) -> Self {
         Self {
             state: DoHFState::Decode { bytes, service },
@@ -245,7 +245,7 @@ where
         service: S,
         version: http::Version,
         address: SocketAddr,
-        codec: DNSCodecRecovery<Message, MessageRequest>,
+        codec: DnsCodecRecovery<Message, MessageRequest>,
     ) -> Self {
         Self {
             state: DoHFState::Collect {
@@ -263,7 +263,7 @@ where
     fn respond(
         mut self: Pin<&mut Self>,
         message: Message,
-    ) -> Result<http::Response<DNSBody>, HickoryError> {
+    ) -> Result<http::Response<DnsBody>, HickoryError> {
         let mut buf = BytesMut::with_capacity(512);
         self.as_mut().project().codec.encode(message, &mut buf)?;
 
@@ -272,7 +272,7 @@ where
             .version(self.version)
             .header(http::header::CONTENT_TYPE, MIME_APPLICATION_DNS)
             .header(http::header::CONTENT_LENGTH, buf.len())
-            .body(DNSBody {
+            .body(DnsBody {
                 data: Some(buf.freeze()),
             })
             .unwrap();
@@ -280,14 +280,14 @@ where
     }
 }
 
-impl<B, S> Future for DNSOverHTTPFuture<B, S>
+impl<B, S> Future for DnsOverHttpFuture<B, S>
 where
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
     B: http_body::Body,
     B::Data: fmt::Debug + AsRef<[u8]>,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    type Output = Result<http::Response<DNSBody>, HickoryError>;
+    type Output = Result<http::Response<DnsBody>, HickoryError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.as_mut().project();
@@ -327,11 +327,11 @@ where
                         match request
                             .with_address(*this.address, hickory_proto::xfer::Protocol::Https)
                         {
-                            crate::codec::DNSRequest::Message(request) => {
+                            crate::codec::DnsRequest::Message(request) => {
                                 let future = service.call(request);
                                 this.state.set(DoHFState::Execute { future })
                             }
-                            crate::codec::DNSRequest::Failed((response, _)) => {
+                            crate::codec::DnsRequest::Failed((response, _)) => {
                                 return Poll::Ready(self.respond(response));
                             }
                         }

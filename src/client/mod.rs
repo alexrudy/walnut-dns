@@ -15,11 +15,11 @@ use tokio_util::udp::UdpFramed;
 use tower::ServiceExt;
 use tracing::trace;
 
-use crate::cache::{DNSCache, DnsCacheService};
-use crate::codec::{CodecError, DNSCodec};
+use crate::cache::{DnsCache, DnsCacheService};
+use crate::codec::{CodecError, DnsCodec};
 
 use self::codec::{DnsCodecLayer, TaggedMessage};
-use self::messages::DNSRequestMiddleware;
+use self::messages::DnsRequestMiddleware;
 use self::nameserver::{NameServerConnection, NameserverConfig, NameserverPool};
 
 mod codec;
@@ -29,13 +29,13 @@ mod messages;
 mod nameserver;
 mod udp;
 
-type DNSService = chateau::services::SharedService<DnsRequest, DnsResponse, DNSClientError>;
+type DnsService = chateau::services::SharedService<DnsRequest, DnsResponse, DnsClientError>;
 
-pub async fn client(address: SocketAddr) -> Result<DNSService, io::Error> {
+pub async fn client(address: SocketAddr) -> Result<DnsService, io::Error> {
     let bind = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
     let socket = UdpSocket::bind(bind).await?;
-    let codec: DNSCodec<TaggedMessage, TaggedMessage> =
-        DNSCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp);
+    let codec: DnsCodec<TaggedMessage, TaggedMessage> =
+        DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp);
 
     let protocol = FramedConnection::new(UdpFramed::new(socket, codec));
 
@@ -75,7 +75,7 @@ impl Default for ClientConfiguration {
 /// A DNS Client
 #[derive(Debug, Clone)]
 pub struct Client {
-    inner: DNSService,
+    inner: DnsService,
     config: Arc<ClientConfiguration>,
 }
 
@@ -101,12 +101,12 @@ impl Client {
 
         let svc = NameserverPool::new(connections, Default::default());
         Client {
-            inner: SharedService::new(DNSRequestMiddleware::new(svc)),
+            inner: SharedService::new(DnsRequestMiddleware::new(svc)),
             config: Arc::new(ClientConfiguration::default()),
         }
     }
 
-    pub fn with_cache(self, cache: DNSCache) -> Self {
+    pub fn with_cache(self, cache: DnsCache) -> Self {
         Self {
             inner: SharedService::new(DnsCacheService::new(self.inner, cache)),
             config: self.config,
@@ -117,7 +117,7 @@ impl Client {
         &self,
         mut query: Query,
         options: DnsRequestOptions,
-    ) -> tower::util::Oneshot<DNSService, DnsRequest> {
+    ) -> tower::util::Oneshot<DnsService, DnsRequest> {
         use rand::prelude::*;
 
         let mut rng = rand::rng();
@@ -150,9 +150,9 @@ impl Client {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum DNSClientError {
+pub enum DnsClientError {
     #[error("DNS Protocol: {0}")]
-    DNSProtocol(#[from] ProtoError),
+    DnsProtocol(#[from] ProtoError),
 
     #[error("Invalid response for message {}: {}", .0.id(), .1)]
     Response(Header, ResponseCode),
@@ -180,16 +180,16 @@ pub enum DNSClientError {
     Cache(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
-impl From<CodecError> for DNSClientError {
+impl From<CodecError> for DnsClientError {
     fn from(value: CodecError) -> Self {
         match value {
             CodecError::DropMessage(proto_error, _) | CodecError::Protocol(proto_error) => {
-                DNSClientError::DNSProtocol(proto_error)
+                DnsClientError::DnsProtocol(proto_error)
             }
             CodecError::FailedMessage(header, response_code) => {
-                DNSClientError::Response(header, response_code)
+                DnsClientError::Response(header, response_code)
             }
-            CodecError::IO(_) => DNSClientError::Closed,
+            CodecError::IO(_) => DnsClientError::Closed,
         }
     }
 }

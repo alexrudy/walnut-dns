@@ -40,7 +40,7 @@ use crate::rr::{
 pub(crate) mod dnssec;
 pub(crate) mod edns;
 
-pub use self::dnssec::{DNSSecZone, DnsSecZoneError, Journal};
+pub use self::dnssec::{DnsSecZone, DnsSecZoneError, Journal};
 
 pub(crate) type LookupChain<L, E = LookupError> = (LookupControlFlow<L, E>, Option<LookupRecords>);
 

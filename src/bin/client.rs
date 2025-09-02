@@ -46,7 +46,7 @@ async fn main() -> Result<(), ()> {
     let cache = if let Some(database) = args.get_one::<PathBuf>("db") {
         let connection = rusqlite::Connection::open(database).expect("unable to open db");
         Some(
-            walnut_dns::cache::DNSCache::new(connection.into(), Default::default())
+            walnut_dns::cache::DnsCache::new(connection.into(), Default::default())
                 .await
                 .unwrap(),
         )
@@ -66,7 +66,7 @@ async fn lookup(
     config: &Path,
     query: &str,
     record: RecordType,
-    cache: Option<walnut_dns::cache::DNSCache>,
+    cache: Option<walnut_dns::cache::DnsCache>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config_file: Vec<u8> = tokio::fs::read(config).await?;
     let config: ClientConfiguration = toml_edit::de::from_slice(&config_file)?;

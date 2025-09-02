@@ -11,7 +11,7 @@ use futures::future::BoxFuture;
 use hickory_proto::op::Message;
 use tower::ServiceExt;
 
-use crate::client::DNSClientError;
+use crate::client::DnsClientError;
 
 use super::NameServerConnection;
 
@@ -35,12 +35,12 @@ impl NameserverPool {
 
 impl tower::Service<Message> for NameserverPool {
     type Response = Message;
-    type Error = DNSClientError;
-    type Future = BoxFuture<'static, Result<Message, DNSClientError>>;
+    type Error = DnsClientError;
+    type Future = BoxFuture<'static, Result<Message, DnsClientError>>;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         if self.inner.servers.is_empty() {
-            Poll::Ready(Err(DNSClientError::Unavailable("No nameservers".into())))
+            Poll::Ready(Err(DnsClientError::Unavailable("No nameservers".into())))
         } else {
             Poll::Ready(Ok(()))
         }
@@ -88,7 +88,7 @@ impl fmt::Debug for InnerPool {
 }
 
 impl InnerPool {
-    async fn send(&self, request: Message) -> Result<Message, DNSClientError> {
+    async fn send(&self, request: Message) -> Result<Message, DnsClientError> {
         let mut conns = self.servers.clone();
         if self.config.num_concurrent_requests() < conns.len() {
             let idx = self
@@ -116,8 +116,8 @@ impl InnerPool {
         match eyeballs.await {
             Ok(outcome) => Ok(outcome.into()),
             Err(HappyEyeballsError::Error(client_error)) => Err(client_error),
-            Err(HappyEyeballsError::NoProgress) => Err(DNSClientError::Closed),
-            Err(HappyEyeballsError::Timeout(_)) => Err(DNSClientError::Closed),
+            Err(HappyEyeballsError::NoProgress) => Err(DnsClientError::Closed),
+            Err(HappyEyeballsError::Timeout(_)) => Err(DnsClientError::Closed),
             Err(_) => panic!("Unexpected error"),
         }
     }
