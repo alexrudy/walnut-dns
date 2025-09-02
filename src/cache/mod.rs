@@ -126,4 +126,15 @@ impl DNSCache {
             Ok(entry)
         })
     }
+
+    pub async fn cleanup(&self, now: DateTime<Utc>) -> Result<(), CacheError> {
+        let mut connection = self.manager.get().await?;
+        crate::block_in_place(|| {
+            let tx = connection.transaction()?;
+            let qx = QueryPersistence::new(&tx);
+            qx.remove_expired(now.into())?;
+            tx.commit()?;
+            Ok(())
+        })
+    }
 }

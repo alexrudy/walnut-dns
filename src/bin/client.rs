@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use chrono::Utc;
 use clap::arg;
 use hickory_proto::{op::Query, rr::RecordType, xfer::DnsRequestOptions};
 use tracing::trace;
@@ -71,8 +72,8 @@ async fn lookup(
     let config: ClientConfiguration = toml_edit::de::from_slice(&config_file)?;
 
     let mut client = walnut_dns::client::Client::new(config);
-    if let Some(cache) = cache {
-        client = client.with_cache(cache);
+    if let Some(cache) = &cache {
+        client = client.with_cache(cache.clone());
     }
     trace!("client constructed");
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -101,6 +102,10 @@ async fn lookup(
             answer.data()
         )
     });
+
+    if let Some(cache) = cache {
+        cache.cleanup(Utc::now()).await?;
+    }
 
     Ok(())
 }

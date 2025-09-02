@@ -131,4 +131,14 @@ impl<'c> QueryPersistence<'c> {
 
         Ok(())
     }
+
+    pub(crate) fn remove_expired(&self, now: CacheTimestamp) -> rusqlite::Result<()> {
+        let mut stmt = self.connection.prepare(&format!(
+            "DELETE FROM {table} WHERE expires < :deadline",
+            table = Self::TABLE.table
+        ))?;
+        let nrows = stmt.execute(named_params! { ":deadline": now })?;
+        trace!(n = nrows, "Removed {nrows} expired records");
+        Ok(())
+    }
 }
