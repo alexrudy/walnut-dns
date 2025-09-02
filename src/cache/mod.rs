@@ -46,8 +46,8 @@ use crate::database::{MONARCH, Result};
 use crate::rr::TimeToLive;
 
 pub use self::config::CacheConfig;
-pub use self::lookup::{CacheTimestamp, EntryMeta, Lookup};
 pub use self::service::{DnsCacheLayer, DnsCacheService};
+pub use crate::lookup::{CacheTimestamp, EntryMeta, Lookup};
 
 mod config;
 mod lookup;

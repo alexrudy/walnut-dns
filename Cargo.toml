@@ -71,7 +71,7 @@ features = ["env-filter", "json", "fmt", "ansi", "std"]
 optional = true
 
 [dependencies.chateau]
-features = ["codec", "client", "server"]
+features = ["client", "codec", "server"]
 version = "0.1.0"
 # path = "../chateau"
 git = "https://github.com/alexrudy/chateau.git"

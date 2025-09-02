@@ -4,7 +4,7 @@ use hickory_proto::rr::LowerName;
 use hickory_proto::serialize::binary::BinEncodable;
 use rusqlite::named_params;
 
-use crate::cache::{EntryMeta, Lookup};
+use crate::lookup::{EntryMeta, Lookup};
 use crate::rr::QueryID;
 use crate::{
     Lookup as _, ZoneInfo as _,

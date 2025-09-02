@@ -2,7 +2,7 @@ use hickory_proto::op::Query;
 use rusqlite::named_params;
 use tracing::trace;
 
-use crate::cache::{CacheTimestamp, EntryMeta, Lookup};
+use crate::lookup::{CacheTimestamp, EntryMeta, Lookup};
 use crate::database::record::RecordPersistence;
 use crate::rr::{QueryID, SqlName, TimeToLive};
 
