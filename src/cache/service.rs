@@ -12,6 +12,22 @@ use crate::{client::DNSClientError, rr::TimeToLive};
 use super::DNSCache;
 
 #[derive(Debug, Clone)]
+pub struct DnsCacheLayer {
+    cache: DNSCache,
+}
+
+impl<S> tower::Layer<S> for DnsCacheLayer {
+    type Service = DnsCacheService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        DnsCacheService {
+            service: inner,
+            cache: self.cache.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct DnsCacheService<S> {
     service: S,
     cache: DNSCache,

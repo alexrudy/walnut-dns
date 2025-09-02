@@ -158,6 +158,7 @@ pub enum ProtocolConfig {
 }
 
 impl ProtocolConfig {
+    #[allow(dead_code)]
     pub fn is_secure(&self) -> bool {
         match self {
             ProtocolConfig::Udp => false,
