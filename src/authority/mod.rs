@@ -9,7 +9,7 @@
 //! - [`ZoneInfo`] - Trait providing basic zone metadata and configuration
 //! - [`Lookup`] - Trait for DNS record lookup and zone modification operations
 //! - [`ZoneAuthority`] - Wrapper providing hickory-dns Authority trait implementation
-//! - [`DNSSecZone`] - DNSSEC-enabled zone authority with cryptographic capabilities
+//! - [`DnsSecZone`] - DNSSEC-enabled zone authority with cryptographic capabilities
 //!
 //! # Features
 //!

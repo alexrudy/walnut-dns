@@ -89,6 +89,8 @@ where
     address: A,
     transport: T,
     protocol: P,
+
+    #[allow(clippy::type_complexity)]
     connection: Arc<Mutex<InnerConnector<<P as Protocol<T::IO, TaggedMessage>>::Connection>>>,
 }
 
@@ -123,6 +125,11 @@ where
         }
     }
 }
+
+type DnsConnectionError<A, T, P> = ConnectionError<
+    <T as Transport<A>>::Error,
+    <P as Protocol<<T as Transport<A>>::IO, TaggedMessage>>::Error,
+>;
 
 impl<A, T, P> DnsConnector<A, T, P>
 where
@@ -171,8 +178,7 @@ where
     fn poll_ready(
         &mut self,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), ConnectionError<T::Error, <P as Protocol<T::IO, TaggedMessage>>::Error>>>
-    {
+    ) -> Poll<Result<(), DnsConnectionError<A, T, P>>> {
         let inner = self.connection.lock().expect("poisoned");
 
         // Check if we already have a connection, no need to backpressure connector.
@@ -249,6 +255,8 @@ where
 {
     #[pin]
     state: ConnectingState<A, T, P>,
+
+    #[allow(clippy::type_complexity)]
     inner: Weak<Mutex<InnerConnector<<P as Protocol<T::IO, TaggedMessage>>::Connection>>>,
 }
 
@@ -418,7 +426,7 @@ where
                     }
                     Err(error) => {
                         let _ = status.send(ConnectionStatus::Failed);
-                        return Err(error.into());
+                        return Err(error);
                     }
                 };
                 conn.send_request(req)
@@ -438,7 +446,7 @@ where
     P::Connection: Connection<TaggedMessage, Response = TaggedMessage> + Send + 'static,
 {
     fn status(&self) -> super::nameserver::ConnectionStatus {
-        self.rx.borrow().clone()
+        *self.rx.borrow()
     }
 
     fn protocol(&self) -> hickory_proto::xfer::Protocol {

@@ -19,14 +19,14 @@ use crate::cache::{DnsCache, DnsCacheService};
 use crate::codec::{CodecError, DnsCodec};
 
 use self::codec::{DnsCodecLayer, TaggedMessage};
-use self::messages::DnsRequestMiddleware;
+pub use self::messages::{DnsRequestLayer, DnsRequestMiddleware};
 use self::nameserver::{NameServerConnection, NameserverConfig, NameserverPool};
 
 mod codec;
 mod connection;
 mod messages;
 // mod http;
-mod nameserver;
+pub mod nameserver;
 mod udp;
 
 type DnsService = chateau::services::SharedService<DnsRequest, DnsResponse, DnsClientError>;

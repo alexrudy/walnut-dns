@@ -3,6 +3,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use chateau::client::conn::protocol::framed::FramedProtocol;
+#[cfg(feature = "tls")]
 use chateau::client::conn::transport::StaticHostTlsTransport;
 use chateau::client::conn::transport::tcp::TcpTransport;
 use serde::Deserialize;
@@ -163,6 +164,7 @@ impl ProtocolConfig {
         match self {
             ProtocolConfig::Udp => false,
             ProtocolConfig::Tcp => false,
+            #[cfg(feature = "tls")]
             ProtocolConfig::Tls { .. } => true,
         }
     }
@@ -179,6 +181,7 @@ impl cmp::Eq for ProtocolConfig {}
 impl cmp::Ord for ProtocolConfig {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         use ProtocolConfig::*;
+        #[allow(unreachable_patterns)]
         match (self, other) {
             (Udp, Udp) => cmp::Ordering::Equal,
             (Udp, _) => cmp::Ordering::Greater,
@@ -186,6 +189,7 @@ impl cmp::Ord for ProtocolConfig {
             (Tcp, Tcp) => cmp::Ordering::Equal,
             (Tcp, _) => cmp::Ordering::Greater,
             (_, Tcp) => cmp::Ordering::Less,
+            #[cfg(feature = "tls")]
             (Tls { .. }, Tls { .. }) => cmp::Ordering::Equal,
         }
     }

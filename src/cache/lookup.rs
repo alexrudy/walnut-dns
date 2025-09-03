@@ -51,7 +51,7 @@ impl Lookup {
     }
 
     pub fn ttl(&self, now: DateTime<Utc>) -> TimeToLive {
-        self.valid_until.since(now.into()).into()
+        self.valid_until.since(now).into()
     }
 
     pub fn query(&self) -> &Query {
@@ -101,9 +101,9 @@ impl TryFrom<DnsResponse> for Lookup {
             records: parts
                 .answers
                 .into_iter()
-                .chain(parts.additionals.into_iter())
-                .chain(parts.name_servers.into_iter())
-                .map(|rr| Record::from(rr))
+                .chain(parts.additionals)
+                .chain(parts.name_servers)
+                .map(Record::from)
                 .collect(),
             valid_until: deadline.into(),
         })
@@ -298,9 +298,9 @@ impl TryFrom<DnsResponse> for NxDomain {
             parts
                 .answers
                 .into_iter()
-                .chain(parts.additionals.into_iter())
-                .chain(parts.name_servers.into_iter())
-                .map(|rr| Record::from(rr)),
+                .chain(parts.additionals)
+                .chain(parts.name_servers)
+                .map(Record::from),
         );
 
         Ok(NxDomain {
@@ -323,12 +323,14 @@ impl TryFrom<DnsResponse> for NxDomain {
 }
 
 enum GlueState<'n> {
+    #[allow(clippy::upper_case_acronyms)]
     NS,
     Glue(std::slice::Iter<'n, Record>),
     End,
 }
 
 enum State<'n> {
+    #[allow(clippy::upper_case_acronyms)]
     SOA,
     Authorities(Option<std::slice::Iter<'n, Record>>),
     Glue(
@@ -428,6 +430,7 @@ impl EntryMeta {
     }
 
     /// Construct a lookup result from an entry meta and associated records
+    #[allow(clippy::result_large_err)]
     pub fn from_stored_records(self: EntryMeta, records: Vec<Record>) -> Result<Lookup, NxDomain> {
         if matches!(self.response_code, ResponseCode::NoError) {
             Ok(Lookup::new(self.id, self.query, records, self.expires))

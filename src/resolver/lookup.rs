@@ -85,7 +85,7 @@ impl QueryLookup {
     }
 
     pub fn ttl(&self, now: DateTime<Utc>) -> TimeToLive {
-        self.valid_until.since(now.into()).into()
+        self.valid_until.since(now).into()
     }
 
     pub fn query(&self) -> &Query {
@@ -158,9 +158,9 @@ impl TryFrom<DnsResponse> for QueryLookup {
             records: parts
                 .answers
                 .into_iter()
-                .chain(parts.additionals.into_iter())
-                .chain(parts.name_servers.into_iter())
-                .map(|rr| Record::from(rr))
+                .chain(parts.additionals)
+                .chain(parts.name_servers)
+                .map(Record::from)
                 .collect(),
             negative_ttl: None,
             response_code: parts.header.response_code(),

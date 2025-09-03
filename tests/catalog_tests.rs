@@ -327,7 +327,6 @@ async fn test_non_authoritive_nx_refused() {
     assert_eq!(result.additionals().len(), 0);
 }
 
-#[cfg(false)]
 #[tokio::test]
 #[allow(clippy::unreadable_literal)]
 async fn test_axfr() {
@@ -353,8 +352,8 @@ async fn test_axfr() {
     .set_dns_class(DNSClass::IN)
     .clone();
 
-    let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
-    catalog.insert(test).await.unwrap();
+    let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
+    catalog.insert(test.into()).await.unwrap();
 
     let mut query: Query = Query::new();
     query.set_name(origin.clone().into());
@@ -368,11 +367,7 @@ async fn test_axfr() {
     let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
     let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
-    let mut response_handler = TestResponseHandler::new();
-    catalog
-        .lookup(&question_req, None, &mut response_handler)
-        .await;
-    let result = response_handler.into_message().await;
+    let result = catalog.lookup(&question_req, None).await.unwrap();
 
     let mut answers: Vec<Record> = result.answers().to_vec();
 
@@ -462,7 +457,6 @@ async fn test_axfr() {
     assert_eq!(expected_set, answers);
 }
 
-#[cfg(false)]
 #[tokio::test]
 async fn test_axfr_refused() {
     subscribe();
@@ -472,8 +466,8 @@ async fn test_axfr_refused() {
 
     let origin = test.origin().clone();
 
-    let catalog = Catalog::new(SqliteStore::new_in_memory().unwrap());
-    catalog.insert(test).await.unwrap();
+    let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
+    catalog.insert(test.into()).await.unwrap();
 
     let mut query: Query = Query::new();
     query.set_name(origin.into());
@@ -487,11 +481,7 @@ async fn test_axfr_refused() {
     let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
     let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
-    let mut response_handler = TestResponseHandler::new();
-    catalog
-        .lookup(&question_req, None, &mut response_handler)
-        .await;
-    let result = response_handler.into_message().await;
+    let result = catalog.lookup(&question_req, None).await.unwrap();
 
     assert_eq!(result.response_code(), ResponseCode::Refused);
     assert!(result.answers().is_empty());

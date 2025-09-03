@@ -186,6 +186,7 @@ impl NameserverConnection for DnsUdpConnection {
 
 #[derive(Debug)]
 #[pin_project::pin_project]
+#[allow(clippy::type_complexity)]
 pub struct DnsUdpConnectionFuture(
     #[pin]
     ResponseFuture<

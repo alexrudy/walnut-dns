@@ -12,6 +12,12 @@ use pin_project::pin_project;
 #[derive(Debug, Clone, Default)]
 pub struct DnsRequestLayer;
 
+impl DnsRequestLayer {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DnsRequestMiddleware<S> {
     inner: S,

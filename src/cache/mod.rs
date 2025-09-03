@@ -13,7 +13,7 @@ use crate::rr::TimeToLive;
 
 pub use self::config::CacheConfig;
 pub use self::lookup::{CacheTimestamp, CachedQuery, EntryMeta, Lookup, NxDomain};
-pub use self::service::DnsCacheService;
+pub use self::service::{DnsCacheLayer, DnsCacheService};
 
 mod config;
 mod lookup;
@@ -70,7 +70,7 @@ impl DnsCache {
         crate::block_in_place(|| {
             let tx = connection.transaction()?;
             let qx = QueryPersistence::new(&tx);
-            qx.insert_lookup(&lookup, now.into(), ttl.clamp(*rng.start(), *rng.end()))?;
+            qx.insert_lookup(lookup, now.into(), ttl.clamp(*rng.start(), *rng.end()))?;
             tx.commit()?;
             Ok(())
         })
@@ -88,7 +88,7 @@ impl DnsCache {
         crate::block_in_place(|| {
             let tx = connection.transaction()?;
             let qx = QueryPersistence::new(&tx);
-            qx.insert_nxdomain(&nxdomain, now.into(), ttl.clamp(*rng.start(), *rng.end()))?;
+            qx.insert_nxdomain(nxdomain, now.into(), ttl.clamp(*rng.start(), *rng.end()))?;
             tx.commit()?;
             Ok(())
         })
