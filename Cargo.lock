@@ -267,6 +267,7 @@ checksum = "2fd1289c04a9ea8cb22300a459a72a385d7c73d3259e2ed7dcb2af674838cfa9"
 [[package]]
 name = "chateau"
 version = "0.1.0"
+source = "git+https://github.com/alexrudy/chateau.git#18e9d84417cc7d689cf3c2fd27d8687bbb9f838e"
 dependencies = [
  "futures",
  "parking_lot",

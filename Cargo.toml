@@ -73,8 +73,8 @@ optional = true
 [dependencies.chateau]
 features = ["codec", "client", "server"]
 version = "0.1.0"
-path = "../chateau"
-# git = "https://github.com/alexrudy/chateau.git"
+# path = "../chateau"
+git = "https://github.com/alexrudy/chateau.git"
 
 
 [dev-dependencies]
