@@ -4,10 +4,7 @@
 //! results, including successful lookups, NXDOMAIN responses, and other negative responses.
 //! It provides conversions between the hickory-proto types and the internal representation.
 
-use std::{
-    ops::Add,
-    time::Duration,
-};
+use std::{ops::Add, time::Duration};
 
 use chrono::{DateTime, TimeDelta, TimeZone as _, Utc};
 use hickory_proto::{
@@ -44,7 +41,7 @@ use crate::{
 ///     ResponseCode::NoError,
 ///     valid_until_timestamp
 /// );
-/// 
+///
 /// // Check if it's a successful response
 /// if lookup.is_success() {
 ///     for record in lookup.answer_records() {
@@ -224,9 +221,11 @@ impl Lookup {
     /// An iterator over answer records, or empty if this is a negative response.
     pub fn answer_records(&self) -> Box<dyn Iterator<Item = &Record> + '_> {
         if self.is_success() {
-            Box::new(self.records
-                .iter()
-                .filter(|r| r.record_type() == self.query_type()))
+            Box::new(
+                self.records
+                    .iter()
+                    .filter(|r| r.record_type() == self.query_type()),
+            )
         } else {
             Box::new([].iter())
         }
@@ -408,7 +407,13 @@ impl EntryMeta {
     ///
     /// A unified `Lookup` that can represent any response type.
     pub fn into_lookup(self, records: Vec<Record>) -> Lookup {
-        Lookup::new(self.id, self.query, records, self.response_code, self.expires)
+        Lookup::new(
+            self.id,
+            self.query,
+            records,
+            self.response_code,
+            self.expires,
+        )
     }
 }
 
@@ -593,12 +598,18 @@ mod tests {
         let record = Record::from_rdata(
             Name::from_str("example.com.").unwrap(),
             300,
-            RData::A(A::new(192, 168, 1, 1))
+            RData::A(A::new(192, 168, 1, 1)),
         );
         let valid_until = CacheTimestamp::now();
         let id = QueryID::new();
 
-        let lookup = Lookup::new(id, query.clone(), vec![record.into()], ResponseCode::NoError, valid_until);
+        let lookup = Lookup::new(
+            id,
+            query.clone(),
+            vec![record.into()],
+            ResponseCode::NoError,
+            valid_until,
+        );
 
         assert_eq!(lookup.id(), id);
         assert_eq!(lookup.query(), &query);
@@ -625,7 +636,7 @@ mod tests {
                 1800,
                 604800,
                 86400,
-            ))
+            )),
         );
 
         let lookup = Lookup::new(
@@ -633,7 +644,7 @@ mod tests {
             query,
             vec![soa_record.into()],
             ResponseCode::NXDomain,
-            CacheTimestamp::now()
+            CacheTimestamp::now(),
         );
 
         assert_eq!(lookup.response_code(), ResponseCode::NXDomain);
@@ -654,7 +665,7 @@ mod tests {
             Query::query(Name::from_str("example.com.").unwrap(), RecordType::A),
             vec![],
             ResponseCode::NoError,
-            CacheTimestamp::from(future)
+            CacheTimestamp::from(future),
         );
 
         let ttl = lookup.ttl(now);
@@ -687,7 +698,7 @@ mod tests {
         let record = Record::from_rdata(
             Name::from_str("example.com.").unwrap(),
             300,
-            RData::A(A::new(192, 168, 1, 1))
+            RData::A(A::new(192, 168, 1, 1)),
         );
 
         let lookup = Lookup::from_records(query.clone(), vec![record.into()]);

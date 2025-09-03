@@ -6,7 +6,6 @@ use std::{
 };
 
 use futures::future::BoxFuture;
-use std::pin::Pin;
 use hickory_proto::{
     op::{Query, ResponseCode},
     rr::{
@@ -17,6 +16,7 @@ use hickory_proto::{
     xfer::{DnsRequest, DnsResponse},
 };
 use once_cell::sync::Lazy;
+use std::pin::Pin;
 
 use super::Lookup;
 use crate::client::DnsClientError;
@@ -257,7 +257,7 @@ where
                     tracing::trace!("Not a reserved name, forwarding to underlying service");
                     service.call(req).await
                 }
-            })
+            }),
         }
     }
 }
