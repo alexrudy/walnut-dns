@@ -14,3 +14,8 @@ skip-tree = ["windows-sys"]
 [sources]
 unknown-registry = "warn"
 unknown-git = "warn"
+
+[sources.allow-org]
+github = [
+    "alexrudy",
+]
