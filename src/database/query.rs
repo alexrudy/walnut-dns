@@ -1,9 +1,9 @@
-use hickory_proto::op::{Query, ResponseCode};
+use hickory_proto::op::Query;
 use rusqlite::named_params;
 use tracing::trace;
 
-use crate::cache::{CacheTimestamp, CachedQuery, EntryMeta, Lookup, NxDomain};
 use crate::database::record::RecordPersistence;
+use crate::lookup::{CacheTimestamp, EntryMeta, Lookup};
 use crate::rr::{QueryID, SqlName, TimeToLive};
 
 use super::{FromRow, QueryBuilder};
@@ -33,7 +33,7 @@ impl<'c> QueryPersistence<'c> {
     };
 
     #[allow(dead_code)]
-    pub(crate) fn get(&self, query: QueryID, now: CacheTimestamp) -> rusqlite::Result<CachedQuery> {
+    pub(crate) fn get(&self, query: QueryID, now: CacheTimestamp) -> rusqlite::Result<Lookup> {
         let columns = Self::TABLE.columns.join(", ");
 
         let mut stmt = self.connection.prepare(&format!(
@@ -46,10 +46,10 @@ impl<'c> QueryPersistence<'c> {
         )?;
 
         let rx = RecordPersistence::new(self.connection);
-        rx.populate_query(entry)
+        rx.populate_lookup(entry)
     }
 
-    pub(crate) fn find(&self, query: Query, now: CacheTimestamp) -> rusqlite::Result<CachedQuery> {
+    pub(crate) fn find(&self, query: Query, now: CacheTimestamp) -> rusqlite::Result<Lookup> {
         let columns = Self::TABLE.columns.join(", ");
 
         let mut stmt = self.connection.prepare(&format!(
@@ -63,46 +63,7 @@ impl<'c> QueryPersistence<'c> {
         )?;
 
         let rx = RecordPersistence::new(self.connection);
-        rx.populate_query(entry)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn insert(
-        &self,
-        entry: &CachedQuery,
-        now: CacheTimestamp,
-        ttl: TimeToLive,
-    ) -> rusqlite::Result<()> {
-        match entry.lookup() {
-            Ok(lookup) => self.insert_lookup(lookup, now, ttl),
-            Err(nx_domain) => self.insert_nxdomain(nx_domain, now, ttl),
-        }
-    }
-
-    pub(crate) fn insert_nxdomain(
-        &self,
-        nxdomain: &NxDomain,
-        now: CacheTimestamp,
-        ttl: TimeToLive,
-    ) -> rusqlite::Result<()> {
-        let mut stmt = self.connection.prepare(&Self::TABLE.insert_or_replace())?;
-
-        let expires = now + ttl;
-        trace!("Inserting nxdomain query {id}", id = nxdomain.id());
-        stmt.execute(named_params! {
-            ":id": nxdomain.id(),
-            ":name": SqlName::from(nxdomain.query().name().clone()),
-            ":record_type": u16::from(nxdomain.query().query_type()),
-            ":dns_class": u16::from(nxdomain.query().query_class()),
-            ":response_code": u16::from(nxdomain.response_code()),
-            ":expires": expires,
-            ":last_access": now,
-        })?;
-
-        let rx = RecordPersistence::new(self.connection);
-        rx.insert_records_for_query(nxdomain.id(), nxdomain.records())?;
-
-        Ok(())
+        rx.populate_lookup(entry)
     }
 
     pub(crate) fn insert_lookup(
@@ -121,7 +82,7 @@ impl<'c> QueryPersistence<'c> {
             ":name": SqlName::from(lookup.query().name().clone()),
             ":record_type": u16::from(lookup.query().query_type()),
             ":dns_class": u16::from(lookup.query().query_class()),
-            ":response_code": u16::from(ResponseCode::NoError),
+            ":response_code": u16::from(lookup.response_code()),
             ":expires": expires,
             ":last_access": now,
         })?;
