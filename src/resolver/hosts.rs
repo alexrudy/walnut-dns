@@ -243,16 +243,16 @@ where
     fn call(&mut self, req: DnsRequest) -> Self::Future {
         // Don't clone the resolver - use a reference to avoid losing data
         let query = req.query().expect("no query in DnsRequest").clone();
-        
+
         // Check hosts file first using the current resolver
         if let Some(lookup) = self.resolver.resolve(query) {
             // Hosts file hit - return direct response immediately
             tracing::trace!("Hosts file hit for {}", lookup.name());
             let mut msg: hickory_proto::op::Message = lookup.into();
             msg.set_id(req.id());
-            let response = DnsResponse::from_message(msg)
-                .expect("protocol error from hosts file response");
-            
+            let response =
+                DnsResponse::from_message(msg).expect("protocol error from hosts file response");
+
             HostsFuture {
                 inner: Box::pin(async move { Ok(response) }),
             }
@@ -261,11 +261,9 @@ where
             tracing::trace!("Not found in hosts file, forwarding to underlying service");
             let service = self.service.clone();
             let mut service = std::mem::replace(&mut self.service, service);
-            
+
             HostsFuture {
-                inner: Box::pin(async move {
-                    service.call(req).await
-                }),
+                inner: Box::pin(async move { service.call(req).await }),
             }
         }
     }
@@ -281,37 +279,40 @@ mod tests {
     use std::str::FromStr;
 
     fn create_test_hosts_with_data() -> HostsResolver {
-        use hickory_proto::rr::{RData, rdata::{A, AAAA}};
+        use hickory_proto::rr::{
+            RData,
+            rdata::{A, AAAA},
+        };
         use hickory_resolver::lookup::Lookup as HickoryLookup;
-        
+
         let mut hosts = Hosts::default();
-        
+
         // Add localhost A record (127.0.0.1)
         let localhost_name = Name::from_str("localhost.").unwrap();
         let localhost_a_query = Query::query(localhost_name.clone(), RecordType::A);
-        let localhost_a_lookup = HickoryLookup::from_rdata(
-            localhost_a_query,
-            RData::A(A::new(127, 0, 0, 1))
-        );
+        let localhost_a_lookup =
+            HickoryLookup::from_rdata(localhost_a_query, RData::A(A::new(127, 0, 0, 1)));
         hosts.insert(localhost_name.clone(), RecordType::A, localhost_a_lookup);
-        
+
         // Add localhost AAAA record (::1)
         let localhost_aaaa_query = Query::query(localhost_name.clone(), RecordType::AAAA);
         let localhost_aaaa_lookup = HickoryLookup::from_rdata(
             localhost_aaaa_query,
-            RData::AAAA(AAAA::new(0, 0, 0, 0, 0, 0, 0, 1))
+            RData::AAAA(AAAA::new(0, 0, 0, 0, 0, 0, 0, 1)),
         );
-        hosts.insert(localhost_name.clone(), RecordType::AAAA, localhost_aaaa_lookup);
-        
+        hosts.insert(
+            localhost_name.clone(),
+            RecordType::AAAA,
+            localhost_aaaa_lookup,
+        );
+
         // Add test.local A record (192.168.1.100)
         let test_local_name = Name::from_str("test.local.").unwrap();
         let test_local_query = Query::query(test_local_name.clone(), RecordType::A);
-        let test_local_lookup = HickoryLookup::from_rdata(
-            test_local_query,
-            RData::A(A::new(192, 168, 1, 100))
-        );
+        let test_local_lookup =
+            HickoryLookup::from_rdata(test_local_query, RData::A(A::new(192, 168, 1, 100)));
         hosts.insert(test_local_name, RecordType::A, test_local_lookup);
-        
+
         HostsResolver::new(hosts)
     }
 
@@ -322,13 +323,17 @@ mod tests {
         let _layer = HostsLayer::from(resolver); // Test layer construction
     }
 
-
     #[test]
     fn test_hosts_resolver_unsupported_record_types() {
         let resolver = create_test_hosts_with_data();
-        
+
         // Test that unsupported record types return None even for localhost
-        for record_type in [RecordType::MX, RecordType::TXT, RecordType::NS, RecordType::CNAME] {
+        for record_type in [
+            RecordType::MX,
+            RecordType::TXT,
+            RecordType::NS,
+            RecordType::CNAME,
+        ] {
             let query = Query::query(Name::from_str("localhost.").unwrap(), record_type);
             let result = resolver.resolve(query);
             // Should return None for unsupported record types
@@ -339,11 +344,11 @@ mod tests {
     #[test]
     fn test_hosts_resolver_localhost_a_record() {
         let resolver = create_test_hosts_with_data();
-        
+
         // Test A record query for localhost (we know this is in our test data)
         let a_query = Query::query(Name::from_str("localhost.").unwrap(), RecordType::A);
         let a_result = resolver.resolve(a_query.clone());
-        
+
         // Should definitely find localhost A record in our test data
         assert!(a_result.is_some());
         let lookup = a_result.unwrap();
@@ -355,11 +360,11 @@ mod tests {
     #[test]
     fn test_hosts_resolver_localhost_aaaa_record() {
         let resolver = create_test_hosts_with_data();
-        
+
         // Test AAAA record query for localhost (we know this is in our test data)
         let aaaa_query = Query::query(Name::from_str("localhost.").unwrap(), RecordType::AAAA);
         let aaaa_result = resolver.resolve(aaaa_query.clone());
-        
+
         // Should definitely find localhost AAAA record in our test data
         assert!(aaaa_result.is_some());
         let lookup = aaaa_result.unwrap();
@@ -371,11 +376,11 @@ mod tests {
     #[test]
     fn test_hosts_resolver_test_local_record() {
         let resolver = create_test_hosts_with_data();
-        
+
         // Test A record query for test.local (we know this is in our test data)
         let query = Query::query(Name::from_str("test.local.").unwrap(), RecordType::A);
         let result = resolver.resolve(query.clone());
-        
+
         // Should definitely find test.local A record in our test data
         assert!(result.is_some());
         let lookup = result.unwrap();
@@ -387,11 +392,11 @@ mod tests {
     #[test]
     fn test_hosts_resolver_missing_entry() {
         let resolver = create_test_hosts_with_data();
-        
+
         // Test query for hostname not in our test data
         let query = Query::query(Name::from_str("nonexistent.local.").unwrap(), RecordType::A);
         let result = resolver.resolve(query);
-        
+
         // Should return None for entries not in hosts file
         assert!(result.is_none());
     }
@@ -429,11 +434,11 @@ mod tests {
         use tower::Service;
 
         let resolver = create_test_hosts_with_data();
-        
+
         // Verify test.local is actually in our test data
         let test_query = Query::query(Name::from_str("test.local.").unwrap(), RecordType::A);
         let direct_result = resolver.resolve(test_query.clone());
-        
+
         if direct_result.is_none() {
             // If test.local isn't resolving, there's an issue with our test setup
             panic!("test.local should be in test hosts data but was not found");
@@ -477,18 +482,15 @@ mod tests {
 
         // Test queries that should be forwarded
         let forwarded_queries = [
-            ("unknown.example.com.", RecordType::A),      // Not in hosts file
-            ("localhost.", RecordType::MX),               // MX not supported by hosts
-            ("test.local.", RecordType::TXT),             // TXT not supported by hosts
-            ("test.local.", RecordType::AAAA),            // AAAA not added for test.local
+            ("unknown.example.com.", RecordType::A), // Not in hosts file
+            ("localhost.", RecordType::MX),          // MX not supported by hosts
+            ("test.local.", RecordType::TXT),        // TXT not supported by hosts
+            ("test.local.", RecordType::AAAA),       // AAAA not added for test.local
         ];
 
         for (hostname, record_type) in forwarded_queries {
             let mut msg = Message::new();
-            msg.add_query(Query::query(
-                Name::from_str(hostname).unwrap(),
-                record_type,
-            ));
+            msg.add_query(Query::query(Name::from_str(hostname).unwrap(), record_type));
             let request = DnsRequest::new(msg, hickory_proto::xfer::DnsRequestOptions::default());
 
             let response = service.call(request).await.unwrap();
