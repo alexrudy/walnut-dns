@@ -176,7 +176,7 @@ impl Lookup {
     ///
     /// The remaining time-to-live for this cache entry.
     pub fn ttl(&self, now: DateTime<Utc>) -> TimeToLive {
-        self.valid_until.since(now.into()).into()
+        self.valid_until.since(now).into()
     }
 
     /// Checks if this represents a successful DNS response.
@@ -322,7 +322,7 @@ impl From<Lookup> for Message {
         msg.add_name_servers(authorities.iter().cloned());
 
         // Manually update header counts to match the actual records
-        let mut header = msg.header().clone();
+        let mut header = *msg.header();
         header.set_answer_count(msg.answers().len() as u16);
         header.set_name_server_count(msg.name_servers().len() as u16);
         msg.set_header(header);
@@ -365,8 +365,8 @@ impl TryFrom<DnsResponse> for Lookup {
             records: parts
                 .answers
                 .into_iter()
-                .chain(parts.name_servers.into_iter())
-                .chain(parts.additionals.into_iter())
+                .chain(parts.name_servers)
+                .chain(parts.additionals)
                 .map(Record::from)
                 .collect(),
             response_code,

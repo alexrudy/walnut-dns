@@ -66,6 +66,12 @@ impl std::fmt::Debug for ReservedNamesResolver {
     }
 }
 
+impl Default for ReservedNamesResolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ReservedNamesResolver {
     pub fn new() -> Self {
         Self {
