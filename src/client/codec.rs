@@ -1,3 +1,4 @@
+use std::fmt;
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
@@ -100,8 +101,15 @@ impl<'a> BinDecodable<'a> for TaggedMessage {
 /// This is designed to be paired with [`CodecStreamAdapter`] which wraps
 /// a Framed protocol codec so that it accepts and returns [`DnsCodecItem`]
 /// instead of the inner types.
+#[derive(Clone, Default)]
 pub struct DnsCodecLayer {
     _priv: (),
+}
+
+impl fmt::Debug for DnsCodecLayer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DnsCodecLayer").finish()
+    }
 }
 
 impl DnsCodecLayer {
