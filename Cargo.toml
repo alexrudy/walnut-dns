@@ -24,6 +24,7 @@ data-encoding = { version = "2.2.0", default-features = false }
 futures = "0.3"
 future-eyeballs = "0.1"
 hickory-proto = { version = "0.25", features = ["mdns", "dnssec-ring"] }
+hickory-resolver = { version = "0.25" }
 hickory-server = { version = "0.25", features = ["dnssec-ring"] }
 http = { version = "1", optional = true }
 http-body = { version = "1", optional = true }

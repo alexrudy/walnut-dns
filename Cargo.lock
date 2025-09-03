@@ -2447,6 +2447,7 @@ dependencies = [
  "futures",
  "hickory-client",
  "hickory-proto",
+ "hickory-resolver",
  "hickory-server",
  "http",
  "http-body",
