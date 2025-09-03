@@ -1,9 +1,7 @@
-use std::{
-    net::SocketAddr,
-    ops::{Deref, DerefMut},
-    pin::Pin,
-    task::{Context, Poll, ready},
-};
+use std::net::SocketAddr;
+use std::ops::{Deref, DerefMut};
+use std::pin::Pin;
+use std::task::{Context, Poll, ready};
 
 use chateau::client::conn::protocol::framed::Tagged;
 use hickory_proto::{

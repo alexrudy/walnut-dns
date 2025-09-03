@@ -1,24 +1,16 @@
-use std::io;
-use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
-use chateau::client::conn::ConnectionError;
-use chateau::client::conn::dns::StaticResolver;
-use chateau::client::conn::protocol::framed::FramedConnection;
-use chateau::services::{ResolvedAddressableLayer, SharedService};
+use chateau::services::SharedService;
 use hickory_proto::ProtoError;
 use hickory_proto::op::{Edns, Header, Message, Query, ResponseCode};
 use hickory_proto::xfer::{DnsRequest, DnsRequestOptions, DnsResponse};
 use serde::Deserialize;
-use tokio::net::UdpSocket;
-use tokio_util::udp::UdpFramed;
 use tower::ServiceExt;
-use tracing::trace;
 
 use crate::cache::{DnsCache, DnsCacheService};
-use crate::codec::{CodecError, DnsCodec};
+use crate::codec::CodecError;
 
-use self::codec::{DnsCodecLayer, TaggedMessage};
+pub use self::codec::{DnsCodecLayer, DnsCodecService};
 pub use self::messages::{DnsRequestLayer, DnsRequestMiddleware};
 use self::nameserver::{NameServerConnection, NameserverConfig, NameserverPool};
 
@@ -30,31 +22,6 @@ pub mod nameserver;
 mod udp;
 
 type DnsService = chateau::services::SharedService<DnsRequest, DnsResponse, DnsClientError>;
-
-pub async fn client(address: SocketAddr) -> Result<DnsService, io::Error> {
-    let bind = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
-    let socket = UdpSocket::bind(bind).await?;
-    let codec: DnsCodec<TaggedMessage, TaggedMessage> =
-        DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp);
-
-    let protocol = FramedConnection::new(UdpFramed::new(socket, codec));
-
-    let driver = protocol.driver();
-    tokio::spawn(async move { driver.await });
-    trace!("spawned driver");
-    Ok(tower::ServiceBuilder::new()
-        .layer(chateau::services::SharedService::layer())
-        .map_err(|error| match error {
-            ConnectionError::Resolving(e) => match e {},
-            ConnectionError::Connecting(e) => match e {},
-            ConnectionError::Handshaking(e) => match e {},
-            ConnectionError::Service(svc) => svc,
-            _ => panic!("Unprocessable"),
-        })
-        .layer(ResolvedAddressableLayer::new(StaticResolver::new(address)))
-        .layer(DnsCodecLayer::new())
-        .service(protocol))
-}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClientConfiguration {
@@ -80,14 +47,6 @@ pub struct Client {
 }
 
 impl Client {
-    pub async fn new_udp_client(address: SocketAddr) -> io::Result<Client> {
-        let svc = client(address).await?;
-        Ok(Client {
-            inner: svc,
-            config: Arc::new(ClientConfiguration::default()),
-        })
-    }
-
     pub fn new(configuration: ClientConfiguration) -> Client {
         let mut connections = Vec::new();
         for ns in &configuration.nameserver {
