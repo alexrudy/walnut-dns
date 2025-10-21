@@ -2,10 +2,11 @@ use std::cmp;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
+use chateau::client::conn::dns::{SocketAddrs, StaticResolver};
 use chateau::client::conn::protocol::framed::FramedProtocol;
 #[cfg(feature = "tls")]
 use chateau::client::conn::transport::StaticHostTlsTransport;
-use chateau::client::conn::transport::tcp::TcpTransport;
+use chateau::client::conn::transport::tcp::{SimpleTcpTransport, TcpTransportConfig};
 use serde::Deserialize;
 
 mod connection;
@@ -51,10 +52,10 @@ impl NameServerConnection {
         let codec: DnsCodec<TaggedMessage, TaggedMessage> =
             DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp);
 
-        let transport = DnsUdpTransport::new(bind);
+        let transport = DnsUdpTransport::new(bind, addr);
         let protocol = DnsUdpProtocol::new(codec, false);
 
-        let connector = DnsConnector::new(addr, transport, protocol);
+        let connector = DnsConnector::new(transport, protocol);
         let svc = DnsConnectorService::new(connector, hickory_proto::xfer::Protocol::Udp);
         Self {
             service: SharedNameserverService::new(svc),
@@ -67,7 +68,13 @@ impl NameServerConnection {
         let codec: DnsCodec<TaggedMessage, TaggedMessage> =
             DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Tcp);
         let protocol = FramedProtocol::new(codec);
-        let connector = DnsConnector::new(addr, TcpTransport::default(), protocol);
+        let connector = DnsConnector::new(
+            SimpleTcpTransport::new(
+                StaticResolver::new(SocketAddrs::from(addr)),
+                TcpTransportConfig::default(),
+            ),
+            protocol,
+        );
         let svc = DnsConnectorService::new(connector, hickory_proto::xfer::Protocol::Tcp);
         Self {
             service: SharedNameserverService::new(svc),
@@ -87,10 +94,16 @@ impl NameServerConnection {
             .with_no_client_auth();
         tlsconfig.alpn_protocols = vec![b"dot".to_vec()];
 
-        let transport =
-            StaticHostTlsTransport::new(TcpTransport::default(), Arc::new(tlsconfig), server_name);
+        let transport = StaticHostTlsTransport::new(
+            SimpleTcpTransport::new(
+                StaticResolver::new(SocketAddrs::from(addr)),
+                TcpTransportConfig::default(),
+            ),
+            Arc::new(tlsconfig),
+            server_name,
+        );
         let protocol = FramedProtocol::new(codec);
-        let connector = DnsConnector::new(addr, transport, protocol);
+        let connector = DnsConnector::new(transport, protocol);
         let svc = DnsConnectorService::new(connector, hickory_proto::xfer::Protocol::Tcp);
         Self {
             service: SharedNameserverService::new(svc),

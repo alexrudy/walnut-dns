@@ -35,17 +35,20 @@ enum Bind {
 #[derive(Clone)]
 pub struct DnsUdpTransport {
     bind: Arc<Mutex<Bind>>,
+    address: SocketAddr,
 }
 
 impl DnsUdpTransport {
-    pub fn new(bind: SocketAddr) -> Self {
+    /// Create a new UDP transport for connection to a specific address
+    pub fn new(bind: SocketAddr, address: SocketAddr) -> Self {
         Self {
             bind: Arc::new(Mutex::new(Bind::Address(bind))),
+            address,
         }
     }
 }
 
-impl tower::Service<SocketAddr> for DnsUdpTransport {
+impl tower::Service<&TaggedMessage> for DnsUdpTransport {
     type Response = DnsUdpAddressed;
 
     type Error = io::Error;
@@ -56,8 +59,9 @@ impl tower::Service<SocketAddr> for DnsUdpTransport {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: SocketAddr) -> Self::Future {
+    fn call(&mut self, _: &TaggedMessage) -> Self::Future {
         let bind = self.bind.clone();
+        let addr = self.address.clone();
         Box::pin(async move {
             let mut inner = bind.lock().await;
             let socket = match &*inner {
@@ -70,7 +74,7 @@ impl tower::Service<SocketAddr> for DnsUdpTransport {
             };
             Ok(DnsUdpAddressed {
                 socket,
-                destination: req,
+                destination: addr,
             })
         })
     }

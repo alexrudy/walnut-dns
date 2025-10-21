@@ -81,12 +81,12 @@ impl<C> InnerConnector<C> {
     }
 }
 
-pub struct DnsConnector<A, T, P>
+/// Connect a DNS Transport
+pub struct DnsConnector<T, P>
 where
-    T: Transport<A>,
+    T: Transport<TaggedMessage>,
     P: Protocol<T::IO, TaggedMessage>,
 {
-    address: A,
     transport: T,
     protocol: P,
 
@@ -94,15 +94,13 @@ where
     connection: Arc<Mutex<InnerConnector<<P as Protocol<T::IO, TaggedMessage>>::Connection>>>,
 }
 
-impl<A, T, P> fmt::Debug for DnsConnector<A, T, P>
+impl<T, P> fmt::Debug for DnsConnector<T, P>
 where
-    A: fmt::Debug,
-    T: Transport<A> + fmt::Debug,
+    T: Transport<TaggedMessage> + fmt::Debug,
     P: Protocol<T::IO, TaggedMessage> + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DnsConnector")
-            .field("address", &self.address)
             .field("transport", &self.transport)
             .field("protocol", &self.protocol)
             .field("connection", &self.connection)
@@ -110,15 +108,13 @@ where
     }
 }
 
-impl<A, T, P> Clone for DnsConnector<A, T, P>
+impl<T, P> Clone for DnsConnector<T, P>
 where
-    A: Clone,
-    T: Transport<A> + Clone,
+    T: Transport<TaggedMessage> + Clone,
     P: Protocol<T::IO, TaggedMessage> + Clone,
 {
     fn clone(&self) -> Self {
         Self {
-            address: self.address.clone(),
             transport: self.transport.clone(),
             protocol: self.protocol.clone(),
             connection: self.connection.clone(),
@@ -126,27 +122,25 @@ where
     }
 }
 
-type DnsConnectionError<A, T, P> = ConnectionError<
-    <T as Transport<A>>::Error,
-    <P as Protocol<<T as Transport<A>>::IO, TaggedMessage>>::Error,
+type DnsConnectionError<T, P> = ConnectionError<
+    <T as Transport<TaggedMessage>>::Error,
+    <P as Protocol<<T as Transport<TaggedMessage>>::IO, TaggedMessage>>::Error,
 >;
 
-impl<A, T, P> DnsConnector<A, T, P>
+impl<T, P> DnsConnector<T, P>
 where
-    A: Clone,
-    T: Transport<A>,
+    T: Transport<TaggedMessage>,
     P: Protocol<T::IO, TaggedMessage> + Clone,
 {
-    pub fn new(address: A, transport: T, protocol: P) -> Self {
+    pub fn new(transport: T, protocol: P) -> Self {
         Self {
-            address,
             transport,
             protocol,
             connection: Arc::new(Mutex::new(InnerConnector::new())),
         }
     }
 
-    pub fn connect(&mut self) -> Connecting<A, T, P> {
+    pub fn connect(&mut self, request: &TaggedMessage) -> Connecting<T, P> {
         let state = {
             let mut inner = self.connection.lock().expect("poisoned");
             match std::mem::replace(&mut inner.connection, ConnectionState::Busy) {
@@ -154,7 +148,7 @@ where
                     let protocol = self.protocol.clone();
                     let protocol = std::mem::replace(&mut self.protocol, protocol);
                     ConnectingState::Transport {
-                        future: self.transport.connect(self.address.clone()),
+                        future: self.transport.connect(request),
                         protocol,
                     }
                 }
@@ -178,7 +172,7 @@ where
     fn poll_ready(
         &mut self,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), DnsConnectionError<A, T, P>>> {
+    ) -> Poll<Result<(), DnsConnectionError<T, P>>> {
         let inner = self.connection.lock().expect("poisoned");
 
         // Check if we already have a connection, no need to backpressure connector.
@@ -195,9 +189,9 @@ where
 }
 
 #[pin_project::pin_project(project=StateProjection)]
-enum ConnectingState<A, T, P>
+enum ConnectingState<T, P>
 where
-    T: Transport<A>,
+    T: Transport<TaggedMessage>,
     P: Protocol<T::IO, TaggedMessage>,
 {
     Waiting {
@@ -218,9 +212,9 @@ where
     },
 }
 
-impl<A, T, P> fmt::Debug for ConnectingState<A, T, P>
+impl<T, P> fmt::Debug for ConnectingState<T, P>
 where
-    T: Transport<A>,
+    T: Transport<TaggedMessage>,
     P: Protocol<T::IO, TaggedMessage>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -248,21 +242,21 @@ pub enum ConnectionError<TE, PE> {
 
 #[derive(Debug)]
 #[pin_project::pin_project]
-pub struct Connecting<A, T, P>
+pub struct Connecting<T, P>
 where
-    T: Transport<A>,
+    T: Transport<TaggedMessage>,
     P: Protocol<T::IO, TaggedMessage>,
 {
     #[pin]
-    state: ConnectingState<A, T, P>,
+    state: ConnectingState<T, P>,
 
     #[allow(clippy::type_complexity)]
     inner: Weak<Mutex<InnerConnector<<P as Protocol<T::IO, TaggedMessage>>::Connection>>>,
 }
 
-impl<A, T, P> Future for Connecting<A, T, P>
+impl<T, P> Future for Connecting<T, P>
 where
-    T: Transport<A>,
+    T: Transport<TaggedMessage>,
     T::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     P: Protocol<T::IO, TaggedMessage>,
     <P as Protocol<T::IO, TaggedMessage>>::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -364,25 +358,23 @@ impl<C> Drop for DnsConnection<C> {
 }
 
 #[derive(Debug, Clone)]
-pub struct DnsConnectorService<A, T, P>
+pub struct DnsConnectorService<T, P>
 where
-    A: Clone,
-    T: Transport<A>,
+    T: Transport<TaggedMessage>,
     P: Protocol<T::IO, TaggedMessage> + Clone,
 {
-    connector: DnsConnector<A, T, P>,
+    connector: DnsConnector<T, P>,
     tx: watch::Sender<ConnectionStatus>,
     rx: watch::Receiver<ConnectionStatus>,
     protocol: hickory_proto::xfer::Protocol,
 }
 
-impl<A, T, P> DnsConnectorService<A, T, P>
+impl<T, P> DnsConnectorService<T, P>
 where
-    A: Clone,
-    T: Transport<A>,
+    T: Transport<TaggedMessage>,
     P: Protocol<T::IO, TaggedMessage> + Clone,
 {
-    pub fn new(connector: DnsConnector<A, T, P>, protocol: hickory_proto::xfer::Protocol) -> Self {
+    pub fn new(connector: DnsConnector<T, P>, protocol: hickory_proto::xfer::Protocol) -> Self {
         let (tx, rx) = watch::channel(ConnectionStatus::NotConnected);
         Self {
             connector,
@@ -393,10 +385,9 @@ where
     }
 }
 
-impl<A, T, P> tower::Service<TaggedMessage> for DnsConnectorService<A, T, P>
+impl<T, P> tower::Service<TaggedMessage> for DnsConnectorService<T, P>
 where
-    A: fmt::Debug + Clone + 'static,
-    T: Transport<A> + 'static,
+    T: Transport<TaggedMessage> + 'static,
     P: Protocol<T::IO, TaggedMessage> + Clone + Send + 'static,
     P::Connection: Connection<TaggedMessage, Response = TaggedMessage> + Send + 'static,
 {
@@ -413,8 +404,8 @@ where
     }
 
     fn call(&mut self, req: TaggedMessage) -> Self::Future {
-        let span = tracing::debug_span!("dns", address=?self.connector.address);
-        let connecting = self.connector.connect();
+        let span = tracing::debug_span!("dns");
+        let connecting = self.connector.connect(&req);
         let status = self.tx.clone();
 
         DnsConnectorServiceFuture(Box::pin(
@@ -438,10 +429,9 @@ where
     }
 }
 
-impl<A, T, P> NameserverConnection for DnsConnectorService<A, T, P>
+impl<T, P> NameserverConnection for DnsConnectorService<T, P>
 where
-    A: fmt::Debug + Clone + 'static,
-    T: Transport<A> + 'static,
+    T: Transport<TaggedMessage> + 'static,
     P: Protocol<T::IO, TaggedMessage> + Clone + Send + 'static,
     P::Connection: Connection<TaggedMessage, Response = TaggedMessage> + Send + 'static,
 {

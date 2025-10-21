@@ -266,15 +266,16 @@ checksum = "2fd1289c04a9ea8cb22300a459a72a385d7c73d3259e2ed7dcb2af674838cfa9"
 
 [[package]]
 name = "chateau"
-version = "0.1.0"
-source = "git+https://github.com/alexrudy/chateau.git#18e9d84417cc7d689cf3c2fd27d8687bbb9f838e"
+version = "0.2.0-rc1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be61e0a703c373ccc2d10ffad44140823a9c93d360a8a9c0a9979c2ea0dc8d11"
 dependencies = [
  "futures",
  "parking_lot",
  "pin-project",
  "rustls",
  "rustls-native-certs",
- "socket2 0.5.10",
+ "socket2 0.6.0",
  "thiserror 2.0.16",
  "tokio",
  "tokio-rustls",
@@ -1778,9 +1779,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-native-certs"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fcff2dd52b58a8d98a70243663a0d234c4e2b79235637849d15913394a247d3"
+checksum = "9980d917ebb0c0536119ba501e90834767bffc3d60641457fd84a1f3fd337923"
 dependencies = [
  "openssl-probe",
  "rustls-pki-types",
