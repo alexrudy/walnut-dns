@@ -73,9 +73,9 @@ optional = true
 
 [dependencies.chateau]
 features = ["client", "codec", "server"]
-version = "0.2.0-rc1"
+# version = "0.2.0-rc1"
 # path = "../chateau"
-# git = "https://github.com/alexrudy/chateau.git"
+git = "https://github.com/alexrudy/chateau.git"
 
 
 [dev-dependencies]
