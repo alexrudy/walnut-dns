@@ -23,7 +23,7 @@ use crate::error::HickoryError;
 
 #[pin_project::pin_project]
 pub struct DnsFramedStream<IO> {
-    addr: SocketAddr,
+    addr: Option<SocketAddr>,
 
     #[pin]
     codec: Framed<IO, DnsCodecRecovery<Message, MessageRequest>>,
@@ -35,10 +35,26 @@ where
     IO: AsyncRead + AsyncWrite + HasConnectionInfo,
     IO::Addr: Into<SocketAddr> + Clone,
 {
-    pub(crate) fn new(stream: IO, protocol: Protocol) -> Self {
+    pub fn new(stream: IO, protocol: Protocol) -> Self {
         let remote = stream.info().remote_addr().clone().into();
         Self {
-            addr: remote,
+            addr: Some(remote),
+            codec: Framed::new(
+                stream,
+                DnsCodecRecovery::new(DnsCodec::new_for_protocol(protocol)),
+            ),
+            protocol,
+        }
+    }
+}
+
+impl<IO> DnsFramedStream<IO>
+where
+    IO: AsyncRead + AsyncWrite,
+{
+    pub fn new_without_address(stream: IO, protocol: Protocol) -> Self {
+        Self {
+            addr: None,
             codec: Framed::new(
                 stream,
                 DnsCodecRecovery::new(DnsCodec::new_for_protocol(protocol)),
@@ -60,11 +76,13 @@ where
 
     fn start_send(self: Pin<&mut Self>, item: (Message, SocketAddr)) -> Result<(), Self::Error> {
         let (message, addr) = item;
-        if addr != self.addr {
-            return Err(CodecError::IO(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("Incorrect address for stream ({}): {addr}", self.addr),
-            )));
+        if let Some(reference) = self.addr {
+            if reference != addr {
+                return Err(CodecError::IO(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("Incorrect address for stream ({reference}): {addr}"),
+                )));
+            }
         }
 
         self.project().codec.start_send(message)
@@ -172,6 +190,19 @@ where
             tasks: FuturesUnordered::new(),
             cancelled: false,
         }
+    }
+}
+
+impl<S, IO> DnsConnection<S, DnsFramedStream<IO>>
+where
+    IO: AsyncRead + AsyncWrite,
+    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+{
+    pub fn streamed_unprotected(service: S, stream: IO, protocol: Protocol) -> Self {
+        Self::new(
+            service,
+            DnsFramedStream::new_without_address(stream, protocol),
+        )
     }
 }
 

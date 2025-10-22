@@ -51,3 +51,38 @@ where
         DnsConnection::streamed(service, stream, self.protocol)
     }
 }
+
+pub struct DnsOverStreamUnprotected<IO> {
+    inner: DnsOverStream<IO>,
+}
+
+impl<IO> DnsOverStreamUnprotected<IO> {
+    pub fn tcp() -> Self {
+        Self {
+            inner: DnsOverStream::tcp(),
+        }
+    }
+
+    #[cfg(feature = "tls")]
+    pub fn tls() -> Self {
+        Self {
+            inner: DnsOverStream::tls(),
+        }
+    }
+}
+
+impl<S, IO> Protocol<S, IO, Request> for DnsOverStreamUnprotected<IO>
+where
+    IO: AsyncRead + AsyncWrite + 'static,
+    S: tower::Service<Request, Response = Message, Error = HickoryError> + 'static,
+    S::Future: Send + 'static,
+{
+    type Response = Message;
+    type Error = HickoryError;
+
+    type Connection = DnsConnection<S, DnsFramedStream<IO>>;
+
+    fn serve_connection(&self, stream: IO, service: S) -> Self::Connection {
+        DnsConnection::streamed_unprotected(service, stream, self.inner.protocol)
+    }
+}
