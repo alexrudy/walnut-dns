@@ -1,6 +1,6 @@
 use std::fmt;
 use std::marker::PhantomData;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use bytes::{Buf, BufMut};
 use chateau::client::conn::protocol::framed::Tagged;
@@ -125,6 +125,20 @@ impl MessageDecoded<MessageRequest> {
             MessageDecoded::Failed(header, response_code) => DnsRequest::Failed((
                 Message::error_msg(header.id(), header.op_code(), response_code),
                 addr,
+            )),
+        }
+    }
+
+    pub fn without_address(self, protocol: Protocol) -> DnsRequest {
+        match self {
+            MessageDecoded::Message(message_request) => DnsRequest::Message(Request::new(
+                message_request,
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+                protocol,
+            )),
+            MessageDecoded::Failed(header, response_code) => DnsRequest::Failed((
+                Message::error_msg(header.id(), header.op_code(), response_code),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
             )),
         }
     }

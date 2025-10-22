@@ -105,10 +105,17 @@ where
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
-        this.codec
-            .as_mut()
-            .poll_next(cx)
-            .map(|r| r.map(|r| r.map(|msg| msg.with_address(*this.addr, *this.protocol))))
+        this.codec.as_mut().poll_next(cx).map(|r| {
+            r.map(|r| {
+                r.map(|msg| {
+                    if let Some(addr) = *this.addr {
+                        msg.with_address(addr, *this.protocol)
+                    } else {
+                        msg.without_address(*this.protocol)
+                    }
+                })
+            })
+        })
     }
 }
 
