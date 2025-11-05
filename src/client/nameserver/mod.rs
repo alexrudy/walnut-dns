@@ -10,10 +10,17 @@ use serde::Deserialize;
 
 mod connection;
 mod pool;
+mod simple;
+mod targeted;
 
 use self::connection::SharedNameserverService;
 pub use self::connection::{ConnectionStatus, NameserverConnection};
 pub use self::pool::NameserverPool;
+pub use self::simple::{MultiTargetService, SimpleNameserverService};
+pub use self::targeted::{
+    MultiNameserverService, SpecificNameserverService, TargetedDnsRequest, TargetedNameserverService,
+    DefaultNameserverLayer, DefaultNameserverService,
+};
 use super::{
     connection::{DnsConnector, DnsConnectorService},
     udp::{DnsUdpProtocol, DnsUdpTransport},
@@ -29,6 +36,11 @@ pub struct NameServerConnection {
 }
 
 impl NameServerConnection {
+    /// Get a reference to the underlying service
+    pub fn service(&self) -> &SharedNameserverService {
+        &self.service
+    }
+
     pub fn from_config(address: IpAddr, config: ConnectionConfig) -> Self {
         match &config.protocol {
             ProtocolConfig::Udp => Self::new_udp(address, config),

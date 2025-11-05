@@ -16,7 +16,7 @@ use self::nameserver::{NameServerConnection, NameserverConfig, NameserverPool};
 
 mod codec;
 mod connection;
-mod messages;
+pub mod messages;
 // mod http;
 pub mod nameserver;
 mod udp;
