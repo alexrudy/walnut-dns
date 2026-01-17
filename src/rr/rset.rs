@@ -252,6 +252,41 @@ impl RecordSet {
         self.records.iter().chain(self.rrsigs.iter())
     }
 
+    /// Get an iterator over all records in this set
+    ///
+    /// Returns an iterator that yields all DNS records in the set.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over all records
+    pub fn iter(&self) -> impl Iterator<Item = &Record> {
+        self.records.iter().chain(self.rrsigs.iter())
+    }
+
+    /// Convert this record set into an iterator over all records and signatures
+    ///
+    /// Consumes the record set and returns an iterator over all DNS records
+    /// and their RRSIG signatures.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over all records and signatures
+    pub fn into_hickory_iter(self) -> RecordSetIntoHickoryIter {
+        RecordSetIntoHickoryIter(self.records.into_iter().chain(self.rrsigs.into_iter()))
+    }
+
+    /// Convert this record set into an iterator over all records and signatures
+    ///
+    /// Consumes the record set and returns an iterator over all DNS records
+    /// and their RRSIG signatures.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over all records and signatures
+    pub fn hickory_iter(&self) -> RecordSetHickoryIter<'_> {
+        RecordSetHickoryIter(self.records.iter().chain(self.rrsigs.iter()))
+    }
+
     /// Check if this record set is empty
     ///
     /// Returns true if the record set contains no DNS records.
@@ -625,6 +660,76 @@ impl AsHickory for RecordSet {
         }
 
         rset
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RecordSetIter<'r>(
+    std::iter::Chain<std::slice::Iter<'r, Record>, std::slice::Iter<'r, Record>>,
+);
+
+impl<'r> Iterator for RecordSetIter<'r> {
+    type Item = &'r Record;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+}
+
+impl<'r> IntoIterator for &'r RecordSet {
+    type Item = &'r Record;
+    type IntoIter = RecordSetIter<'r>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        RecordSetIter(self.records.iter().chain(self.rrsigs.iter()))
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RecordSetHickoryIter<'r>(
+    std::iter::Chain<std::slice::Iter<'r, Record>, std::slice::Iter<'r, Record>>,
+);
+
+impl<'r> Iterator for RecordSetHickoryIter<'r> {
+    type Item = hickory_proto::rr::Record;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(|record| record.as_hickory())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RecordSetIntoIter(
+    std::iter::Chain<std::vec::IntoIter<Record>, std::vec::IntoIter<Record>>,
+);
+
+impl Iterator for RecordSetIntoIter {
+    type Item = Record;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+}
+
+impl IntoIterator for RecordSet {
+    type Item = Record;
+    type IntoIter = RecordSetIntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        RecordSetIntoIter(self.records.into_iter().chain(self.rrsigs.into_iter()))
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RecordSetIntoHickoryIter(
+    std::iter::Chain<std::vec::IntoIter<Record>, std::vec::IntoIter<Record>>,
+);
+
+impl Iterator for RecordSetIntoHickoryIter {
+    type Item = hickory_proto::rr::Record;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(|record| record.as_hickory())
     }
 }
 
