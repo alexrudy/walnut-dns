@@ -1,14 +1,20 @@
+use std::fmt;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use chateau::services::SharedService;
 use hickory_proto::ProtoError;
-use hickory_proto::op::{Edns, Header, Message, Query, ResponseCode};
+use hickory_proto::op::{Edns, Header, Message, OpCode, Query, ResponseCode};
+use hickory_proto::rr::{DNSClass, Name, RecordType};
 use hickory_proto::xfer::{DnsRequest, DnsRequestOptions, DnsResponse};
+use pin_project::pin_project;
 use serde::Deserialize;
 use tower::ServiceExt;
 
 use crate::cache::{DnsCache, DnsCacheService};
 use crate::codec::CodecError;
+use crate::rr::RecordSet;
 
 pub use self::codec::{DnsCodecLayer, DnsCodecService};
 pub use self::messages::{DnsRequestLayer, DnsRequestMiddleware};
@@ -72,11 +78,7 @@ impl Client {
         }
     }
 
-    pub fn lookup(
-        &self,
-        mut query: Query,
-        options: DnsRequestOptions,
-    ) -> tower::util::Oneshot<DnsService, DnsRequest> {
+    pub fn lookup(&self, mut query: Query, options: DnsRequestOptions) -> ClientResponseFuture {
         use rand::prelude::*;
 
         let mut rng = rand::rng();
@@ -104,7 +106,59 @@ impl Client {
         }
 
         let request = DnsRequest::new(message, options).with_original_query(original_query);
-        self.inner.clone().oneshot(request)
+        ClientResponseFuture(self.inner.clone().oneshot(request))
+    }
+
+    pub fn notify<R>(
+        &self,
+        name: Name,
+        query_class: DNSClass,
+        query_type: RecordType,
+        rrset: Option<R>,
+        options: DnsRequestOptions,
+    ) -> ClientResponseFuture
+    where
+        R: Into<RecordSet>,
+    {
+        use rand::prelude::*;
+
+        // build the message
+        let mut rng = rand::rng();
+        let mut message = Message::new();
+        message.set_id(rng.random());
+        message
+            // 3.3. NOTIFY is similar to QUERY in that it has a request message with
+            // the header QR flag "clear" and a response message with QR "set".  The
+            // response message contains no useful information, but its reception by
+            // the Primary is an indication that the Secondary has received the NOTIFY
+            // and that the Primary Zone Server can remove the Secondary from any retry queue for
+            // this NOTIFY event.
+            .set_op_code(OpCode::Notify);
+
+        // Extended dns
+        if options.use_edns {
+            message
+                .extensions_mut()
+                .get_or_insert_with(Edns::new)
+                .set_max_payload(self.config.max_payload_len)
+                .set_version(0);
+        }
+
+        // add the query
+        let mut query: Query = Query::new();
+        query
+            .set_name(name)
+            .set_query_class(query_class)
+            .set_query_type(query_type);
+        message.add_query(query);
+
+        // add the notify message, see https://tools.ietf.org/html/rfc1996, section 3.7
+        if let Some(rrset) = rrset {
+            message.add_answers(rrset.into().into_hickory_iter());
+        }
+
+        let request = DnsRequest::new(message, options);
+        ClientResponseFuture(self.inner.clone().oneshot(request))
     }
 }
 
@@ -150,5 +204,22 @@ impl From<CodecError> for DnsClientError {
             }
             CodecError::IO(_) => DnsClientError::Closed,
         }
+    }
+}
+
+#[pin_project]
+pub struct ClientResponseFuture(#[pin] tower::util::Oneshot<DnsService, DnsRequest>);
+
+impl fmt::Debug for ClientResponseFuture {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("ClientResponseFuture").finish()
+    }
+}
+
+impl Future for ClientResponseFuture {
+    type Output = Result<DnsResponse, DnsClientError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.project().0.poll(cx)
     }
 }
