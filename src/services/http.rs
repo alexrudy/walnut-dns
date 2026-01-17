@@ -3,7 +3,7 @@ use std::{
     fmt, io,
     marker::PhantomData,
     net::{Ipv4Addr, SocketAddr},
-    pin::{Pin, pin},
+    pin::Pin,
     task::{Context, Poll, ready},
 };
 
