@@ -6,6 +6,7 @@
 
 use std::{
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -52,15 +53,20 @@ impl std::future::Future for HostsFuture {
 /// ```
 #[derive(Debug)]
 pub struct HostsResolver {
-    hosts: Hosts,
+    hosts: Arc<Hosts>,
 }
 
 impl Clone for HostsResolver {
     fn clone(&self) -> Self {
-        // Since Hosts doesn't implement Clone, we'll create a new empty instance
-        // This is a limitation of the hickory-resolver Hosts API
-        // In production, hosts files don't change often, so this should be acceptable
-        Self::empty()
+        Self {
+            hosts: Arc::clone(&self.hosts),
+        }
+    }
+}
+
+impl From<Arc<Hosts>> for HostsResolver {
+    fn from(hosts: Arc<Hosts>) -> Self {
+        Self { hosts }
     }
 }
 
@@ -79,7 +85,9 @@ impl HostsResolver {
     /// Returns an error if the hosts file cannot be read or parsed.
     pub fn from_system() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let hosts = Hosts::from_system()?;
-        Ok(Self { hosts })
+        Ok(Self {
+            hosts: Arc::new(hosts),
+        })
     }
 
     /// Creates a new hosts resolver with a custom hosts configuration.
@@ -88,7 +96,9 @@ impl HostsResolver {
     ///
     /// * `hosts` - The hosts configuration to use
     pub fn new(hosts: Hosts) -> Self {
-        Self { hosts }
+        Self {
+            hosts: Arc::new(hosts),
+        }
     }
 
     /// Creates an empty hosts resolver.
@@ -97,7 +107,7 @@ impl HostsResolver {
     /// add hosts entries using a custom Hosts instance.
     pub fn empty() -> Self {
         Self {
-            hosts: Hosts::default(),
+            hosts: Arc::new(Hosts::default()),
         }
     }
 
