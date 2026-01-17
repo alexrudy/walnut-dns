@@ -24,6 +24,12 @@ pub use hickory_proto::rr::Name;
 ///
 pub use hickory_proto::rr::LowerName;
 
+///
+pub use hickory_proto::rr::DNSClass;
+
+///
+pub use hickory_proto::rr::RecordType;
+
 /// Trait for converting walnut-dns types to their hickory-dns equivalents
 ///
 /// This trait provides a consistent interface for converting internal types
