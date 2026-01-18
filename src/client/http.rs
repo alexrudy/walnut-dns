@@ -8,9 +8,9 @@ use hickory_proto::{
 use http_body_util::BodyExt;
 use tokio_util::codec::{Decoder as _, Encoder as _};
 
-use crate::{codec::DNSCodec, services::http::DNSBody};
+use crate::{codec::DnsCodec, services::http::DnsBody};
 
-use super::DNSClientError;
+use super::DnsClientError;
 
 const MIME_APPLICATION_DNS: &str = "application/dns-message";
 
@@ -38,7 +38,7 @@ impl<S> tower::Layer<S> for DNSOverHTTPLayer {
 pub struct DNSOverHTTP<S> {
     dns_service: S,
     version: http::Version,
-    codec: DNSCodec<Message, Message>,
+    codec: DnsCodec<Message, Message>,
     method: http::Method,
     uri: http::Uri,
 }
@@ -48,7 +48,7 @@ impl<S> DNSOverHTTP<S> {
         Self {
             dns_service,
             version,
-            codec: DNSCodec::new(false, None),
+            codec: DnsCodec::new(false, None),
             method: http::Method::POST,
             uri,
         }
@@ -57,12 +57,16 @@ impl<S> DNSOverHTTP<S> {
 
 impl<S> tower::Service<DnsRequest> for DNSOverHTTP<S>
 where
-    S: tower::Service<http::Request<DNSBody>, Response = http::Response<hyper::body::Incoming>>
-        + Clone,
+    S: tower::Service<http::Request<DnsBody>, Response = http::Response<hyper::body::Incoming>>
+        + Clone
+        + Send
+        + 'static,
+    S::Future: Send + 'static,
+    S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     type Response = DnsResponse;
 
-    type Error = DNSClientError;
+    type Error = DnsClientError;
 
     type Future = DNSOverHttpsFuture;
 
@@ -70,13 +74,15 @@ where
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        self.dns_service.poll_ready(cx)
+        self.dns_service
+            .poll_ready(cx)
+            .map_err(|error| DnsClientError::Service(error.into()))
     }
 
     fn call(&mut self, req: DnsRequest) -> Self::Future {
         let svc = self.dns_service.clone();
-        let svc = std::mem::replace(&mut self.dns_service, svc);
-        let codec = self.codec.clone();
+        let mut svc = std::mem::replace(&mut self.dns_service, svc);
+        let mut codec = self.codec.clone();
         let method = self.method.clone();
         let builder = http::Request::builder()
             .header(http::header::CONTENT_TYPE, MIME_APPLICATION_DNS)
@@ -91,13 +97,17 @@ where
             codec.encode(message, &mut buf)?;
 
             let req = match method {
-                http::Method::POST => builder.body(DNSBody::new(buf.freeze())),
+                http::Method::POST => builder.body(DnsBody::new(buf.freeze())),
                 _ => panic!("Unsupported HTTP method: {method}"),
-            }?;
+            }
+            .expect("Failed to build http request");
 
-            let res = svc.call(req).await?;
+            let res = svc
+                .call(req)
+                .await
+                .map_err(|error| DnsClientError::Service(error.into()))?;
 
-            let body = BytesMut::from(res.into_body().collect().await?.to_bytes());
+            let mut body = BytesMut::from(res.into_body().collect().await?.to_bytes());
             let msg = codec.decode(&mut body)?.unwrap();
             DnsResponse::from_message(msg).map_err(Into::into)
         }))
@@ -105,11 +115,11 @@ where
 }
 
 pub struct DNSOverHttpsFuture(
-    Pin<Box<dyn Future<Output = Result<DnsResponse, DNSClientError>> + Send>>,
+    Pin<Box<dyn Future<Output = Result<DnsResponse, DnsClientError>> + Send>>,
 );
 
 impl Future for DNSOverHttpsFuture {
-    type Output = Result<DnsResponse, DNSClientError>;
+    type Output = Result<DnsResponse, DnsClientError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         self.0.as_mut().poll(cx)

@@ -205,6 +205,8 @@ where
     IO: AsyncRead + AsyncWrite,
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
 {
+    /// Creates a new `DnsFramedStream` without an address, meaning that
+    /// no address validation is performed on send.
     pub fn streamed_unprotected(service: S, stream: IO, protocol: Protocol) -> Self {
         Self::new(
             service,
@@ -219,6 +221,8 @@ where
     IO::Addr: Into<SocketAddr> + Clone,
     S: tower::Service<Request, Response = Message, Error = HickoryError>,
 {
+    /// Creates a new `DnsFramedStream` with an address, meaning that
+    /// address validation is performed on send.
     pub fn streamed(service: S, stream: IO, protocol: Protocol) -> Self {
         Self::new(service, DnsFramedStream::new(stream, protocol))
     }

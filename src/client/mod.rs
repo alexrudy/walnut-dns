@@ -17,13 +17,14 @@ use crate::codec::CodecError;
 use crate::rr::RecordSet;
 
 pub use self::codec::{DnsCodecLayer, DnsCodecService};
+pub use self::http::{DNSOverHTTP, DNSOverHTTPLayer, DNSOverHttpsFuture};
 pub use self::messages::{DnsRequestLayer, DnsRequestMiddleware};
 use self::nameserver::{NameServerConnection, NameserverConfig, NameserverPool};
 
 mod codec;
 mod connection;
+mod http;
 mod messages;
-// mod http;
 pub mod nameserver;
 mod udp;
 
