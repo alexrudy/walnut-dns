@@ -266,7 +266,10 @@ where
                     trace!("Recieved message");
 
                     let id = message.id();
-                    let addr = message.src();
+                    let mut addr = message.src();
+                    if addr.port() == 0 {
+                        addr.set_port(53);
+                    }
 
                     sanitize_address(&addr).map_err(HickoryError::Recv)?;
 
