@@ -266,10 +266,7 @@ where
                     trace!("Recieved message");
 
                     let id = message.id();
-                    let mut addr = message.src();
-                    if addr.port() == 0 {
-                        addr.set_port(53);
-                    }
+                    let addr = message.src();
 
                     sanitize_address(&addr).map_err(HickoryError::Recv)?;
 
@@ -455,13 +452,6 @@ where
 }
 
 fn sanitize_address(address: &SocketAddr) -> Result<(), io::Error> {
-    if address.port() == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "port cannot be zero",
-        ));
-    }
-
     if let IpAddr::V4(addr) = address.ip() {
         if addr.is_broadcast() {
             return Err(io::Error::new(
