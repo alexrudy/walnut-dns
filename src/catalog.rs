@@ -648,8 +648,16 @@ where
     /// # Returns
     ///
     /// Information about the response that was sent
-    #[tracing::instrument(skip_all, level = "trace")]
+    #[tracing::instrument(skip_all, fields(id=%request.id(), name=tracing::field::Empty))]
     pub async fn lookup(
+        &self,
+        request: &Request,
+        edns: Option<Edns>,
+    ) -> Result<Message, HickoryError> {
+        self.handle_lookup(request, edns).await
+    }
+
+    async fn handle_lookup(
         &self,
         request: &Request,
         edns: Option<Edns>,
@@ -662,6 +670,8 @@ where
                 ResponseCode::FormErr,
             ));
         };
+
+        tracing::Span::current().record("name", tracing::field::display(request_info.query.name()));
 
         let authorities: Vec<A> = match self.find(request_info.query.name()).await {
             Ok(Some(zones)) => zones,
@@ -741,7 +751,14 @@ where
                 ));
             }
         };
+
+        tracing::Span::current().record("name", tracing::field::display(request_info.query.name()));
+
         if request_info.query.query_type() != RecordType::SOA {
+            tracing::trace!(
+                "Invalid query type for AXFR: {}",
+                request_info.query.query_type()
+            );
             return Ok(Message::error_msg(
                 request.id(),
                 request.op_code(),
@@ -752,6 +769,7 @@ where
         let authorities = match self.find(request_info.query.name()).await {
             Ok(Some(zones)) => zones,
             Ok(None) => {
+                tracing::debug!("No zone found");
                 return Ok(Message::error_msg(
                     request.id(),
                     request.op_code(),
@@ -775,6 +793,10 @@ where
                 Ok(..) => ResponseCode::NoError,
                 Err(response_code) => response_code,
             };
+
+            if !matches!(response_code, ResponseCode::NoError) {
+                tracing::debug!("Error updating zone: {response_code}");
+            }
 
             let mut response = Message::new();
             response.add_queries(request.queries().iter().map(|lq| lq.original().clone()));
@@ -831,14 +853,14 @@ where
         }
     }
 
-    #[tracing::instrument(skip_all, fields(op=%request.op_code(), id=%request.id()), level="debug")]
+    #[tracing::instrument("query", skip_all, fields(op=%request.op_code(), id=%request.id(), name=tracing::field::Empty), level="debug")]
     async fn handle_query(
         &self,
         request: &Request,
         edns: Option<Edns>,
     ) -> Result<Message, HickoryError> {
         match request.op_code() {
-            OpCode::Query => self.lookup(request, edns).await,
+            OpCode::Query => self.handle_lookup(request, edns).await,
             OpCode::Update => self.update(request, edns).await,
             c => {
                 tracing::warn!("Unimplemented op code: {c}");

@@ -41,7 +41,7 @@ impl<'c> ZonePersistence<'c> {
     }
 
     /// Find zones based on zone name
-    #[tracing::instrument(skip_all, fields(zone=%name), level = "trace")]
+    #[tracing::instrument(skip_all, fields(zone=%name), level = "debug")]
     pub(crate) fn find(&self, name: &LowerName) -> rusqlite::Result<Option<Vec<Zone>>> {
         let mut stmt = self
             .connection
@@ -49,6 +49,7 @@ impl<'c> ZonePersistence<'c> {
 
         let mut name = name.clone();
         loop {
+            tracing::debug!(%name, "searching for zone with name={}", name);
             let mut zones = stmt
                 .query_map(
                     named_params! { ":name": SqlName::from(name.clone()) },
@@ -57,14 +58,17 @@ impl<'c> ZonePersistence<'c> {
                 .collect::<Result<Vec<_>, _>>()?;
 
             if !zones.is_empty() {
+                tracing::trace!("found {} zones", zones.len());
                 let rx = RecordPersistence::new(self.connection);
                 rx.populate_zones(&name, zones.as_mut_slice())?;
                 return Ok(Some(zones));
             }
 
             if !name.is_root() {
+                tracing::trace!("name is not root, base_name={}", name.base_name());
                 name = name.base_name();
             } else {
+                tracing::trace!("name is root");
                 return Ok(None);
             }
         }

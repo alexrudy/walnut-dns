@@ -768,6 +768,9 @@ where
     /// ```
     async fn update(&self, _update: &MessageRequest) -> UpdateResult<bool> {
         // No update for non-DNSSEC Zone
+        if Authority::is_axfr_allowed(self) {
+            tracing::warn!(origin=%Authority::origin(self), "No update for non-DNSSEC Zone");
+        }
         Err(ResponseCode::NotImp)
     }
 
