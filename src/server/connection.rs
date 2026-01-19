@@ -77,6 +77,7 @@ where
     fn start_send(self: Pin<&mut Self>, item: (Message, SocketAddr)) -> Result<(), Self::Error> {
         let (message, addr) = item;
         if let Some(reference) = self.addr {
+            sanitize_address(&addr)?;
             if reference != addr {
                 return Err(CodecError::IO(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -267,8 +268,6 @@ where
 
                     let id = message.id();
                     let addr = message.src();
-
-                    sanitize_address(&addr).map_err(HickoryError::Recv)?;
 
                     let mut svc = match this.service {
                         ServiceState::Pending(_) => None,
