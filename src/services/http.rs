@@ -31,6 +31,10 @@ impl DnsBody {
     pub fn new(data: Bytes) -> Self {
         Self { data: Some(data) }
     }
+
+    pub fn empty() -> Self {
+        Self { data: None }
+    }
 }
 
 impl http_body::Body for DnsBody {

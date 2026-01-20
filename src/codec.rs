@@ -48,14 +48,12 @@ impl<Req, Res> DnsCodec<Req, Res> {
             #[cfg(feature = "tls")]
             Protocol::Tls => (true, Some(u16::MAX)),
             Protocol::Udp => (false, Some(MAX_RECEIVE_BUFFER_SIZE as u16)),
+            #[cfg(feature = "h2")]
+            Protocol::Https => (false, None),
             _ => unimplemented!("Unknown protocol"),
         };
 
-        Self {
-            length_delimited,
-            max_response_size,
-            message: PhantomData,
-        }
+        Self::new(length_delimited, max_response_size)
     }
 
     pub fn new(length_delimited: bool, max_response_size: Option<u16>) -> Self {

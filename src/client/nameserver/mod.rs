@@ -1,4 +1,3 @@
-use std::cmp;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
@@ -38,11 +37,16 @@ impl NameServerConnection {
             ProtocolConfig::Tls { server_name } => {
                 let server_name = server_name.clone();
                 Self::new_tls(address, config, server_name)
-            } // #[cfg(feature = "h2")]
-              // ProtocolConfig::Https {
-              //     server_name,
-              //     endpoint,
-              // } => Self::new_https(address, config, server_name, endpoint),
+            }
+            #[cfg(feature = "h2")]
+            ProtocolConfig::Https {
+                server_name,
+                endpoint,
+            } => {
+                let server_name = server_name.clone();
+                let endpoint = endpoint.clone();
+                Self::new_https(address, config, server_name, endpoint)
+            }
         }
     }
 
@@ -111,36 +115,49 @@ impl NameServerConnection {
         }
     }
 
-    // #[cfg(feature = "h2")]
-    // fn new_https(
-    //     address: IpAddr,
-    //     config: NameServerConfig,
-    //     server_name: Box<str>,
-    //     endpoint: Box<str>,
-    // ) -> Self {
-    //     use hyperdriver::bridge::rt::TokioExecutor;
+    #[cfg(feature = "h2")]
+    fn new_https(
+        address: IpAddr,
+        config: ConnectionConfig,
+        server_name: Box<str>,
+        endpoint: Box<str>,
+    ) -> Self {
+        use hyperdriver::bridge::rt::TokioExecutor;
+        use hyperdriver::client::conn::transport::tcp::SimpleTcpTransport;
 
-    //     let addr = SocketAddr::new(address, config.port);
-    //     let codec: DNSCodec<TaggedMessage, TaggedMessage> =
-    //         DNSCodec::new_for_protocol(hickory_proto::xfer::Protocol::Https);
-    //     let mut tlsconfig = rustls::ClientConfig::builder()
-    //         .with_root_certificates(rustls::RootCertStore {
-    //             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-    //         })
-    //         .with_no_client_auth();
-    //     tlsconfig.alpn_protocols = vec![b"h2".to_vec()];
+        use crate::client::DnsOverHttpLayer;
 
-    //     let transport =
-    //         StaticHostTlsTransport::new(TcpTransport::default(), Arc::new(tlsconfig), server_name);
+        let addr = SocketAddr::new(address, config.port);
+        let mut tlsconfig = rustls::ClientConfig::builder()
+            .with_root_certificates(rustls::RootCertStore {
+                roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+            })
+            .with_no_client_auth();
+        tlsconfig.alpn_protocols = vec![b"h2".to_vec()];
+        let resolver = StaticResolver::new(SocketAddrs::from(addr));
+        let transport = StaticHostTlsTransport::new(
+            SimpleTcpTransport::new(resolver, Default::default()),
+            Arc::new(tlsconfig),
+            server_name,
+        );
 
-    //     let protocol = hyper::client::conn::http2::Builder::new(TokioExecutor);
-    //     let connector = DNSConnector::new(addr, transport, protocol);
-    //     let svc = DNSConnectorService::new(connector, hickory_proto::xfer::Protocol::Https);
-    //     Self {
-    //         service: SharedNameserverService::new(svc),
-    //         config: Arc::new(config),
-    //     }
-    // }
+        let protocol = hyperdriver::client::conn::protocol::Http2Builder::new(TokioExecutor);
+
+        let uri = format!("https://dns/{endpoint}").parse().unwrap();
+
+        let connector = DnsConnector::new(transport, protocol);
+        let svc = tower::ServiceBuilder::new()
+            .layer(DnsOverHttpLayer::new(http::Version::HTTP_2, uri))
+            .service(DnsConnectorService::new(
+                connector,
+                hickory_proto::xfer::Protocol::Https,
+            ));
+
+        Self {
+            service: SharedNameserverService::new(svc),
+            config: Arc::new(config),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -164,67 +181,22 @@ pub enum ProtocolConfig {
     Tls {
         server_name: Box<str>,
     },
-    // #[cfg(feature = "h2")]
-    // Https {
-    //     server_name: Box<str>,
-    //     endpoint: Box<str>,
-    // },
+    #[cfg(feature = "h2")]
+    Https {
+        server_name: Box<str>,
+        endpoint: Box<str>,
+    },
 }
 
 impl ProtocolConfig {
-    #[allow(dead_code)]
     pub fn is_secure(&self) -> bool {
         match self {
             ProtocolConfig::Udp => false,
             ProtocolConfig::Tcp => false,
             #[cfg(feature = "tls")]
             ProtocolConfig::Tls { .. } => true,
+            #[cfg(feature = "h2")]
+            ProtocolConfig::Https { .. } => true,
         }
-    }
-}
-
-impl cmp::PartialEq for ProtocolConfig {
-    fn eq(&self, other: &Self) -> bool {
-        core::mem::discriminant(self) == core::mem::discriminant(other)
-    }
-}
-
-impl cmp::Eq for ProtocolConfig {}
-
-impl cmp::Ord for ProtocolConfig {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        use ProtocolConfig::*;
-        #[allow(unreachable_patterns)]
-        match (self, other) {
-            (Udp, Udp) => cmp::Ordering::Equal,
-            (Udp, _) => cmp::Ordering::Greater,
-            (_, Udp) => cmp::Ordering::Less,
-            (Tcp, Tcp) => cmp::Ordering::Equal,
-            (Tcp, _) => cmp::Ordering::Greater,
-            (_, Tcp) => cmp::Ordering::Less,
-            #[cfg(feature = "tls")]
-            (Tls { .. }, Tls { .. }) => cmp::Ordering::Equal,
-        }
-    }
-}
-
-impl cmp::PartialOrd for ProtocolConfig {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SecureProtocol(ProtocolConfig);
-
-impl From<ProtocolConfig> for SecureProtocol {
-    fn from(value: ProtocolConfig) -> Self {
-        SecureProtocol(value)
-    }
-}
-
-impl From<SecureProtocol> for ProtocolConfig {
-    fn from(value: SecureProtocol) -> Self {
-        value.0
     }
 }

@@ -17,12 +17,14 @@ use crate::codec::CodecError;
 use crate::rr::RecordSet;
 
 pub use self::codec::{DnsCodecLayer, DnsCodecService};
-pub use self::http::{DNSOverHTTP, DNSOverHTTPLayer, DNSOverHttpsFuture};
+#[cfg(feature = "h2")]
+pub use self::http::{DnsOverHttp, DnsOverHttpLayer, DnsOverHttpsFuture};
 pub use self::messages::{DnsRequestLayer, DnsRequestMiddleware};
 use self::nameserver::{NameServerConnection, NameserverConfig, NameserverPool};
 
 mod codec;
 mod connection;
+#[cfg(feature = "h2")]
 mod http;
 mod messages;
 pub mod nameserver;

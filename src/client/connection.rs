@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 use std::fmt;
+use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::pin::Pin;
@@ -19,7 +20,6 @@ use tokio::sync::{oneshot, watch};
 use tracing::Instrument as _;
 
 use super::DnsClientError;
-use super::codec::TaggedMessage;
 use super::nameserver::ConnectionStatus;
 use super::nameserver::NameserverConnection;
 
@@ -82,22 +82,22 @@ impl<C> InnerConnector<C> {
 }
 
 /// Connect a DNS Transport
-pub struct DnsConnector<T, P>
+pub struct DnsConnector<T, P, Req>
 where
-    T: Transport<TaggedMessage>,
-    P: Protocol<T::IO, TaggedMessage>,
+    T: Transport<Req>,
+    P: Protocol<T::IO, Req>,
 {
     transport: T,
     protocol: P,
 
     #[allow(clippy::type_complexity)]
-    connection: Arc<Mutex<InnerConnector<<P as Protocol<T::IO, TaggedMessage>>::Connection>>>,
+    connection: Arc<Mutex<InnerConnector<<P as Protocol<T::IO, Req>>::Connection>>>,
 }
 
-impl<T, P> fmt::Debug for DnsConnector<T, P>
+impl<T, P, Req> fmt::Debug for DnsConnector<T, P, Req>
 where
-    T: Transport<TaggedMessage> + fmt::Debug,
-    P: Protocol<T::IO, TaggedMessage> + fmt::Debug,
+    T: Transport<Req> + fmt::Debug,
+    P: Protocol<T::IO, Req> + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DnsConnector")
@@ -108,10 +108,10 @@ where
     }
 }
 
-impl<T, P> Clone for DnsConnector<T, P>
+impl<T, P, Req> Clone for DnsConnector<T, P, Req>
 where
-    T: Transport<TaggedMessage> + Clone,
-    P: Protocol<T::IO, TaggedMessage> + Clone,
+    T: Transport<Req> + Clone,
+    P: Protocol<T::IO, Req> + Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -122,15 +122,15 @@ where
     }
 }
 
-type DnsConnectionError<T, P> = ConnectionError<
-    <T as Transport<TaggedMessage>>::Error,
-    <P as Protocol<<T as Transport<TaggedMessage>>::IO, TaggedMessage>>::Error,
+type DnsConnectionError<T, P, Req> = ConnectionError<
+    <T as Transport<Req>>::Error,
+    <P as Protocol<<T as Transport<Req>>::IO, Req>>::Error,
 >;
 
-impl<T, P> DnsConnector<T, P>
+impl<T, P, Req> DnsConnector<T, P, Req>
 where
-    T: Transport<TaggedMessage>,
-    P: Protocol<T::IO, TaggedMessage> + Clone,
+    T: Transport<Req>,
+    P: Protocol<T::IO, Req> + Clone,
 {
     pub fn new(transport: T, protocol: P) -> Self {
         Self {
@@ -140,7 +140,7 @@ where
         }
     }
 
-    pub fn connect(&mut self, request: &TaggedMessage) -> Connecting<T, P> {
+    pub fn connect(&mut self, request: &Req) -> Connecting<T, P, Req> {
         let state = {
             let mut inner = self.connection.lock().expect("poisoned");
             match std::mem::replace(&mut inner.connection, ConnectionState::Busy) {
@@ -172,13 +172,13 @@ where
     fn poll_ready(
         &mut self,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), DnsConnectionError<T, P>>> {
+    ) -> Poll<Result<(), DnsConnectionError<T, P, Req>>> {
         let inner = self.connection.lock().expect("poisoned");
 
         // Check if we already have a connection, no need to backpressure connector.
         if matches!(inner.connection, ConnectionState::None) {
             ready!(self.transport.poll_ready(cx)).map_err(ConnectionError::Transport)?;
-            ready!(<P as Protocol<T::IO, TaggedMessage>>::poll_ready(
+            ready!(<P as Protocol<T::IO, Req>>::poll_ready(
                 &mut self.protocol,
                 cx
             ))
@@ -189,10 +189,10 @@ where
 }
 
 #[pin_project::pin_project(project=StateProjection)]
-enum ConnectingState<T, P>
+enum ConnectingState<T, P, Req>
 where
-    T: Transport<TaggedMessage>,
-    P: Protocol<T::IO, TaggedMessage>,
+    T: Transport<Req>,
+    P: Protocol<T::IO, Req>,
 {
     Waiting {
         #[pin]
@@ -208,14 +208,14 @@ where
     },
     Protocol {
         #[pin]
-        future: <P as Protocol<T::IO, TaggedMessage>>::Future,
+        future: <P as Protocol<T::IO, Req>>::Future,
     },
 }
 
-impl<T, P> fmt::Debug for ConnectingState<T, P>
+impl<T, P, Req> fmt::Debug for ConnectingState<T, P, Req>
 where
-    T: Transport<TaggedMessage>,
-    P: Protocol<T::IO, TaggedMessage>,
+    T: Transport<Req>,
+    P: Protocol<T::IO, Req>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -242,24 +242,24 @@ pub enum ConnectionError<TE, PE> {
 
 #[derive(Debug)]
 #[pin_project::pin_project]
-pub struct Connecting<T, P>
+pub struct Connecting<T, P, Req>
 where
-    T: Transport<TaggedMessage>,
-    P: Protocol<T::IO, TaggedMessage>,
+    T: Transport<Req>,
+    P: Protocol<T::IO, Req>,
 {
     #[pin]
-    state: ConnectingState<T, P>,
+    state: ConnectingState<T, P, Req>,
 
     #[allow(clippy::type_complexity)]
-    inner: Weak<Mutex<InnerConnector<<P as Protocol<T::IO, TaggedMessage>>::Connection>>>,
+    inner: Weak<Mutex<InnerConnector<<P as Protocol<T::IO, Req>>::Connection>>>,
 }
 
-impl<T, P> Future for Connecting<T, P>
+impl<T, P, Req> Future for Connecting<T, P, Req>
 where
-    T: Transport<TaggedMessage>,
+    T: Transport<Req>,
     T::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-    P: Protocol<T::IO, TaggedMessage>,
-    <P as Protocol<T::IO, TaggedMessage>>::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    P: Protocol<T::IO, Req>,
+    <P as Protocol<T::IO, Req>>::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     type Output = Result<DnsConnection<P::Connection>, DnsClientError>;
 
@@ -357,45 +357,67 @@ impl<C> Drop for DnsConnection<C> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct DnsConnectorService<T, P>
+#[derive(Debug)]
+pub struct DnsConnectorService<T, P, Req, Res>
 where
-    T: Transport<TaggedMessage>,
-    P: Protocol<T::IO, TaggedMessage> + Clone,
+    T: Transport<Req>,
+    P: Protocol<T::IO, Req> + Clone,
 {
-    connector: DnsConnector<T, P>,
+    connector: DnsConnector<T, P, Req>,
     tx: watch::Sender<ConnectionStatus>,
     rx: watch::Receiver<ConnectionStatus>,
     protocol: hickory_proto::xfer::Protocol,
+    _response: PhantomData<fn() -> Res>,
 }
 
-impl<T, P> DnsConnectorService<T, P>
+impl<T, P, Req, Res> Clone for DnsConnectorService<T, P, Req, Res>
 where
-    T: Transport<TaggedMessage>,
-    P: Protocol<T::IO, TaggedMessage> + Clone,
+    T: Transport<Req> + Clone,
+    P: Protocol<T::IO, Req> + Clone,
 {
-    pub fn new(connector: DnsConnector<T, P>, protocol: hickory_proto::xfer::Protocol) -> Self {
+    fn clone(&self) -> Self {
+        Self {
+            connector: self.connector.clone(),
+            tx: self.tx.clone(),
+            rx: self.rx.clone(),
+            protocol: self.protocol.clone(),
+            _response: PhantomData,
+        }
+    }
+}
+
+impl<T, P, Req, Res> DnsConnectorService<T, P, Req, Res>
+where
+    T: Transport<Req>,
+    P: Protocol<T::IO, Req> + Clone,
+{
+    pub fn new(
+        connector: DnsConnector<T, P, Req>,
+        protocol: hickory_proto::xfer::Protocol,
+    ) -> Self {
         let (tx, rx) = watch::channel(ConnectionStatus::NotConnected);
         Self {
             connector,
             tx,
             rx,
             protocol,
+            _response: PhantomData,
         }
     }
 }
 
-impl<T, P> tower::Service<TaggedMessage> for DnsConnectorService<T, P>
+impl<T, P, Req, Res> tower::Service<Req> for DnsConnectorService<T, P, Req, Res>
 where
-    T: Transport<TaggedMessage> + 'static,
-    P: Protocol<T::IO, TaggedMessage> + Clone + Send + 'static,
-    P::Connection: Connection<TaggedMessage, Response = TaggedMessage> + Send + 'static,
+    T: Transport<Req> + 'static,
+    P: Protocol<T::IO, Req> + Clone + Send + 'static,
+    P::Connection: Connection<Req, Response = Res> + Send + 'static,
+    Req: Send + 'static,
 {
-    type Response = TaggedMessage;
+    type Response = Res;
 
     type Error = DnsClientError;
 
-    type Future = DnsConnectorServiceFuture;
+    type Future = DnsConnectorServiceFuture<Res>;
 
     fn poll_ready(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.connector
@@ -403,7 +425,7 @@ where
             .map_err(|error| DnsClientError::Protocol(error.into()))
     }
 
-    fn call(&mut self, req: TaggedMessage) -> Self::Future {
+    fn call(&mut self, req: Req) -> Self::Future {
         let span = tracing::debug_span!("dns");
         let connecting = self.connector.connect(&req);
         let status = self.tx.clone();
@@ -429,11 +451,11 @@ where
     }
 }
 
-impl<T, P> NameserverConnection for DnsConnectorService<T, P>
+impl<T, P, Req, Res> NameserverConnection for DnsConnectorService<T, P, Req, Res>
 where
-    T: Transport<TaggedMessage> + 'static,
-    P: Protocol<T::IO, TaggedMessage> + Clone + Send + 'static,
-    P::Connection: Connection<TaggedMessage, Response = TaggedMessage> + Send + 'static,
+    T: Transport<Req> + 'static,
+    P: Protocol<T::IO, Req> + Clone + Send + 'static,
+    P::Connection: Connection<Req, Response = Res> + Send + 'static,
 {
     fn status(&self) -> super::nameserver::ConnectionStatus {
         *self.rx.borrow()
@@ -444,12 +466,12 @@ where
     }
 }
 
-pub struct DnsConnectorServiceFuture(
-    Pin<Box<dyn Future<Output = Result<TaggedMessage, DnsClientError>> + Send>>,
+pub struct DnsConnectorServiceFuture<Res>(
+    Pin<Box<dyn Future<Output = Result<Res, DnsClientError>> + Send>>,
 );
 
-impl Future for DnsConnectorServiceFuture {
-    type Output = Result<TaggedMessage, DnsClientError>;
+impl<Res> Future for DnsConnectorServiceFuture<Res> {
+    type Output = Result<Res, DnsClientError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         self.0.as_mut().poll(cx)

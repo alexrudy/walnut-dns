@@ -73,21 +73,24 @@ optional = true
 
 [dependencies.chateau]
 features = ["client", "codec", "server"]
-version = "0.2.0-rc2"
+version = "0.2"
 # path = "../chateau"
 # git = "https://github.com/alexrudy/chateau.git"
 
+[dependencies.hyperdriver]
+version = "0.12"
+optional = true
+features = [
+    "server",
+    "tls",
+    "tls-ring",
+    "stream",
+]
 
 [dev-dependencies]
 hickory-client = { version = "0.25" }
 hickory-proto = { version = "0.25", features = ["tls-ring"] }
 hickory-server = { version = "0.25", features = ["testing", "tls-ring"] }
-hyperdriver = { version = "*", features = [
-    "server",
-    "tls",
-    "tls-ring",
-    "stream",
-] }
 serde_json = "1.0"
 tempfile = "3.23"
 tokio = "1"
@@ -104,7 +107,7 @@ tls = ["dep:webpki-roots"]
 tls-ring = ["tls", "chateau/tls-ring", "hickory-proto/tls-ring"]
 tls-awc-lc = ["tls", "chateau/tls-aws-lc", "hickory-proto/tls-aws-lc-rs"]
 http = ["dep:http", "dep:http-body", "dep:http-body-util"]
-h2 = ["http", "dep:hyper"]
+h2 = ["http", "dep:hyper", "dep:hyperdriver"]
 h2-ring = ["hickory-proto/https-ring", "h2"]
 h2-aws-lc = ["hickory-proto/https-aws-lc-rs", "h2"]
 pool = ["dep:bb8"]

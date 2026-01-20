@@ -236,9 +236,9 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "chateau"
-version = "0.2.0-rc2"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c48a2ab1e889c7983f7e0673767ca48ced537abffa8a39bf3ea423bd4b10c0f2"
+checksum = "dc63afb014b70e095310788a3ff02caa2b6b6bea8a596e70723e4700036699f6"
 dependencies = [
  "futures",
  "parking_lot",
@@ -436,7 +436,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -897,12 +897,13 @@ dependencies = [
 
 [[package]]
 name = "hyperdriver"
-version = "0.11.2"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de0c6f548d2c838ff7244f217a504713ea45acc383469ad10eafa0bb57f3f359"
+checksum = "36d331f4131f970bb7d3ab8dd721f69f2a791eed7bb8b6caf091439541c4f355"
 dependencies = [
  "bytes",
  "camino",
+ "chateau",
  "futures-core",
  "futures-util",
  "http",
@@ -914,10 +915,8 @@ dependencies = [
  "pin-project",
  "rustls",
  "rustls-native-certs",
- "socket2 0.5.10",
  "thiserror 2.0.16",
  "tokio",
- "tokio-rustls",
  "tower",
  "tower-http",
  "tracing",
@@ -1161,7 +1160,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07033963ba89ebaf1584d767badaa2e8fcec21aedea6b8c0346d487d49c28667"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.53.5",
 ]
 
 [[package]]
@@ -1679,7 +1678,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1692,7 +1691,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1981,7 +1980,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2184,9 +2183,9 @@ dependencies = [
 
 [[package]]
 name = "tower-http"
-version = "0.6.6"
+version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adc82fd73de2a9722ac5da747f12383d2bfdb93591ee6c58486e0097890f05f2"
+checksum = "d4e6559d53cc268e5031cd8429d05415bc4cb4aefc4aa5d6cc35fbf5b924a1f8"
 dependencies = [
  "bitflags",
  "bytes",

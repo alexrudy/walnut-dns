@@ -61,7 +61,7 @@ where
     }
 }
 
-pub trait NameserverConnection: tower::Service<TaggedMessage, Response = TaggedMessage> {
+pub trait NameserverConnection {
     fn status(&self) -> ConnectionStatus;
     fn protocol(&self) -> Protocol;
 }

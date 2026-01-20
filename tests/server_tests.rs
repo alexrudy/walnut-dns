@@ -510,6 +510,7 @@ async fn server_thread_https(
     shutdown: oneshot::Receiver<()>,
     cert_chain: Arc<dyn ResolvesServerCert>,
 ) {
+    use hyperdriver::server::ServerProtocolExt as _;
     use walnut_dns::services::http::DnsOverHttpLayer;
 
     let catalog = new_catalog().await;
@@ -520,7 +521,7 @@ async fn server_thread_https(
         .with_cert_resolver(cert_chain);
     tls_config.alpn_protocols = vec![b"h2".to_vec()];
 
-    hyperdriver::Server::builder::<hyperdriver::Body>()
+    hyperdriver::Server::builder::<http::Request<hyperdriver::Body>>()
         .with_acceptor(
             hyperdriver::server::conn::Acceptor::new(listener).with_tls(tls_config.into()),
         )
