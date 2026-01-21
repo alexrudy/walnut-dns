@@ -9,9 +9,12 @@ use std::{
 
 use crate::codec::DnsCodec;
 use chateau::{
-    client::conn::{
-        Connection,
-        protocol::framed::{FramedConnection, ResponseFuture},
+    client::{
+        conn::{
+            Connection,
+            protocol::framed::{FramedConnection, ResponseFuture},
+        },
+        pool::{PoolableConnection, PoolableStream},
     },
     info::HasConnectionInfo,
 };
@@ -20,11 +23,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 use tokio_util::udp::UdpFramed;
 
-use super::{
-    DnsClientError,
-    codec::TaggedMessage,
-    nameserver::{ConnectionStatus, NameserverConnection},
-};
+use super::{DnsClientError, codec::TaggedMessage};
 
 #[derive(Clone)]
 enum Bind {
@@ -97,6 +96,13 @@ impl HasConnectionInfo for DnsUdpAddressed {
     }
 }
 
+impl PoolableStream for DnsUdpAddressed {
+    fn can_share(&self) -> bool {
+        //udp can always be shared
+        true
+    }
+}
+
 #[derive(Clone)]
 pub struct DnsUdpProtocol {
     codec: DnsCodec<TaggedMessage, TaggedMessage>,
@@ -139,6 +145,7 @@ type FramedDnsConnection = FramedConnection<
     (TaggedMessage, SocketAddr),
 >;
 
+#[derive(Debug, Clone)]
 pub struct DnsUdpConnection {
     connection: FramedDnsConnection,
     destination: SocketAddr,
@@ -178,13 +185,20 @@ impl Connection<TaggedMessage> for DnsUdpConnection {
     }
 }
 
-impl NameserverConnection for DnsUdpConnection {
-    fn status(&self) -> ConnectionStatus {
-        ConnectionStatus::Connected
+impl PoolableConnection<TaggedMessage> for DnsUdpConnection {
+    fn is_open(&self) -> bool {
+        //UDP is always open
+        true
     }
 
-    fn protocol(&self) -> hickory_proto::xfer::Protocol {
-        hickory_proto::xfer::Protocol::Udp
+    fn can_share(&self) -> bool {
+        //UDP can always be shared
+        true
+    }
+
+    fn reuse(&mut self) -> Option<Self> {
+        //UDP can always be re-used
+        Some(self.clone())
     }
 }
 

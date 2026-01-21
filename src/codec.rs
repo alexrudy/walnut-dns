@@ -18,7 +18,7 @@ use crate::server::response::encode_fallback_servfail_response;
 /// The wire codec for standard DNS messages defined in RFC 1035.
 pub struct DnsCodec<Req, Res> {
     length_delimited: bool,
-    max_response_size: Option<u16>,
+    max_message_size: Option<u16>,
     message: PhantomData<fn(Req) -> Res>,
 }
 
@@ -26,7 +26,7 @@ impl<Req, Res> fmt::Debug for DnsCodec<Req, Res> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DnsCodec")
             .field("length_delimited", &self.length_delimited)
-            .field("max_response_size", &self.max_response_size)
+            .field("max_response_size", &self.max_message_size)
             .finish()
     }
 }
@@ -35,7 +35,7 @@ impl<Req, Res> Clone for DnsCodec<Req, Res> {
     fn clone(&self) -> Self {
         Self {
             length_delimited: self.length_delimited,
-            max_response_size: self.max_response_size,
+            max_message_size: self.max_message_size,
             message: PhantomData,
         }
     }
@@ -59,7 +59,7 @@ impl<Req, Res> DnsCodec<Req, Res> {
     pub fn new(length_delimited: bool, max_response_size: Option<u16>) -> Self {
         Self {
             length_delimited,
-            max_response_size,
+            max_message_size: max_response_size,
             message: PhantomData,
         }
     }
@@ -231,12 +231,13 @@ where
 {
     type Error = CodecError;
 
-    fn encode(&mut self, response: Req, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
-        let id = response.header().id();
+    fn encode(&mut self, req: Req, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
+        let id = req.header().id();
         trace!(
             id,
-            response_code = %response.header().response_code(),
-            "encoding response",
+            response_code = %req.header().response_code(),
+            type=%req.header().message_type(),
+            "encoding",
         );
         let mut buffer = Vec::with_capacity(512);
         {
@@ -244,19 +245,19 @@ where
 
             // Set an appropriate maximum on the encoder.
             if let Some(max_size) = if self.length_delimited {
-                if let Some(edns) = response.extensions() {
+                if let Some(edns) = req.extensions() {
                     Some(edns.max_payload())
                 } else {
-                    self.max_response_size
+                    self.max_message_size
                 }
             } else {
-                self.max_response_size
+                self.max_message_size
             } {
-                trace!("setting response max size: {max_size}");
+                trace!("setting max size: {max_size}");
                 encoder.set_max_size(max_size);
             }
 
-            response.emit(&mut encoder)
+            req.emit(&mut encoder)
         }
         .or_else(|error| {
             error!(%error, "error encoding message, sending servfail");

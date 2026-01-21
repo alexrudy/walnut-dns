@@ -1,202 +1,154 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Arc;
-
-use chateau::client::conn::dns::{SocketAddrs, StaticResolver};
-use chateau::client::conn::protocol::framed::FramedProtocol;
-#[cfg(feature = "tls")]
-use chateau::client::conn::transport::StaticHostTlsTransport;
-use chateau::client::conn::transport::tcp::{SimpleTcpTransport, TcpTransportConfig};
-use serde::Deserialize;
-
 mod connection;
+mod monitor;
 mod pool;
 
-use self::connection::SharedNameserverService;
-pub use self::connection::{ConnectionStatus, NameserverConnection};
-pub use self::pool::NameserverPool;
-use super::{
-    connection::{DnsConnector, DnsConnectorService},
-    udp::{DnsUdpProtocol, DnsUdpTransport},
+use std::{
+    cmp::Ordering,
+    net::IpAddr,
+    pin::Pin,
+    task::{Context, Poll},
 };
-use crate::{client::codec::TaggedMessage, codec::DnsCodec};
+
+use futures::future::BoxFuture;
+use hickory_proto::xfer::Protocol;
+use serde::Deserialize;
+use tracing::Instrument as _;
+
+pub use self::connection::{
+    ConnectionConfig, NameServerConnection, NameserverConfig, ProtocolConfig,
+};
+use self::monitor::{ConnectionStats, MonitoredConnection, PriorityTier};
+pub use self::pool::{Pool, PoolConfig};
+
+use super::{DnsClientError, codec::TaggedMessage};
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConnectionPolicy {
+    /// Should disable UDP protocol and require connection-based protocols?
+    pub disable_udp: bool,
+
+    /// Should we optimistically connect to encrypted protocols?
+    pub optimistic_encryption: bool,
+}
+
+impl Default for ConnectionPolicy {
+    fn default() -> Self {
+        Self {
+            disable_udp: false,
+            optimistic_encryption: true,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
-pub struct NameServerConnection {
-    service: SharedNameserverService,
-
-    #[allow(dead_code)]
-    config: Arc<ConnectionConfig>,
+pub struct Nameserver {
+    connections: Vec<MonitoredConnection<NameServerConnection>>,
+    address: IpAddr,
+    policy: ConnectionPolicy,
 }
 
-impl NameServerConnection {
-    pub fn from_config(address: IpAddr, config: ConnectionConfig) -> Self {
-        match &config.protocol {
-            ProtocolConfig::Udp => Self::new_udp(address, config),
-            ProtocolConfig::Tcp => Self::new_tcp(address, config),
-            #[cfg(feature = "tls")]
-            ProtocolConfig::Tls { server_name } => {
-                let server_name = server_name.clone();
-                Self::new_tls(address, config, server_name)
-            }
-            #[cfg(feature = "h2")]
-            ProtocolConfig::Https {
-                server_name,
-                endpoint,
-            } => {
-                let server_name = server_name.clone();
-                let endpoint = endpoint.clone();
-                Self::new_https(address, config, server_name, endpoint)
-            }
-        }
-    }
-
-    fn new_udp(address: IpAddr, config: ConnectionConfig) -> Self {
-        let addr = SocketAddr::new(address, config.port);
-        let bind = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
-        let codec: DnsCodec<TaggedMessage, TaggedMessage> =
-            DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp);
-
-        let transport = DnsUdpTransport::new(bind, addr);
-        let protocol = DnsUdpProtocol::new(codec, false);
-
-        let connector = DnsConnector::new(transport, protocol);
-        let svc = DnsConnectorService::new(connector, hickory_proto::xfer::Protocol::Udp);
+impl Nameserver {
+    pub fn new(configuration: NameserverConfig) -> Self {
         Self {
-            service: SharedNameserverService::new(svc),
-            config: Arc::new(config),
+            connections: configuration
+                .connections
+                .into_iter()
+                .map(|cfg| {
+                    let protocol = cfg.protocol.protocol();
+                    MonitoredConnection::new(
+                        NameServerConnection::from_config(configuration.address, &cfg),
+                        &protocol,
+                    )
+                })
+                .collect(),
+            address: configuration.address,
+            policy: configuration.policy,
         }
     }
 
-    fn new_tcp(address: IpAddr, config: ConnectionConfig) -> Self {
-        let addr = SocketAddr::new(address, config.port);
-        let codec: DnsCodec<TaggedMessage, TaggedMessage> =
-            DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Tcp);
-        let protocol = FramedProtocol::new(codec);
-        let connector = DnsConnector::new(
-            SimpleTcpTransport::new(
-                StaticResolver::new(SocketAddrs::from(addr)),
-                TcpTransportConfig::default(),
-            ),
-            protocol,
-        );
-        let svc = DnsConnectorService::new(connector, hickory_proto::xfer::Protocol::Tcp);
-        Self {
-            service: SharedNameserverService::new(svc),
-            config: Arc::new(config),
-        }
+    pub fn address(&self) -> IpAddr {
+        self.address
     }
 
-    #[cfg(feature = "tls")]
-    fn new_tls(address: IpAddr, config: ConnectionConfig, server_name: Box<str>) -> Self {
-        let addr = SocketAddr::new(address, config.port);
-        let codec: DnsCodec<TaggedMessage, TaggedMessage> =
-            DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Tls);
-        let mut tlsconfig = rustls::ClientConfig::builder()
-            .with_root_certificates(rustls::RootCertStore {
-                roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    pub fn stats(&self) -> Option<&ConnectionStats> {
+        self.connections.iter().map(|conn| conn.monitor()).min()
+    }
+
+    fn select_connection(&mut self) -> Option<&mut MonitoredConnection<NameServerConnection>> {
+        self.connections
+            .iter_mut()
+            .filter(|conn| !(self.policy.disable_udp && *conn.protocol() == Protocol::Udp))
+            .min_by(|a, b| {
+                match (a.monitor().priority(), b.monitor().priority()) {
+                    (PriorityTier::Connected, _) => {
+                        return Ordering::Less;
+                    }
+                    (_, PriorityTier::Connected) => {
+                        return Ordering::Less;
+                    }
+                    _ => {}
+                };
+
+                if self.policy.optimistic_encryption {
+                    if a.protocol().is_encrypted() {
+                        return Ordering::Less;
+                    } else if b.protocol().is_encrypted() {
+                        return Ordering::Greater;
+                    }
+                }
+
+                a.monitor().cmp(b.monitor())
             })
-            .with_no_client_auth();
-        tlsconfig.alpn_protocols = vec![b"dot".to_vec()];
+    }
+}
 
-        let transport = StaticHostTlsTransport::new(
-            SimpleTcpTransport::new(
-                StaticResolver::new(SocketAddrs::from(addr)),
-                TcpTransportConfig::default(),
-            ),
-            Arc::new(tlsconfig),
-            server_name,
-        );
-        let protocol = FramedProtocol::new(codec);
-        let connector = DnsConnector::new(transport, protocol);
-        let svc = DnsConnectorService::new(connector, hickory_proto::xfer::Protocol::Tcp);
-        Self {
-            service: SharedNameserverService::new(svc),
-            config: Arc::new(config),
-        }
+impl tower::Service<TaggedMessage> for Nameserver {
+    type Response = TaggedMessage;
+
+    type Error = DnsClientError;
+
+    type Future = NameserverFuture;
+
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
     }
 
-    #[cfg(feature = "h2")]
-    fn new_https(
-        address: IpAddr,
-        config: ConnectionConfig,
-        server_name: Box<str>,
-        endpoint: Box<str>,
-    ) -> Self {
-        use hyperdriver::bridge::rt::TokioExecutor;
-        use hyperdriver::client::conn::transport::tcp::SimpleTcpTransport;
+    fn call(&mut self, req: TaggedMessage) -> Self::Future {
+        let addr = self.address();
+        let conn = self.select_connection();
 
-        use crate::client::DnsOverHttpLayer;
+        if let Some(conn) = conn {
+            let span = tracing::info_span!("dns_request", dns.address=%addr, dns.protocol=%conn.protocol());
 
-        let addr = SocketAddr::new(address, config.port);
-        let mut tlsconfig = rustls::ClientConfig::builder()
-            .with_root_certificates(rustls::RootCertStore {
-                roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-            })
-            .with_no_client_auth();
-        tlsconfig.alpn_protocols = vec![b"h2".to_vec()];
-        let resolver = StaticResolver::new(SocketAddrs::from(addr));
-        let transport = StaticHostTlsTransport::new(
-            SimpleTcpTransport::new(resolver, Default::default()),
-            Arc::new(tlsconfig),
-            server_name,
-        );
-
-        let protocol = hyperdriver::client::conn::protocol::Http2Builder::new(TokioExecutor);
-
-        let uri = format!("https://dns/{endpoint}").parse().unwrap();
-
-        let connector = DnsConnector::new(transport, protocol);
-        let svc = tower::ServiceBuilder::new()
-            .layer(DnsOverHttpLayer::new(http::Version::HTTP_2, uri))
-            .service(DnsConnectorService::new(
-                connector,
-                hickory_proto::xfer::Protocol::Https,
+            let future = conn.call(req);
+            return NameserverFuture(Box::pin(
+                async move {
+                    let result = future.await;
+                    if result.is_err() {
+                        tracing::error!("dns request error");
+                    } else {
+                        tracing::debug!("dns response recieved");
+                    }
+                    result
+                }
+                .instrument(span),
             ));
-
-        Self {
-            service: SharedNameserverService::new(svc),
-            config: Arc::new(config),
+        } else {
+            return NameserverFuture(Box::pin(async move {
+                Err(DnsClientError::Unavailable(format!(
+                    "No connections available for nameserver {addr}"
+                )))
+            }));
         }
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct NameserverConfig {
-    pub address: IpAddr,
-    pub connections: Vec<ConnectionConfig>,
-}
+pub struct NameserverFuture(BoxFuture<'static, Result<TaggedMessage, DnsClientError>>);
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct ConnectionConfig {
-    pub protocol: ProtocolConfig,
-    pub port: u16,
-}
+impl Future for NameserverFuture {
+    type Output = Result<TaggedMessage, DnsClientError>;
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ProtocolConfig {
-    Udp,
-    Tcp,
-    #[cfg(feature = "tls")]
-    Tls {
-        server_name: Box<str>,
-    },
-    #[cfg(feature = "h2")]
-    Https {
-        server_name: Box<str>,
-        endpoint: Box<str>,
-    },
-}
-
-impl ProtocolConfig {
-    pub fn is_secure(&self) -> bool {
-        match self {
-            ProtocolConfig::Udp => false,
-            ProtocolConfig::Tcp => false,
-            #[cfg(feature = "tls")]
-            ProtocolConfig::Tls { .. } => true,
-            #[cfg(feature = "h2")]
-            ProtocolConfig::Https { .. } => true,
-        }
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.0.as_mut().poll(cx)
     }
 }

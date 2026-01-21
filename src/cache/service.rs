@@ -159,7 +159,7 @@ where
             {
                 Ok(Some(answer)) => {
                     // Cache hit - return cached response
-                    tracing::trace!("Cache hit, reconstructing answer message");
+                    tracing::trace!("cache hit, reconstructing answer message");
                     let mut msg: hickory_proto::op::Message = answer.into();
                     msg.set_id(req.id());
                     Ok(
@@ -170,7 +170,7 @@ where
                 Err(error) => Err(Self::cache_error(error)),
                 Ok(None) => {
                     // Cache miss - forward to underlying service
-                    tracing::trace!("Cache miss");
+                    tracing::trace!("cache miss, query not available");
 
                     let response = service.call(req).await?;
 

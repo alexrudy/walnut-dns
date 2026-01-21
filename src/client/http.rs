@@ -7,7 +7,7 @@ use tokio_util::codec::{Decoder as _, Encoder as _};
 
 use crate::{codec::DnsCodec, services::http::DnsBody};
 
-use super::{DnsClientError, codec::TaggedMessage, nameserver::NameserverConnection};
+use super::{DnsClientError, codec::TaggedMessage};
 
 const MIME_APPLICATION_DNS: &str = "application/dns-message";
 
@@ -49,19 +49,6 @@ impl<S> DnsOverHttp<S> {
             method: http::Method::POST,
             uri,
         }
-    }
-}
-
-impl<S> NameserverConnection for DnsOverHttp<S>
-where
-    S: NameserverConnection,
-{
-    fn status(&self) -> super::nameserver::ConnectionStatus {
-        self.dns_service.status()
-    }
-
-    fn protocol(&self) -> hickory_proto::xfer::Protocol {
-        self.dns_service.protocol()
     }
 }
 

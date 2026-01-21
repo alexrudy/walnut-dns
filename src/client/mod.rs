@@ -20,10 +20,9 @@ pub use self::codec::{DnsCodecLayer, DnsCodecService};
 #[cfg(feature = "h2")]
 pub use self::http::{DnsOverHttp, DnsOverHttpLayer, DnsOverHttpsFuture};
 pub use self::messages::{DnsRequestLayer, DnsRequestMiddleware};
-use self::nameserver::{NameServerConnection, NameserverConfig, NameserverPool};
+use self::nameserver::{ Nameserver, NameserverConfig, Pool, PoolConfig};
 
 mod codec;
-mod connection;
 #[cfg(feature = "h2")]
 mod http;
 mod messages;
@@ -37,6 +36,8 @@ pub struct ClientConfiguration {
     #[serde(default)]
     max_payload_len: u16,
     nameserver: Vec<NameserverConfig>,
+    #[serde(default)]
+    pool: PoolConfig,
 }
 
 impl Default for ClientConfiguration {
@@ -44,6 +45,7 @@ impl Default for ClientConfiguration {
         ClientConfiguration {
             max_payload_len: 2048,
             nameserver: Vec::new(),
+            pool: PoolConfig::default(),
         }
     }
 }
@@ -57,20 +59,19 @@ pub struct Client {
 
 impl Client {
     pub fn new(configuration: ClientConfiguration) -> Client {
-        let mut connections = Vec::new();
-        for ns in &configuration.nameserver {
-            for connection in &ns.connections {
-                connections.push(NameServerConnection::from_config(
-                    ns.address,
-                    connection.clone(),
-                ))
-            }
-        }
+        let config = Arc::new(configuration.clone());
 
-        let svc = NameserverPool::new(connections, Default::default());
+        let svc = Pool::new(
+            configuration
+                .nameserver
+                .into_iter()
+                .map(|ns| Nameserver::new(ns))
+                .collect(),
+            configuration.pool,
+        );
         Client {
             inner: SharedService::new(DnsRequestMiddleware::new(svc)),
-            config: Arc::new(ClientConfiguration::default()),
+            config,
         }
     }
 
@@ -81,15 +82,19 @@ impl Client {
         }
     }
 
+    #[tracing::instrument(skip_all, fields(dns.label=%query.name, dns.type=%query.query_type, dns.id=tracing::field::Empty))]
     pub fn lookup(&self, mut query: Query, options: DnsRequestOptions) -> ClientResponseFuture {
         use rand::prelude::*;
 
         let mut rng = rand::rng();
         let mut message = Message::new();
         message.set_id(rng.random());
+        tracing::Span::current().record("dns.id", tracing::field::display(message.id()));
+
         let mut original_query = None;
 
         if options.case_randomization {
+            tracing::trace!("randomizing label case");
             original_query = Some(query.clone());
             query.name.randomize_label_case();
         }

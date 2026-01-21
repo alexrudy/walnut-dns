@@ -30,13 +30,14 @@ http = { version = "1", optional = true }
 http-body = { version = "1", optional = true }
 http-body-util = { version = "0.1", optional = true }
 hyper = { version = "1", optional = true }
+parking_lot = { version = "0.12", features = ["arc_lock", "send_guard"] }
 pin-project = "1.1.10"
 rusqlite = { version = "0.37", features = ["blob", "chrono", "uuid", "trace"] }
 rustls-pki-types = "1.12"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tokio-util = { version = "0.7.16", features = ["codec", "net"] }
-tower = "0.5"
+tower = { version = "0.5", features = ["util"]}
 tracing = "0.1"
 webpki-roots = { version = "1", optional = true }
 zeroize = "1"
@@ -74,7 +75,6 @@ optional = true
 [dependencies.chateau]
 features = ["client", "codec", "server"]
 version = "0.2"
-# path = "../chateau"
 # git = "https://github.com/alexrudy/chateau.git"
 
 [dependencies.hyperdriver]
@@ -128,3 +128,7 @@ required-features = ["cli"]
 name = "walnut-server"
 path = "src/bin/server.rs"
 required-features = ["cli"]
+
+[patch.crates-io]
+chateau.path = "../chateau"
+hyperdriver.path = "../hyperdriver"
