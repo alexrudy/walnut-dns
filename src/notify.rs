@@ -81,7 +81,9 @@ impl NotifyManager {
     where
         R: Into<RecordSet>,
     {
-        debug!("notifying: {} {:?}", name, query_type);
+        let rrset = rrset.map(Into::into);
+
+        debug!(records=%rrset.as_ref().map(|rr| rr.len()).unwrap_or(0), "notifying: {} {:?}", name, query_type);
 
         // build the message
         let mut rng = rand::rng();
@@ -119,7 +121,7 @@ impl NotifyManager {
 
         // add the notify message, see https://tools.ietf.org/html/rfc1996, section 3.7
         if let Some(rrset) = rrset {
-            message.add_answers(rrset.into().into_hickory_iter());
+            message.add_answers(rrset.into_hickory_iter());
         }
 
         let request = DnsRequest::new(message, options);
