@@ -48,7 +48,7 @@ pub struct Nameserver {
 }
 
 impl Nameserver {
-    pub fn new(configuration: NameserverConfig) -> Self {
+    pub fn new(configuration: NameserverConfig, bind: Option<IpAddr>) -> Self {
         Self {
             connections: configuration
                 .connections
@@ -56,7 +56,7 @@ impl Nameserver {
                 .map(|cfg| {
                     let protocol = cfg.protocol.protocol();
                     MonitoredConnection::new(
-                        NameServerConnection::from_config(configuration.address, &cfg),
+                        NameServerConnection::from_config(configuration.address, &cfg, bind),
                         &protocol,
                     )
                 })

@@ -70,7 +70,10 @@ fn manage() -> Result<(), ()> {
                 .arg(arg!(--empty "Send an empty notify with no records"))
                 .next_help_heading("DNS Connection")
                 .arg(
-                    arg!(<SERVER> ... "DNS server to notify")
+                    arg!(-b --bind <ADDR> "Bind address").value_parser(clap::value_parser!(IpAddr)),
+                )
+                .arg(
+                    arg!(-s --server <SERVER> ... "DNS server to notify")
                         .value_parser(clap::value_parser!(IpAddr)),
                 )
                 .arg(
@@ -160,10 +163,11 @@ fn manage() -> Result<(), ()> {
                 .get_one::<DNSClass>("class")
                 .expect("CLASS is required");
             let servers = matches
-                .get_many::<IpAddr>("SERVER")
+                .get_many::<IpAddr>("server")
                 .expect("SERVER is required")
                 .copied()
                 .collect::<Vec<_>>();
+            let bind = matches.get_one::<IpAddr>("bind").copied();
 
             let empty = matches.get_flag("empty");
 
@@ -174,7 +178,16 @@ fn manage() -> Result<(), ()> {
                 return Err(());
             }
 
-            match notify_servers(db, name, record_type, class, empty, &servers, connections) {
+            match notify_servers(
+                db,
+                name,
+                record_type,
+                class,
+                empty,
+                bind,
+                &servers,
+                connections,
+            ) {
                 Ok(_) => {}
                 Err(error) => {
                     eprintln!("Error notifying servers:");
@@ -341,6 +354,7 @@ fn notify_servers(
     record_type: &RecordType,
     class: &DNSClass,
     empty: bool,
+    bind: Option<IpAddr>,
     servers: &[IpAddr],
     connections: Vec<ConnectionConfig>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -364,11 +378,14 @@ fn notify_servers(
             .iter()
             .copied()
             .map(|address| {
-                Nameserver::new(NameserverConfig {
-                    address,
-                    connections: connections.clone(),
-                    policy: Default::default(),
-                })
+                Nameserver::new(
+                    NameserverConfig {
+                        address,
+                        connections: connections.clone(),
+                        policy: Default::default(),
+                    },
+                    bind,
+                )
             })
             .collect();
         let mut notify = NotifyManager::new(nameservers, NotifyConfig::default());

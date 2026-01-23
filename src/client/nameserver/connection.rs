@@ -64,14 +64,27 @@ impl NameServerConnection {
 }
 
 impl NameServerConnection {
-    pub fn from_config(address: IpAddr, config: &ConnectionConfig) -> Self {
+    pub fn from_config(address: IpAddr, config: &ConnectionConfig, bind: Option<IpAddr>) -> Self {
         match &config.protocol {
-            ProtocolConfig::Udp => Self::new_udp(address, config),
-            ProtocolConfig::Tcp => Self::new_tcp(address, config),
+            ProtocolConfig::Udp => Self::new_udp(
+                address,
+                config,
+                bind.unwrap_or(Ipv4Addr::UNSPECIFIED.into()),
+            ),
+            ProtocolConfig::Tcp => Self::new_tcp(
+                address,
+                config,
+                bind.unwrap_or(Ipv4Addr::UNSPECIFIED.into()),
+            ),
             #[cfg(feature = "tls")]
             ProtocolConfig::Tls { server_name } => {
                 let server_name = server_name.clone();
-                Self::new_tls(address, config, server_name)
+                Self::new_tls(
+                    address,
+                    config,
+                    server_name,
+                    bind.unwrap_or(Ipv4Addr::UNSPECIFIED.into()),
+                )
             }
             #[cfg(feature = "h2")]
             ProtocolConfig::Https {
@@ -80,14 +93,20 @@ impl NameServerConnection {
             } => {
                 let server_name = server_name.clone();
                 let endpoint = endpoint.clone();
-                Self::new_https(address, config, server_name, endpoint)
+                Self::new_https(
+                    address,
+                    config,
+                    server_name,
+                    endpoint,
+                    bind.unwrap_or(Ipv4Addr::UNSPECIFIED.into()),
+                )
             }
         }
     }
 
-    fn new_udp(address: IpAddr, config: &ConnectionConfig) -> Self {
+    fn new_udp(address: IpAddr, config: &ConnectionConfig, bind: IpAddr) -> Self {
         let addr = SocketAddr::new(address, config.port);
-        let bind = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
+        let bind = SocketAddr::from((bind, 0));
         let codec: DnsCodec<TaggedMessage, TaggedMessage> =
             DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp);
 
@@ -114,7 +133,7 @@ impl NameServerConnection {
         }
     }
 
-    fn new_tcp(address: IpAddr, config: &ConnectionConfig) -> Self {
+    fn new_tcp(address: IpAddr, config: &ConnectionConfig, bind: IpAddr) -> Self {
         let addr = SocketAddr::new(address, config.port);
         let codec: DnsCodec<TaggedMessage, TaggedMessage> =
             DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Tcp);
@@ -125,13 +144,22 @@ impl NameServerConnection {
         manager_cfg.max_idle_per_host = 1;
         manager_cfg.continue_after_preemption = true;
 
+        let mut tcp_config = TcpTransportConfig::default();
+        if !bind.is_unspecified() {
+            match bind {
+                IpAddr::V4(addr) => {
+                    tcp_config.local_address_ipv4 = Some(addr);
+                }
+                IpAddr::V6(addr) => {
+                    tcp_config.local_address_ipv6 = Some(addr);
+                }
+            }
+        }
+
         let service = tower::ServiceBuilder::new()
             .map_err(into_dns_error::<TcpConnectionError, CodecError, CodecError>)
             .service(ConnectionManagerService::new(
-                SimpleTcpTransport::new(
-                    StaticResolver::new(SocketAddrs::from(addr)),
-                    TcpTransportConfig::default(),
-                ),
+                SimpleTcpTransport::new(StaticResolver::new(SocketAddrs::from(addr)), tcp_config),
                 protocol,
                 ClientExecutorService::new(),
                 manager_cfg,
@@ -144,7 +172,12 @@ impl NameServerConnection {
     }
 
     #[cfg(feature = "tls")]
-    fn new_tls(address: IpAddr, config: &ConnectionConfig, server_name: Box<str>) -> Self {
+    fn new_tls(
+        address: IpAddr,
+        config: &ConnectionConfig,
+        server_name: Box<str>,
+        bind: IpAddr,
+    ) -> Self {
         use std::time::Duration;
 
         use chateau::client::conn::transport::TlsConnectionError;
@@ -159,11 +192,19 @@ impl NameServerConnection {
             .with_no_client_auth();
         tlsconfig.alpn_protocols = vec![b"dot".to_vec()];
 
+        let mut tcp_config = TcpTransportConfig::default();
+        if !bind.is_unspecified() {
+            match bind {
+                IpAddr::V4(addr) => {
+                    tcp_config.local_address_ipv4 = Some(addr);
+                }
+                IpAddr::V6(addr) => {
+                    tcp_config.local_address_ipv6 = Some(addr);
+                }
+            }
+        }
         let transport = StaticHostTlsTransport::new(
-            SimpleTcpTransport::new(
-                StaticResolver::new(SocketAddrs::from(addr)),
-                TcpTransportConfig::default(),
-            ),
+            SimpleTcpTransport::new(StaticResolver::new(SocketAddrs::from(addr)), tcp_config),
             Arc::new(tlsconfig),
             server_name,
         );
@@ -198,6 +239,7 @@ impl NameServerConnection {
         config: &ConnectionConfig,
         server_name: Box<str>,
         endpoint: Box<str>,
+        bind: IpAddr,
     ) -> Self {
         use hyperdriver::bridge::rt::TokioExecutor;
         use hyperdriver::client::conn::transport::tcp::SimpleTcpTransport;
@@ -211,9 +253,22 @@ impl NameServerConnection {
             })
             .with_no_client_auth();
         tlsconfig.alpn_protocols = vec![b"h2".to_vec()];
+
+        let mut tcp_config = TcpTransportConfig::default();
+        if !bind.is_unspecified() {
+            match bind {
+                IpAddr::V4(addr) => {
+                    tcp_config.local_address_ipv4 = Some(addr);
+                }
+                IpAddr::V6(addr) => {
+                    tcp_config.local_address_ipv6 = Some(addr);
+                }
+            }
+        }
+
         let resolver = StaticResolver::new(SocketAddrs::from(addr));
         let transport = StaticHostTlsTransport::new(
-            SimpleTcpTransport::new(resolver, Default::default()),
+            SimpleTcpTransport::new(resolver, tcp_config),
             Arc::new(tlsconfig),
             server_name,
         );

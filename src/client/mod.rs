@@ -1,4 +1,5 @@
 use std::fmt;
+use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -32,6 +33,28 @@ mod udp;
 
 type DnsService = chateau::services::SharedService<DnsRequest, DnsResponse, DnsClientError>;
 
+#[derive(Debug, Clone, Copy)]
+struct IpAddrDeserialize(IpAddr);
+
+impl<'de> Deserialize<'de> for IpAddrDeserialize {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let addr = String::deserialize(deserializer)?;
+        Ok(IpAddrDeserialize(
+            addr.parse()
+                .map_err(|error| serde::de::Error::custom(error))?,
+        ))
+    }
+}
+
+impl From<IpAddrDeserialize> for IpAddr {
+    fn from(ip: IpAddrDeserialize) -> Self {
+        ip.0
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClientConfiguration {
     #[serde(default)]
@@ -39,6 +62,8 @@ pub struct ClientConfiguration {
     nameserver: Vec<NameserverConfig>,
     #[serde(default)]
     pool: PoolConfig,
+    #[serde(default)]
+    bind: Option<IpAddrDeserialize>,
 }
 
 impl Default for ClientConfiguration {
@@ -47,6 +72,7 @@ impl Default for ClientConfiguration {
             max_payload_len: 2048,
             nameserver: Vec::new(),
             pool: PoolConfig::default(),
+            bind: None,
         }
     }
 }
@@ -61,12 +87,12 @@ pub struct Client {
 impl Client {
     pub fn new(configuration: ClientConfiguration) -> Client {
         let config = Arc::new(configuration.clone());
-
+        let bind = configuration.bind.map(|b| b.into());
         let svc = Pool::new(
             configuration
                 .nameserver
                 .into_iter()
-                .map(|ns| Nameserver::new(ns))
+                .map(|ns| Nameserver::new(ns, bind))
                 .collect(),
             configuration.pool,
         );
