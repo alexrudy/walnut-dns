@@ -16,11 +16,12 @@ use crate::cache::{DnsCache, DnsCacheService};
 use crate::codec::CodecError;
 use crate::rr::RecordSet;
 
+pub use self::codec::TaggedMessage;
 pub use self::codec::{DnsCodecLayer, DnsCodecService};
 #[cfg(feature = "h2")]
 pub use self::http::{DnsOverHttp, DnsOverHttpLayer, DnsOverHttpsFuture};
-pub use self::messages::{DnsRequestLayer, DnsRequestMiddleware};
-use self::nameserver::{ Nameserver, NameserverConfig, Pool, PoolConfig};
+pub use self::messages::{DnsRequestLayer, DnsRequestMiddleware, ResponseAdapter};
+use self::nameserver::{Nameserver, NameserverConfig, Pool, PoolConfig};
 
 mod codec;
 #[cfg(feature = "h2")]

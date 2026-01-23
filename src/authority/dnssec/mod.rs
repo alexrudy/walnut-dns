@@ -918,12 +918,12 @@ where
 
     /// What type is this zone
     fn zone_type(&self) -> hickory_server::authority::ZoneType {
-        self.zone.zone_type()
+        Authority::zone_type(&self.zone).into()
     }
 
     /// Return true if AXFR is allowed
     fn is_axfr_allowed(&self) -> bool {
-        self.zone.is_axfr_allowed()
+        Authority::is_axfr_allowed(&self.zone)
     }
 
     /// Takes the UpdateMessage, extracts the Records, and applies the changes to the record set.
@@ -998,7 +998,7 @@ where
 
     /// Get the origin of this zone, i.e. example.com is the origin for www.example.com
     fn origin(&self) -> &LowerName {
-        self.zone.origin()
+        Authority::origin(&self.zone)
     }
 
     /// Looks up all Resource Records matching the given `Name` and `RecordType`.
@@ -1022,7 +1022,7 @@ where
         query_type: RecordType,
         lookup_options: LookupOptions,
     ) -> LookupControlFlow<Self::Lookup> {
-        self.zone.lookup(name, query_type, lookup_options).await
+        Authority::lookup(&self.zone, name, query_type, lookup_options).await
     }
 
     /// Consulting lookup for all Resource Records matching the given `Name` and `RecordType`.
