@@ -9,9 +9,9 @@ use std::{
 
 use futures::{Stream as _, stream::FuturesUnordered};
 use hickory_proto::{
-    op::{Edns, Message, MessageType, OpCode, Query},
+    op::{Edns, Message, MessageType, OpCode, Query, ResponseCode},
     rr::{DNSClass, Name, RecordType},
-    xfer::{DnsRequest, DnsRequestOptions},
+    xfer::{DnsRequest, DnsRequestOptions, DnsResponse},
 };
 use pin_project::pin_project;
 use rand::Rng as _;
@@ -114,7 +114,7 @@ impl NotifyManager {
         query
             .set_name(name)
             .set_query_class(query_class)
-            .set_query_type(query_type);
+            .set_query_type(RecordType::SOA);
         message.add_query(query);
 
         // add the notify message, see https://tools.ietf.org/html/rfc1996, section 3.7
@@ -187,9 +187,9 @@ impl<S> IntoNotifyError<S> {
     }
 }
 
-impl<S, Req, Res> tower::Service<Req> for IntoNotifyError<S>
+impl<S, Req> tower::Service<Req> for IntoNotifyError<S>
 where
-    S: tower::Service<Req, Response = Res, Error = DnsClientError>,
+    S: tower::Service<Req, Response = DnsResponse, Error = DnsClientError>,
 {
     type Response = ();
     type Error = (IpAddr, DnsClientError);
@@ -220,16 +220,30 @@ impl<F> WithAddrFuture<F> {
     }
 }
 
-impl<F, R> Future for WithAddrFuture<F>
+impl<F> Future for WithAddrFuture<F>
 where
-    F: Future<Output = Result<R, DnsClientError>>,
+    F: Future<Output = Result<DnsResponse, DnsClientError>>,
 {
     type Output = Result<(), (IpAddr, DnsClientError)>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         match this.future.poll(cx) {
-            Poll::Ready(Ok(_)) => Poll::Ready(Ok(())),
+            Poll::Ready(Ok(response)) => {
+                if matches!(response.response_code(), ResponseCode::NoError) {
+                    tracing::debug!(answered=%response.contains_answer(), code=%response.response_code(), "Recieved response to NOTIFY");
+                    Poll::Ready(Ok(()))
+                } else {
+                    tracing::error!(code=%response.response_code(), "Recieved error response to NOTIFY");
+                    Poll::Ready(Err((
+                        *this.addr,
+                        DnsClientError::Response(
+                            response.header().clone(),
+                            response.response_code(),
+                        ),
+                    )))
+                }
+            }
             Poll::Ready(Err(error)) => Poll::Ready(Err((*this.addr, error))),
             Poll::Pending => Poll::Pending,
         }

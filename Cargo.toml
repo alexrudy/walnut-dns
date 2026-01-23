@@ -19,7 +19,7 @@ bb8 = { version = "0.8", optional = true }
 bytes = "1"
 camino = "1"
 chrono = "0.4"
-clap = { version = "4", optional = true }
+clap = { version = "4", features = ["derive"], optional = true }
 data-encoding = { version = "2.9.0", default-features = false }
 futures = "0.3"
 future-eyeballs = "0.1"
