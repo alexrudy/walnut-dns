@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use chrono::Utc;
 use hickory_proto::rr::LowerName;
 use hickory_proto::serialize::binary::BinEncodable;
 use rusqlite::named_params;
@@ -121,27 +122,14 @@ impl<'c> RecordPersistence<'c> {
 
     #[tracing::instrument("delete_orphans", skip_all, level = "trace")]
     pub(crate) fn delete_orphaned_records(&self, zone: &Zone) -> rusqlite::Result<()> {
-        let params: Vec<_> = zone
-            .records()
-            .filter(|r| !r.expired())
-            .map(|record| record.id())
-            .collect();
-        let param_template = std::iter::repeat_n("?", params.len())
-            .collect::<Vec<_>>()
-            .join(", ");
-
         let query = format!(
-            "DELETE FROM {table} WHERE zone_id = :zone_id AND id NOT IN ({param_template})",
+            "DELETE FROM {table} WHERE zone_id = :zone_id AND expires IS NOT NULL AND expires < :deadline",
             table = Self::TABLE.table
         );
         let mut stmt = self.connection.prepare(&query)?;
-        stmt.raw_bind_parameter(c":zone_id", zone.id())?;
-        tracing::trace!("retaining {} records", params.len());
-        for (idx, param) in params.into_iter().enumerate() {
-            let pidx = idx + 2;
-            stmt.raw_bind_parameter(pidx, param)?;
-        }
-        let nrows = stmt.raw_execute()?;
+
+        let nrows =
+            stmt.execute(named_params! { ":zone_id": zone.id(), ":deadline": Utc::now()})?;
         tracing::trace!("dropped {} records", nrows);
         Ok(())
     }
