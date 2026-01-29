@@ -74,11 +74,11 @@ optional = true
 
 [dependencies.chateau]
 features = ["client", "codec", "server"]
-version = "0.2"
+version = "0.3"
 # git = "https://github.com/alexrudy/chateau.git"
 
 [dependencies.hyperdriver]
-version = "0.12"
+version = "0.12.3"
 optional = true
 features = [
     "server",
@@ -128,7 +128,3 @@ required-features = ["cli"]
 name = "walnut-server"
 path = "src/bin/server.rs"
 required-features = ["cli"]
-
-[patch.crates-io]
-chateau.path = "../chateau"
-hyperdriver.path = "../hyperdriver"
