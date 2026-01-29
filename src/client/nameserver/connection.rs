@@ -106,7 +106,7 @@ impl NameServerConnection {
 
     fn new_udp(address: IpAddr, config: &ConnectionConfig, bind: IpAddr) -> Self {
         let addr = SocketAddr::new(address, config.port);
-        let bind = SocketAddr::from((bind, 0));
+        let bind = SocketAddr::new(bind, 0);
         let codec: DnsCodec<TaggedMessage, TaggedMessage> =
             DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp);
 
