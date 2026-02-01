@@ -335,7 +335,7 @@ where
                         Ok(Some(MessageDecoded::Failed(header, ResponseCode::FormErr)))
                     }
                     Err(_) => {
-                        error!("Failed to parse header: {error}");
+                        debug!("Failed to parse header: {error}");
                         Err(CodecError::DropMessage(error, length))
                     }
                 }
