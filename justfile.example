@@ -1,0 +1,7 @@
+
+# Run a simple query
+query:
+    RUST_LOG=trace cargo run --features=cli --bin walnut -- --cfg walnut.local.toml  ns1.linode.com. A
+
+query-cached:
+    RUST_LOG=trace cargo run --features=cli --bin walnut -- --cfg walnut.local.toml --db sample.db ns1.linode.com. A

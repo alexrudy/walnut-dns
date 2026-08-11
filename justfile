@@ -6,6 +6,8 @@ rust := env("RUSTUP_TOOLCHAIN", "stable")
 feature-set := "tls-ring,h2-ring,cli,pool"
 extended-features := "tls,tls-ring,h2-ring,cli,pool"
 
+import 'justfile.example'
+
 # Run all checks
 all: fmt check-all deny clippy examples docs test machete udeps msrv
     @echo "All checks passed 🍻"
