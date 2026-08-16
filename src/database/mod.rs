@@ -919,4 +919,90 @@ mod tests {
         assert_eq!(found_zones.len(), 1);
         assert_eq!(found_zones[0].name(), &expected_name);
     }
+
+    /// A zone is reconstructed from the record log by replaying entries, including the RFC 2136
+    /// deletion markers (`DNSClass::NONE` / `DNSClass::ANY`) that a DNS UPDATE write-ahead log
+    /// records. Loading such a log must apply the deletions rather than choke on, or resurrect,
+    /// them.
+    #[tokio::test]
+    async fn test_record_log_replays_deletion_markers() {
+        crate::subscribe();
+
+        use crate::database::record::RecordPersistence;
+        use hickory_proto::rr::{DNSClass, LowerName, RData, RrKey};
+
+        let store = SqliteStore::new_in_memory().await.unwrap();
+
+        let origin = Name::from_utf8("logtest.example.com.").unwrap();
+        let www = Name::from_utf8("www.logtest.example.com.").unwrap();
+        let mail = Name::from_utf8("mail.logtest.example.com.").unwrap();
+
+        let mut zone = create_test_zone("logtest.example.com.");
+        for addr in [rdata::A::new(192, 0, 2, 1), rdata::A::new(192, 0, 2, 2)] {
+            zone.upsert(
+                Record::from_rdata(www.clone(), TimeToLive::from(300), addr).into_record_rdata(),
+                SerialNumber::ZERO,
+            )
+            .unwrap();
+        }
+        zone.upsert(
+            Record::from_rdata(
+                mail.clone(),
+                TimeToLive::from(300),
+                rdata::A::new(192, 0, 2, 3),
+            )
+            .into_record_rdata(),
+            SerialNumber::ZERO,
+        )
+        .unwrap();
+
+        // Persist a clean snapshot of the zone.
+        store.insert(&zone).await.unwrap();
+
+        // Append RFC 2136 deletion markers to the record log, as a DNS UPDATE write-ahead log would:
+        //  - NONE deletes the single `www A 192.0.2.1` record (leaving 192.0.2.2 behind).
+        //  - ANY (with empty rdata) deletes the entire `mail A` RRset.
+        let mut none_marker = Record::from_rdata(
+            www.clone(),
+            TimeToLive::from(300),
+            rdata::A::new(192, 0, 2, 1),
+        )
+        .into_record_rdata();
+        none_marker.set_dns_class(DNSClass::NONE);
+
+        let mut any_marker = Record::update0(mail.clone(), TimeToLive::from(0), RecordType::A);
+        any_marker.set_dns_class(DNSClass::ANY);
+
+        let markers = vec![none_marker, any_marker];
+        {
+            let mut conn = store.connection().await.unwrap();
+            crate::block_in_place(|| {
+                let tx = conn.transaction()?;
+                RecordPersistence::new(&tx).insert_records_for_zone(&zone, markers.iter())?;
+                tx.commit()
+            })
+            .unwrap();
+        }
+
+        // Reload the zone: the deletion markers must be replayed against the snapshot.
+        let mut zones = store.find(&origin).await.unwrap().unwrap();
+        assert_eq!(zones.len(), 1);
+        let reloaded = zones.pop().unwrap();
+
+        // The `www A` RRset should have lost only 192.0.2.1.
+        let www_rrset = reloaded
+            .get(&RrKey::new(LowerName::from(&www), RecordType::A))
+            .expect("www A rrset should still exist");
+        let www_addrs: Vec<RData> = www_rrset.records().map(|r| r.data().clone()).collect();
+        assert_eq!(www_addrs, vec![RData::A(rdata::A::new(192, 0, 2, 2))]);
+
+        // The `mail A` RRset should be gone entirely.
+        assert!(
+            reloaded
+                .get(&RrKey::new(LowerName::from(&mail), RecordType::A))
+                .map(|rrset| rrset.is_empty())
+                .unwrap_or(true),
+            "mail A rrset should have been deleted"
+        );
+    }
 }

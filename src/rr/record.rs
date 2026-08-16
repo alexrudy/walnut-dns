@@ -506,8 +506,16 @@ impl FromRow for RData {
     {
         let buf: Vec<u8> = row.get("rdata")?;
         let record_type = row.get::<_, u16>("record_type")?.into();
-        let mut decoder = BinDecoder::new(&buf);
 
+        // A zero-length RDATA is how RFC 2136 dynamic-update records (the deletion markers stored in
+        // the record log) are represented. Mirror hickory's `Record::read`, which maps empty RDATA
+        // to `Update0` rather than trying to decode absent type-specific data (which would fail for
+        // most record types, e.g. an A record with no address bytes).
+        if buf.is_empty() {
+            return Ok(RData::Update0(record_type));
+        }
+
+        let mut decoder = BinDecoder::new(&buf);
         RData::read(&mut decoder, record_type, Restrict::new(buf.len() as u16)).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Blob, error.into())
         })
