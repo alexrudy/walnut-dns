@@ -1,329 +1,256 @@
+//! Tests for the catalog's "chained authority" behaviour.
+//!
+//! walnut-dns no longer uses the `hickory_server::authority::Authority` trait, so these tests are
+//! written against the traits in [`walnut_dns::authority`] ([`ZoneInfo`] and [`Lookup`]) and the
+//! chateau/tower based [`Catalog`] serving model.
+//!
+//! The catalog resolves a query by iterating over every authority registered for the matching zone
+//! (in order) and asking each one to [`Search::search`] the request:
+//!
+//! * [`LookupControlFlow::Skip`] tells the catalog to move on to the next authority.
+//! * [`LookupControlFlow::Continue`] and [`LookupControlFlow::Break`] both cause the catalog to
+//!   build a response from that authority's result and return it immediately.
+//! * If every authority skips, the catalog returns `SERVFAIL`.
+//!
+//! Unlike the old hickory model there is no `consult` step, so a later authority can never overwrite
+//! or rescue an earlier authority's answer.
+
 use std::sync::Arc;
 
-use hickory_proto::op::{Message, MessageType, Query, ResponseCode};
+use hickory_proto::op::{MessageType, Query, ResponseCode};
 use hickory_proto::rr::{LowerName, Name, RData, Record, RecordSet, RecordType, rdata::A};
 use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
-use hickory_proto::xfer::Protocol;
 
-use hickory_server::authority::AuthorityObject;
-use hickory_server::{authority::Nsec3QueryInfo, dnssec::NxProofKind};
-use hickory_server::{
-    authority::{
-        LookupControlFlow, LookupError, LookupObject, LookupOptions, LookupRecords, MessageRequest,
-        UpdateResult, ZoneType,
-    },
-    server::{Request, RequestInfo},
+use hickory_server::authority::{
+    AuthLookup, LookupControlFlow, LookupError, LookupOptions, LookupRecords,
 };
 
 mod support;
 use support::TestZoneStore;
 use support::subscribe;
 use walnut_dns::Catalog;
+use walnut_dns::authority::{Lookup, ZoneInfo};
+use walnut_dns::messages::{Message, Protocol, server::Incoming};
+use walnut_dns::rr::{SerialNumber, TimeToLive, ZoneType};
 
-/// Tests for the chained authority catalog.
+/// Tests the catalog's chained-authority resolution.
 #[tokio::test]
 async fn chained_authority_test() {
     subscribe();
-    let catalog: Catalog<Arc<dyn AuthorityObject>> = Catalog::new(TestZoneStore::new());
+    let catalog: Catalog<TestAuthority> = Catalog::new(TestZoneStore::new());
 
     let all_zeros = A::new(0, 0, 0, 0);
     let pri_lookup_ip = A::new(192, 0, 2, 1);
     let sec_lookup_ip = A::new(192, 0, 2, 2);
-    let sec_consult_ip = A::new(192, 0, 2, 3);
 
-    let pri_lookup_records = vec![
+    // Records handled by the primary authority.
+    let primary_records = vec![
+        // Only the primary knows about this name.
         (
             "primaryonly.example.com.",
-            Some((ResponseType::ContinueOk, pri_lookup_ip)),
+            (ResponseType::ContinueOk, pri_lookup_ip),
         ),
+        // Both authorities know about this name; the primary is queried first and wins.
         (
-            "primaryerr.example.com.",
-            Some((ResponseType::ContinueErr, all_zeros)),
+            "inboth.example.com.",
+            (ResponseType::ContinueOk, pri_lookup_ip),
         ),
-        (
-            "breakerr.example.com.",
-            Some((ResponseType::BreakErr, all_zeros)),
-        ),
-        (
-            "continueboth.example.com.",
-            Some((ResponseType::ContinueOk, pri_lookup_ip)),
-        ),
-        (
-            "overwrite.example.com.",
-            Some((ResponseType::ContinueOk, pri_lookup_ip)),
-        ),
+        // The primary answers with Break; the response is returned immediately.
         (
             "breakok.example.com.",
-            Some((ResponseType::BreakOk, pri_lookup_ip)),
+            (ResponseType::BreakOk, pri_lookup_ip),
         ),
+        // The primary skips, deferring to the secondary authority.
         (
-            "skipboth.example.com.",
-            Some((ResponseType::Skip, all_zeros)),
+            "skiptosecondary.example.com.",
+            (ResponseType::Skip, all_zeros),
         ),
-        (
-            "skipprimary.example.com.",
-            Some((ResponseType::Skip, all_zeros)),
-        ),
-    ];
-
-    let pri_consult_records = vec![
-        ("breakok.example.com.", None),
-        ("overwrite.example.com.", None),
-    ];
-
-    let sec_lookup_records = vec![
-        (
-            "continueboth.example.com.",
-            Some((ResponseType::ContinueOk, sec_lookup_ip)),
-        ),
-        (
-            "breakok.example.com.",
-            Some((ResponseType::BreakOk, sec_lookup_ip)),
-        ),
-        (
-            "skipboth.example.com.",
-            Some((ResponseType::Skip, all_zeros)),
-        ),
-        (
-            "skipprimary.example.com.",
-            Some((ResponseType::ContinueOk, sec_lookup_ip)),
-        ),
-    ];
-
-    let sec_consult_records = vec![
-        ("breakok.example.com.", None),
-        (
-            "overwrite.example.com.",
-            Some((ResponseType::ContinueOk, sec_consult_ip)),
-        ),
+        // Both authorities skip.
+        ("skipboth.example.com.", (ResponseType::Skip, all_zeros)),
+        // The primary returns Continue(Err); there is no fall-through to the secondary.
         (
             "primaryerr.example.com.",
-            Some((ResponseType::ContinueOk, sec_consult_ip)),
-        ),
-        (
-            "breakerr.example.com.",
-            Some((ResponseType::ContinueOk, sec_consult_ip)),
+            (ResponseType::ContinueErr, all_zeros),
         ),
     ];
 
-    let primary_authority = TestAuthority::new(
-        Name::from_ascii("example.com.").unwrap(),
-        pri_lookup_records,
-        pri_consult_records,
-    );
+    // Records handled by the secondary authority.
+    let secondary_records = vec![
+        (
+            "inboth.example.com.",
+            (ResponseType::ContinueOk, sec_lookup_ip),
+        ),
+        (
+            "skiptosecondary.example.com.",
+            (ResponseType::ContinueOk, sec_lookup_ip),
+        ),
+        ("skipboth.example.com.", (ResponseType::Skip, all_zeros)),
+    ];
 
-    let secondary_authority = TestAuthority::new(
-        Name::from_ascii("example.com.").unwrap(),
-        sec_lookup_records,
-        sec_consult_records,
-    );
+    let origin = Name::from_ascii("example.com.").unwrap();
+
+    let primary_authority = TestAuthority::new(origin.clone(), primary_records);
+    let secondary_authority = TestAuthority::new(origin.clone(), secondary_records);
 
     catalog
-        .upsert(
-            primary_authority.origin().clone(),
-            vec![Arc::new(primary_authority), Arc::new(secondary_authority)],
-        )
+        .upsert(origin, vec![primary_authority, secondary_authority])
         .await
         .unwrap();
 
-    // First test - the record only exists in the primary authority
+    // The record only exists in the primary authority.
     basic_test(&catalog, "primaryonly.example.com.", pri_lookup_ip).await;
 
-    // Second test -- the record exists in both authorities; confirm the primary authority data
-    // is returned
-    basic_test(&catalog, "continueboth.example.com.", pri_lookup_ip).await;
+    // The record exists in both authorities; the primary (first) authority answers.
+    basic_test(&catalog, "inboth.example.com.", pri_lookup_ip).await;
 
-    // Third test -- the record exists in the primary authority, but is overwritten by a record in
-    // the secondary authority
-    basic_test(&catalog, "overwrite.example.com.", sec_consult_ip).await;
-
-    // Fourth test -- the record exists in the primary authority and is returned with Break -
-    // verify consult methods are not consulted for any authority.
+    // The primary answers with Break(Ok); its record is returned.
     basic_test(&catalog, "breakok.example.com.", pri_lookup_ip).await;
 
-    // Fifth test -- primary returns skip, and the second authority has the record - verify the
-    // rdata from the secondary authority is returned.
-    basic_test(&catalog, "skipprimary.example.com.", sec_lookup_ip).await;
+    // The primary skips and the secondary answers.
+    basic_test(&catalog, "skiptosecondary.example.com.", sec_lookup_ip).await;
 
-    // Sixth test - both authorities skip.  Verify the catalog returns Servfail
+    // Both authorities skip; the catalog returns SERVFAIL.
     error_test(&catalog, "skipboth.example.com.", ResponseCode::ServFail).await;
 
-    // Seventh test -- Primary returns Continue(Err), secondary returns Ok with a record
-    basic_test(&catalog, "primaryerr.example.com.", sec_consult_ip).await;
-
-    // Eighth test -- Primary returns Break(Err); secondary consult WOULD result in a record
-    // returned; verify no records
-    error_test(&catalog, "breakerr.example.com.", ResponseCode::NXDomain).await;
+    // The primary returns Continue(Err(NXDomain)); there is no consult step, so the error is
+    // returned to the client rather than falling through to the secondary authority.
+    error_test(&catalog, "primaryerr.example.com.", ResponseCode::NXDomain).await;
 }
 
+/// A minimal in-memory authority used to exercise the catalog's chaining behaviour.
+///
+/// It implements walnut-dns's [`ZoneInfo`] and [`Lookup`] traits directly (rather than storing real
+/// records) so that each query can return a precise [`LookupControlFlow`] value.
+#[derive(Clone)]
 struct TestAuthority {
-    origin: LowerName,
+    origin: Name,
     zone_type: ZoneType,
-    lookup_records: TestRecords,
-    consult_records: TestRecords,
+    records: TestRecords,
 }
 
 impl TestAuthority {
-    pub fn new(origin: Name, lookup_records: TestRecords, consult_records: TestRecords) -> Self {
+    fn new(origin: Name, records: TestRecords) -> Self {
         TestAuthority {
-            origin: origin.into(),
-            zone_type: ZoneType::External,
-            lookup_records,
-            consult_records,
+            origin,
+            zone_type: ZoneType::Primary,
+            records,
         }
     }
 }
 
-#[async_trait::async_trait]
-impl hickory_server::authority::Authority for TestAuthority {
-    type Lookup = LookupRecords;
-
-    fn origin(&self) -> &LowerName {
+impl ZoneInfo for TestAuthority {
+    fn name(&self) -> &Name {
         &self.origin
     }
 
-    /// What type is this zone
+    fn origin(&self) -> &Name {
+        &self.origin
+    }
+
     fn zone_type(&self) -> ZoneType {
         self.zone_type
     }
 
-    /// Return true if AXFR is allowed
     fn is_axfr_allowed(&self) -> bool {
         false
     }
 
-    async fn update(&self, _update: &MessageRequest) -> UpdateResult<bool> {
-        Err(ResponseCode::NotImp)
+    fn dns_class(&self) -> hickory_proto::rr::DNSClass {
+        hickory_proto::rr::DNSClass::IN
     }
 
-    async fn get_nsec_records(
-        &self,
-        _name: &LowerName,
-        _lookup_options: LookupOptions,
-    ) -> LookupControlFlow<Self::Lookup> {
-        LookupControlFlow::Continue(Ok(LookupRecords::Empty))
+    fn serial(&self) -> SerialNumber {
+        SerialNumber::ZERO
     }
 
-    async fn get_nsec3_records(
-        &self,
-        _info: Nsec3QueryInfo<'_>,
-        _lookup_options: LookupOptions,
-    ) -> LookupControlFlow<Self::Lookup> {
-        LookupControlFlow::Continue(Ok(LookupRecords::Empty))
-    }
-
-    fn nx_proof_kind(&self) -> Option<&NxProofKind> {
+    fn soa(&self) -> Option<&walnut_dns::rr::Record> {
         None
     }
 
-    async fn lookup(
-        &self,
-        name: &LowerName,
-        _query_type: RecordType,
-        lookup_options: LookupOptions,
-    ) -> LookupControlFlow<Self::Lookup> {
-        let Some(res) = inner_lookup(name, &self.lookup_records, &lookup_options) else {
-            panic!("reached end of records without a match");
-        };
-        res
+    fn increment_soa_serial(&mut self) -> SerialNumber {
+        SerialNumber::ZERO
     }
 
-    async fn search(
-        &self,
-        request_info: RequestInfo<'_>,
-        lookup_options: LookupOptions,
-    ) -> LookupControlFlow<Self::Lookup> {
-        hickory_server::authority::Authority::lookup(
-            self,
-            request_info.query.name(),
-            request_info.query.query_type(),
-            lookup_options,
-        )
-        .await
-    }
-
-    async fn consult(
-        &self,
-        name: &LowerName,
-        _rtype: RecordType,
-        lookup_options: LookupOptions,
-        last_result: LookupControlFlow<Box<dyn LookupObject>>,
-    ) -> LookupControlFlow<Box<dyn LookupObject>> {
-        let Some(res) = inner_lookup(name, &self.consult_records, &lookup_options) else {
-            return last_result;
-        };
-        res.map_dyn()
+    fn minimum_ttl(&self) -> TimeToLive {
+        3600.into()
     }
 }
 
-#[derive(Debug)]
+#[async_trait::async_trait]
+impl Lookup for TestAuthority {
+    async fn lookup(
+        &self,
+        name: &Name,
+        query_type: RecordType,
+        lookup_options: LookupOptions,
+    ) -> LookupControlFlow<AuthLookup> {
+        // SOA lookups are issued by the catalog while building negative responses (see
+        // `soa_secure`). We don't model an SOA record here, so return an empty answer.
+        if query_type == RecordType::SOA {
+            return LookupControlFlow::Continue(Ok(AuthLookup::default()));
+        }
+
+        match inner_lookup(name, &self.records, lookup_options) {
+            Some(result) => result,
+            None => panic!(
+                "unexpected query for {name} ({query_type}) against authority {}",
+                self.origin
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 enum ResponseType {
     ContinueOk,
     BreakOk,
     ContinueErr,
-    BreakErr,
     Skip,
 }
 
-/// This is a lookup table for inner_lookup, which is called by the test authority lookup and
-/// consult methods.  Each entry in the Vec is a tuple, which represent a query string and action
-/// pair.  The action is wrapped in an Option - for None variants, if the lookup or consult method
-/// is queried for that name, the test will panic.  This covers cases where lookup and/or consult
-/// should not be called, such as verifying that LookupControlFlow::Break is working properly.
-/// The Some variant will include a ResponseType and a record. ResponseType is an enum that maps 1:1
-/// to LookupControlFlow, and controls the control flow type returned to the catalog.  The record is
-/// always an A record, and will be returned with the lookup records in Continue(Ok) and Break(Ok)
-/// responses. It is used to distinguish between the primary and secondary authority having been the
-/// source of the answer returned by the catalog.
-type TestRecords = Vec<(&'static str, Option<(ResponseType, A)>)>;
+/// A lookup table mapping query names to the control-flow response the authority should produce.
+///
+/// Each entry is a query string paired with a [`ResponseType`] and the `A` record data that should
+/// be returned for the `*Ok` variants. The record is used to distinguish which authority produced
+/// the answer returned by the catalog.
+type TestRecords = Vec<(&'static str, (ResponseType, A))>;
 
 fn inner_lookup(
-    name: &LowerName,
+    name: &Name,
     records: &TestRecords,
-    lookup_options: &LookupOptions,
-) -> Option<LookupControlFlow<LookupRecords>> {
-    let ascii_name = &Name::from(name).to_ascii()[..];
+    lookup_options: LookupOptions,
+) -> Option<LookupControlFlow<AuthLookup>> {
+    let ascii_name = LowerName::from(name).to_string();
     tracing::debug!("inner_lookup {ascii_name}");
-    for record in records.iter() {
-        let (record_name, action) = record;
+    for (record_name, (response_type, response_record)) in records.iter() {
         tracing::trace!("inner_lookup check {record_name}");
         if *record_name == ascii_name {
-            let Some((response_type, response_record)) = action else {
-                panic!("unexpected query for {record_name} in lookup");
-            };
-
-            let mut rset = RecordSet::new(name.into(), RecordType::A, 1);
+            let mut rset = RecordSet::new(name.clone(), RecordType::A, 1);
             rset.insert(
-                Record::from_rdata(name.into(), 3600, RData::A(*response_record)),
+                Record::from_rdata(name.clone(), 3600, RData::A(*response_record)),
                 1,
             );
 
-            let lookup = LookupRecords::new(*lookup_options, rset.into());
+            let records = LookupRecords::new(lookup_options, Arc::new(rset));
+            let lookup = AuthLookup::answers(records, None);
 
             use LookupControlFlow::*;
-            match response_type {
-                ResponseType::ContinueOk => return Some(Continue(Ok(lookup))),
-                ResponseType::BreakOk => return Some(Break(Ok(lookup))),
+            return Some(match response_type {
+                ResponseType::ContinueOk => Continue(Ok(lookup)),
+                ResponseType::BreakOk => Break(Ok(lookup)),
                 ResponseType::ContinueErr => {
-                    return Some(Continue(Err(LookupError::ResponseCode(
-                        ResponseCode::NXDomain,
-                    ))));
+                    Continue(Err(LookupError::ResponseCode(ResponseCode::NXDomain)))
                 }
-                ResponseType::BreakErr => {
-                    return Some(Break(Err(LookupError::ResponseCode(
-                        ResponseCode::NXDomain,
-                    ))));
-                }
-                ResponseType::Skip => return Some(LookupControlFlow::Skip),
-            }
+                ResponseType::Skip => LookupControlFlow::Skip,
+            });
         }
     }
 
     None
 }
 
-// Boilerplate to query the catalog
-async fn do_query(catalog: &Catalog<Arc<dyn AuthorityObject>>, query_name: &str) -> Message {
+// Boilerplate to query the catalog.
+async fn do_query(catalog: &Catalog<TestAuthority>, query_name: &str) -> Message {
     let mut question: Message = Message::new();
 
     let mut query: Query = Query::new();
@@ -333,18 +260,14 @@ async fn do_query(catalog: &Catalog<Arc<dyn AuthorityObject>>, query_name: &str)
     question.set_authentic_data(true);
 
     let question_bytes = question.to_bytes().unwrap();
-    let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
-    let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
+    let question_req = Message::from_bytes(&question_bytes).unwrap();
+    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
     catalog.lookup(&question_req, None).await.unwrap()
 }
 
 // Handle boilerplate for the most common test case pattern: a positive response with a single A
 // record.
-async fn basic_test(
-    catalog: &Catalog<Arc<dyn AuthorityObject>>,
-    query_name: &'static str,
-    answer: A,
-) {
+async fn basic_test(catalog: &Catalog<TestAuthority>, query_name: &'static str, answer: A) {
     let result = do_query(catalog, query_name).await;
 
     let answers: &[Record] = result.answers();
@@ -356,13 +279,9 @@ async fn basic_test(
     assert_eq!(answers.first().unwrap().data(), &RData::A(answer));
 }
 
-async fn error_test(
-    catalog: &Catalog<Arc<dyn AuthorityObject>>,
-    query_name: &str,
-    r_code: ResponseCode,
-) {
+async fn error_test(catalog: &Catalog<TestAuthority>, query_name: &str, r_code: ResponseCode) {
     let res = do_query(catalog, query_name).await;
 
     assert_eq!(res.response_code(), r_code);
-    assert_eq!(res.answer_count(), 0);
+    assert!(res.answers().is_empty());
 }

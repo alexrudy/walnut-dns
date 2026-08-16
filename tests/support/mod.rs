@@ -1,26 +1,11 @@
 #![allow(unused)]
 
 use std::collections::BTreeMap;
-use std::future::poll_fn;
-use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Once};
-use std::task::Poll;
+use std::sync::{Mutex, Once};
 
-use futures::FutureExt as _;
-use hickory_proto::serialize::binary::BinDecodable as _;
-use hickory_proto::{
-    op::Message,
-    rr::Record,
-    serialize::binary::{BinDecoder, BinEncoder},
-};
-use hickory_server::{
-    authority::MessageResponse,
-    server::{ResponseHandler, ResponseInfo},
-};
 use walnut_dns::catalog::CatalogError;
 use walnut_dns::catalog::CatalogStore;
-use walnut_dns::rr::{LowerName, Name};
+use walnut_dns::rr::Name;
 
 pub mod examples;
 
@@ -37,69 +22,8 @@ pub fn subscribe() {
     });
 }
 
-#[derive(Clone, Default)]
-pub struct TestResponseHandler {
-    message_ready: Arc<AtomicBool>,
-    buf: Arc<Mutex<Vec<u8>>>,
-}
-
-impl TestResponseHandler {
-    pub fn new() -> Self {
-        let buf = Arc::new(Mutex::new(Vec::with_capacity(512)));
-        let message_ready = Arc::new(AtomicBool::new(false));
-        TestResponseHandler { message_ready, buf }
-    }
-
-    fn into_inner(self) -> impl Future<Output = Vec<u8>> {
-        poll_fn(move |_| {
-            if self
-                .message_ready
-                .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
-                let bytes: Vec<u8> = std::mem::take(&mut self.buf.lock().unwrap());
-                Poll::Ready(bytes)
-            } else {
-                Poll::Pending
-            }
-        })
-    }
-
-    pub fn into_message(self) -> impl Future<Output = Message> {
-        let bytes = self.into_inner();
-        bytes.map(|b| {
-            let mut decoder = BinDecoder::new(&b);
-            Message::read(&mut decoder).expect("could not decode message")
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl ResponseHandler for TestResponseHandler {
-    async fn send_response<'a>(
-        &mut self,
-        response: MessageResponse<
-            '_,
-            'a,
-            impl Iterator<Item = &'a Record> + Send + 'a,
-            impl Iterator<Item = &'a Record> + Send + 'a,
-            impl Iterator<Item = &'a Record> + Send + 'a,
-            impl Iterator<Item = &'a Record> + Send + 'a,
-        >,
-    ) -> io::Result<ResponseInfo> {
-        let buf = &mut self.buf.lock().unwrap();
-        buf.clear();
-        let mut encoder = BinEncoder::new(buf);
-        let info = response
-            .destructive_emit(&mut encoder)
-            .expect("could not encode");
-        self.message_ready.store(true, Ordering::Release);
-        Ok(info)
-    }
-}
-
 pub struct TestZoneStore<Z> {
-    zones: Mutex<BTreeMap<LowerName, Vec<Z>>>,
+    zones: Mutex<BTreeMap<Name, Vec<Z>>>,
 }
 
 impl<Z> TestZoneStore<Z> {
@@ -113,10 +37,7 @@ impl<Z> TestZoneStore<Z> {
 
 #[async_trait::async_trait]
 impl<Z: Clone + Send + Sync> CatalogStore<Z> for TestZoneStore<Z> {
-    async fn find(
-        &self,
-        origin: &walnut_dns::rr::LowerName,
-    ) -> Result<Option<Vec<Z>>, CatalogError> {
+    async fn find(&self, origin: &walnut_dns::rr::Name) -> Result<Option<Vec<Z>>, CatalogError> {
         let data = self.zones.lock().expect("poisoned");
         let mut name = origin.clone();
         loop {
@@ -132,17 +53,13 @@ impl<Z: Clone + Send + Sync> CatalogStore<Z> for TestZoneStore<Z> {
         }
     }
 
-    async fn upsert(
-        &self,
-        name: walnut_dns::rr::LowerName,
-        zones: &[Z],
-    ) -> Result<(), CatalogError> {
+    async fn upsert(&self, name: walnut_dns::rr::Name, zones: &[Z]) -> Result<(), CatalogError> {
         let mut data = self.zones.lock().expect("poisoned");
         data.insert(name, zones.to_vec());
         Ok(())
     }
 
-    async fn list(&self, name: &LowerName) -> Result<Vec<Name>, CatalogError> {
+    async fn list(&self, name: &Name) -> Result<Vec<Name>, CatalogError> {
         let data = self.zones.lock().expect("poisoned");
         Ok(data
             .keys()
@@ -152,10 +69,7 @@ impl<Z: Clone + Send + Sync> CatalogStore<Z> for TestZoneStore<Z> {
             .collect())
     }
 
-    async fn remove(
-        &self,
-        name: &walnut_dns::rr::LowerName,
-    ) -> Result<Option<Vec<Z>>, CatalogError> {
+    async fn remove(&self, name: &walnut_dns::rr::Name) -> Result<Option<Vec<Z>>, CatalogError> {
         let mut data = self.zones.lock().expect("poisoned");
         Ok(data.remove(name))
     }

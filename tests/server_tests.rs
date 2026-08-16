@@ -11,17 +11,13 @@ use std::time::Duration;
 use chateau::server::Server;
 #[cfg(feature = "tls")]
 use chateau::server::conn::tls::TlsAcceptor;
-use futures::TryStreamExt;
-use hickory_client::client::{Client, ClientHandle};
-use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
+#[cfg(feature = "tls")]
+use chateau::services::SharedService;
+use hickory_proto::op::{MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::rdata::{A, OPT};
 use hickory_proto::rr::{DNSClass, Name, RData, Record, RecordType};
-use hickory_proto::runtime::TokioRuntimeProvider;
 #[cfg(feature = "tls")]
 use hickory_proto::rustls::default_provider;
-use hickory_proto::tcp::TcpClientStream;
-use hickory_proto::udp::UdpClientStream;
-use hickory_proto::xfer::{DnsHandle, DnsMultiplexer};
 
 #[cfg(feature = "tls")]
 use rustls::{
@@ -36,6 +32,13 @@ use rustls::{
 use tokio::net::TcpListener;
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
+#[cfg(feature = "tls")]
+use walnut_dns::client::DnsRequestMiddleware;
+use walnut_dns::client::nameserver::{ConnectionConfig, NameserverConfig};
+#[cfg(feature = "tls")]
+use walnut_dns::client::nameserver::{NameServerConnection, Nameserver};
+use walnut_dns::client::{Client, ClientConfiguration};
+use walnut_dns::messages::Message;
 use walnut_dns::rr::Zone;
 use walnut_dns::server::stream::DnsOverStream;
 use walnut_dns::server::udp::{DnsOverUdp, UdpListener};
@@ -45,7 +48,6 @@ mod support;
 use support::examples::create_example;
 use support::subscribe;
 use walnut_dns::ZoneInfo as _;
-use walnut_dns::authority::ZoneAuthority;
 
 #[tokio::test]
 #[allow(clippy::uninlined_format_args)]
@@ -109,13 +111,15 @@ async fn test_server_unknown_type() {
     let (tx, shutdown) = oneshot::channel();
 
     let server = tokio::spawn(server_thread_udp(udp_socket, shutdown));
-    let mut client = lazy_udp_client(ipaddr).await;
+    let client = lazy_udp_client(ipaddr).await;
 
     let client_result = client
-        .query(
-            Name::from_str("www.example.com.").unwrap(),
-            DNSClass::IN,
-            RecordType::Unknown(65535),
+        .lookup(
+            Query::query(
+                Name::from_str("www.example.com.").unwrap(),
+                RecordType::Unknown(65535),
+            ),
+            Default::default(),
         )
         .await
         .expect("query failed for unknown");
@@ -169,14 +173,10 @@ async fn test_server_form_error_on_multiple_queries() {
         .set_op_code(OpCode::Query)
         .set_recursion_desired(true);
 
-    let mut client_result = client
-        .send(message)
-        .try_collect::<Vec<_>>()
+    let client_result = client
+        .send(message, Default::default())
         .await
         .expect("query failed");
-
-    assert_eq!(client_result.len(), 1);
-    let client_result = client_result.pop().expect("there should be one response");
 
     assert_eq!(client_result.response_code(), ResponseCode::FormErr);
 
@@ -186,19 +186,22 @@ async fn test_server_form_error_on_multiple_queries() {
 
 #[tokio::test]
 async fn test_server_no_response_on_response() {
+    use tower::Service as _;
+    use walnut_dns::error::HickoryError;
+    use walnut_dns::messages::Protocol;
+    use walnut_dns::messages::server::Incoming;
+
     subscribe();
 
-    let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0));
-    let udp_socket = UdpSocket::bind(&addr).await.unwrap();
+    // A message whose header marks it as a response rather than a query. Per RFC 1035 a server must
+    // never reply to a response, to avoid infinite packet loops between servers.
+    //
+    // We drive the catalog service directly instead of going over a socket: "the server sends
+    // nothing back" cannot be observed with a request/response client, which would simply wait for
+    // a reply that never arrives. At the service level the refusal surfaces as an error, which is
+    // what the server's connection loop then swallows without emitting a response.
+    let mut catalog = new_catalog().await;
 
-    let ipaddr = udp_socket.local_addr().unwrap();
-    println!("udp_socket on port: {ipaddr}");
-    let (tx, shutdown) = oneshot::channel();
-
-    let server = tokio::spawn(server_thread_udp(udp_socket, shutdown));
-    let client = lazy_udp_client(ipaddr).await;
-
-    // build the message
     let query_a = Query::query(Name::from_str("www.example.com.").unwrap(), RecordType::A);
     let mut message = Message::new();
     message
@@ -206,11 +209,15 @@ async fn test_server_no_response_on_response() {
         .set_op_code(OpCode::Query)
         .add_query(query_a);
 
-    let client_result = client.send(message).try_collect::<Vec<_>>().await.unwrap();
-    assert_eq!(client_result.len(), 0);
+    let peer = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 5353));
+    let request = Incoming::new(message, peer, Protocol::Udp);
 
-    tx.send(()).unwrap();
-    server.await.unwrap();
+    let result = catalog.call(request).await;
+
+    assert!(
+        matches!(result, Err(HickoryError::ResponseAsRequest)),
+        "server must not produce a response for a response message, got: {result:?}"
+    );
 }
 
 #[allow(unused)]
@@ -321,19 +328,21 @@ async fn test_server_www_https() {
 }
 
 async fn lazy_udp_client(addr: SocketAddr) -> Client {
-    let conn = UdpClientStream::builder(addr, TokioRuntimeProvider::default()).build();
-    let (client, driver) = Client::connect(conn).await.expect("failed to connect");
-    tokio::spawn(driver);
+    let mut conn_config = ConnectionConfig::udp();
+    conn_config.port = addr.port();
+    let ns = NameserverConfig::single(addr.ip(), conn_config);
+    let cfg = ClientConfiguration::from(ns);
+
+    let client = Client::new(cfg);
     client
 }
 
 async fn lazy_tcp_client(addr: SocketAddr) -> Client {
-    let (stream, sender) = TcpClientStream::new(addr, None, None, TokioRuntimeProvider::default());
-    let multiplexer = DnsMultiplexer::new(stream, sender, None);
-    let (client, driver) = Client::connect(multiplexer)
-        .await
-        .expect("failed to connect");
-    tokio::spawn(driver);
+    let mut conn_config = ConnectionConfig::tcp();
+    conn_config.port = addr.port();
+    let ns = NameserverConfig::single(addr.ip(), conn_config);
+    let cfg = ClientConfiguration::from(ns);
+    let client = Client::new(cfg);
     client
 }
 
@@ -348,8 +357,6 @@ async fn lazy_tls_client(
     dns_name: String,
     cert_chain: Vec<CertificateDer<'static>>,
 ) -> Client {
-    use hickory_proto::rustls::tls_client_connect_with_bind_addr;
-
     let mut root_store = RootCertStore::empty();
     let (_, ignored) = root_store.add_parsable_certificates(cert_chain);
     assert_eq!(ignored, 0, "bad certificate!");
@@ -360,20 +367,20 @@ async fn lazy_tls_client(
         .with_root_certificates(root_store)
         .with_no_client_auth();
 
-    let (tls_client_stream, handle) = tls_client_connect_with_bind_addr(
+    let conn = NameServerConnection::build_tls(
         ipaddr,
-        None,
-        dns_name,
+        Default::default(),
         Arc::new(config),
-        TokioRuntimeProvider::default(),
+        dns_name.into(),
+        None,
     );
 
-    let multiplexer = DnsMultiplexer::new(Box::pin(tls_client_stream), handle, None);
-    let (client, driver) = Client::connect(multiplexer)
-        .await
-        .expect("failed to connect");
-    tokio::spawn(driver);
-    client
+    let mut ns = Nameserver::empty(ipaddr.ip());
+    ns.push_connection(conn);
+
+    let svc = SharedService::new(DnsRequestMiddleware::new(ns));
+
+    Client::from_service(svc, 2048)
 }
 
 #[cfg(feature = "tls")]
@@ -382,8 +389,6 @@ async fn lazy_https_client(
     dns_name: String,
     cert_chain: Vec<CertificateDer<'static>>,
 ) -> Client {
-    use hickory_proto::h2::HttpsClientStreamBuilder;
-
     let mut root_store = RootCertStore::empty();
     let (_, ignored) = root_store.add_parsable_certificates(cert_chain);
     assert_eq!(ignored, 0, "bad certificate!");
@@ -394,22 +399,33 @@ async fn lazy_https_client(
         .with_root_certificates(root_store)
         .with_no_client_auth();
 
-    let stream =
-        HttpsClientStreamBuilder::with_client_config(config.into(), TokioRuntimeProvider::new())
-            .build(ipaddr, dns_name, "/dns-query".into());
+    let conn = NameServerConnection::build_https(
+        ipaddr,
+        Default::default(),
+        Arc::new(config),
+        dns_name.into(),
+        "/dns-query".into(),
+        None,
+    );
 
-    let (client, driver) = Client::connect(stream).await.expect("failed to connect");
-    tokio::spawn(driver);
-    client
+    let mut ns = Nameserver::empty(ipaddr.ip());
+    ns.push_connection(conn);
+
+    let svc = SharedService::new(DnsRequestMiddleware::new(ns));
+
+    Client::from_service(svc, 2048)
 }
 
 async fn client_thread_www(future: impl Future<Output = Client>) {
     let name = Name::from_str("www.example.com.").unwrap();
 
-    let mut client = future.await;
+    let client = future.await;
     let response = tokio::time::timeout(
         Duration::from_secs(10),
-        client.query(name.clone(), DNSClass::IN, RecordType::A),
+        client.lookup(
+            Query::query(name.clone(), RecordType::A),
+            Default::default(),
+        ),
     )
     .await
     .expect("timeout querying")
@@ -435,16 +451,13 @@ async fn client_thread_www(future: impl Future<Output = Client>) {
     }
 }
 
-async fn new_catalog() -> Catalog<ZoneAuthority<Zone>> {
+async fn new_catalog() -> Catalog<Zone> {
     let example = create_example();
     let origin = example.origin().clone();
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
 
-    catalog
-        .upsert(origin, vec![ZoneAuthority::new(example)])
-        .await
-        .unwrap();
+    catalog.upsert(origin, vec![example]).await.unwrap();
     catalog
 }
 

@@ -3,8 +3,8 @@ use std::str::FromStr as _;
 use hickory_proto::rr::RData;
 use hickory_server::dnssec::NxProofKind;
 use walnut_dns::{
-    Lookup as _,
-    authority::DnsSecZone,
+    Lookup as _, ZoneInfo as _,
+    authority::{DnsSecZone, Records},
     rr::{Name, Zone, ZoneType},
 };
 

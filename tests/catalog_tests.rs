@@ -3,11 +3,12 @@ use std::str::FromStr;
 use hickory_proto::op::*;
 use hickory_proto::rr::{rdata::*, *};
 use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
-use hickory_proto::xfer::Protocol;
 
-use hickory_server::{authority::MessageRequest, server::Request};
+use walnut_dns::SqliteStore;
+use walnut_dns::authority::Records as _;
+use walnut_dns::messages::server::Incoming;
+use walnut_dns::messages::{Message, Protocol};
 use walnut_dns::{Catalog, rr::ZoneType};
-use walnut_dns::{Lookup as _, SqliteStore};
 use walnut_dns::{ZoneInfo as _, rr::Zone};
 
 mod support;
@@ -18,7 +19,7 @@ use support::subscribe;
 pub fn create_records(zone: &mut Zone) {
     use walnut_dns::rr::{Record, SerialNumber};
 
-    let origin: Name = zone.origin().into();
+    let origin: Name = zone.origin().clone();
 
     zone.upsert(
         Record::from_rdata(
@@ -134,8 +135,8 @@ async fn test_catalog_lookup() {
 
     // temp request
     let question_bytes = question.to_bytes().unwrap();
-    let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
-    let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
+    let question_req = Message::from_bytes(&question_bytes).unwrap();
+    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
     let result = catalog.lookup(&question_req, None).await.unwrap();
 
@@ -164,8 +165,8 @@ async fn test_catalog_lookup() {
 
     // temp request
     let question_bytes = question.to_bytes().unwrap();
-    let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
-    let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
+    let question_req = Message::from_bytes(&question_bytes).unwrap();
+    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
     let result = catalog.lookup(&question_req, None).await.unwrap();
 
@@ -205,8 +206,8 @@ async fn test_catalog_lookup_soa() {
 
     // temp request
     let question_bytes = question.to_bytes().unwrap();
-    let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
-    let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
+    let question_req = Message::from_bytes(&question_bytes).unwrap();
+    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
     let result = catalog.lookup(&question_req, None).await.unwrap();
 
@@ -267,8 +268,8 @@ async fn test_catalog_nx_soa() {
 
     // temp request
     let question_bytes = question.to_bytes().unwrap();
-    let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
-    let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
+    let question_req = Message::from_bytes(&question_bytes).unwrap();
+    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
     let result = catalog.lookup(&question_req, None).await.unwrap();
 
@@ -313,8 +314,8 @@ async fn test_non_authoritive_nx_refused() {
 
     // temp request
     let question_bytes = question.to_bytes().unwrap();
-    let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
-    let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
+    let question_req = Message::from_bytes(&question_bytes).unwrap();
+    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
     let result = catalog.lookup(&question_req, None).await.unwrap();
 
@@ -364,8 +365,8 @@ async fn test_axfr() {
 
     // temp request
     let question_bytes = question.to_bytes().unwrap();
-    let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
-    let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
+    let question_req = Message::from_bytes(&question_bytes).unwrap();
+    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
     let result = catalog.lookup(&question_req, None).await.unwrap();
 
@@ -478,8 +479,8 @@ async fn test_axfr_refused() {
 
     // temp request
     let question_bytes = question.to_bytes().unwrap();
-    let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
-    let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
+    let question_req = Message::from_bytes(&question_bytes).unwrap();
+    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
     let result = catalog.lookup(&question_req, None).await.unwrap();
 
@@ -515,8 +516,8 @@ async fn test_cname_additionals() {
 
     // temp request
     let question_bytes = question.to_bytes().unwrap();
-    let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
-    let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
+    let question_req = Message::from_bytes(&question_bytes).unwrap();
+    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
     let result = catalog.lookup(&question_req, None).await.unwrap();
 
@@ -559,8 +560,8 @@ async fn test_multiple_cname_additionals() {
 
     // temp request
     let question_bytes = question.to_bytes().unwrap();
-    let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
-    let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
+    let question_req = Message::from_bytes(&question_bytes).unwrap();
+    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
     let result = catalog.lookup(&question_req, None).await.unwrap();
 

@@ -1,7 +1,7 @@
 use hickory_proto::rr::rdata;
 use walnut_dns::ZoneInfo as _;
 use walnut_dns::catalog::CatalogStore;
-use walnut_dns::rr::{LowerName, Name, NameExt, Record, Zone};
+use walnut_dns::rr::{Name, NameExt, Record, Zone};
 use walnut_dns::{database::SqliteStore, rr::ZoneType};
 
 mod support;
@@ -40,9 +40,7 @@ async fn upsert_one() {
         .unwrap();
 
     let zone = catalog
-        .find(&hickory_proto::rr::LowerName::new(
-            &"example.com.".parse().unwrap(),
-        ))
+        .find(&"www.example.com.".parse().unwrap())
         .await
         .unwrap()
         .unwrap()
@@ -69,9 +67,7 @@ async fn upsert_multiple() {
         .unwrap();
 
     let zones = catalog
-        .find(&hickory_proto::rr::LowerName::new(
-            &"example.com.".parse().unwrap(),
-        ))
+        .find(&"www.example.com.".parse().unwrap())
         .await
         .unwrap()
         .unwrap();
@@ -84,9 +80,7 @@ async fn upsert_multiple() {
         .unwrap();
 
     let zones = catalog
-        .find(&hickory_proto::rr::LowerName::new(
-            &"example.com.".parse().unwrap(),
-        ))
+        .find(&"www.example.com.".parse().unwrap())
         .await
         .unwrap()
         .unwrap();
@@ -111,9 +105,7 @@ async fn find_heirarchical_name() {
         .unwrap();
 
     let zones = catalog
-        .find(&hickory_proto::rr::LowerName::new(
-            &"www.example.com.".parse().unwrap(),
-        ))
+        .find(&"www.example.com.".parse().unwrap())
         .await
         .unwrap()
         .unwrap();
@@ -138,9 +130,7 @@ async fn remove_name() {
         .unwrap();
 
     let zones = catalog
-        .find(&hickory_proto::rr::LowerName::new(
-            &"www.example.com.".parse().unwrap(),
-        ))
+        .find(&"www.example.com.".parse().unwrap())
         .await
         .unwrap()
         .unwrap();
@@ -148,15 +138,13 @@ async fn remove_name() {
     assert_eq!(zones.len(), 2);
 
     catalog
-        .remove(&LowerName::new(&"example.com.".parse().unwrap()))
+        .remove(&"example.com.".parse().unwrap())
         .await
         .unwrap();
 
     assert!(
         catalog
-            .find(&hickory_proto::rr::LowerName::new(
-                &"www.example.com.".parse().unwrap(),
-            ))
+            .find(&"www.example.com.".parse().unwrap())
             .await
             .unwrap()
             .is_none()
@@ -180,9 +168,7 @@ async fn get_insert_delete() {
         .unwrap();
 
     let zones = catalog
-        .find(&hickory_proto::rr::LowerName::new(
-            &"www.example.com.".parse().unwrap(),
-        ))
+        .find(&"www.example.com.".parse().unwrap())
         .await
         .unwrap()
         .unwrap();
@@ -195,9 +181,7 @@ async fn get_insert_delete() {
     catalog.delete(zone_id).await.unwrap();
 
     let mut zones = catalog
-        .find(&hickory_proto::rr::LowerName::new(
-            &"www.example.com.".parse().unwrap(),
-        ))
+        .find(&"www.example.com.".parse().unwrap())
         .await
         .unwrap()
         .unwrap();
@@ -211,9 +195,7 @@ async fn get_insert_delete() {
     assert_eq!(catalog.insert(&example3).await.unwrap(), 1);
 
     let zones = catalog
-        .find(&hickory_proto::rr::LowerName::new(
-            &"www.example.com.".parse().unwrap(),
-        ))
+        .find(&"www.example.com.".parse().unwrap())
         .await
         .unwrap()
         .unwrap();
@@ -221,12 +203,10 @@ async fn get_insert_delete() {
     assert_eq!(zones.len(), 3);
 
     // Already exists in the database, gets upserted.
-    assert_eq!(catalog.insert(&example1.into_inner()).await.unwrap(), 1);
+    assert_eq!(catalog.insert(&example1).await.unwrap(), 1);
 
     let zones = catalog
-        .find(&hickory_proto::rr::LowerName::new(
-            &"www.example.com.".parse().unwrap(),
-        ))
+        .find(&"www.example.com.".parse().unwrap())
         .await
         .unwrap()
         .unwrap();

@@ -1,30 +1,26 @@
-use std::net::Ipv4Addr;
-use std::net::SocketAddr;
 use std::str::FromStr;
 
-use hickory_proto::op::{Header, LowerQuery, Message, MessageType, OpCode, Query, ResponseCode};
-use hickory_proto::rr::LowerName;
+use hickory_proto::op::{LowerQuery, MessageType, OpCode, Query, ResponseCode};
+use hickory_proto::rr::Name;
 use hickory_proto::rr::rdata::{A, AAAA, NS, TXT};
-use hickory_proto::rr::{DNSClass, Name, RData, Record, RecordType};
-use hickory_proto::xfer::Protocol;
-use hickory_server::authority::Authority;
+use hickory_proto::rr::{DNSClass, RData, Record, RecordType};
+
 use hickory_server::authority::LookupOptions;
 use hickory_server::dnssec::NxProofKind;
-use hickory_server::server::RequestInfo;
 
 use walnut_dns::Lookup as _;
 use walnut_dns::SqliteStore;
 use walnut_dns::ZoneInfo as _;
 use walnut_dns::authority::DnsSecZone;
-use walnut_dns::authority::ZoneAuthority;
+use walnut_dns::authority::Records as _;
+use walnut_dns::authority::Search as _;
+use walnut_dns::authority::Update as _;
 use walnut_dns::catalog::CatalogStore;
 use walnut_dns::database::DnsSecStore;
 
 mod support;
 use support::examples::{create_example, create_secure_example};
 use support::subscribe;
-
-const TEST_HEADER: &Header = &Header::new();
 
 #[tokio::test]
 async fn test_search() {
@@ -35,15 +31,9 @@ async fn test_search() {
     let mut query: Query = Query::new();
     query.set_name(origin.into());
     let query = LowerQuery::from(query);
-    let request_info = RequestInfo::new(
-        SocketAddr::from((Ipv4Addr::LOCALHOST, 53)),
-        Protocol::Udp,
-        TEST_HEADER,
-        &query,
-    );
 
-    let result = ZoneAuthority::new(example)
-        .search(request_info, LookupOptions::default())
+    let result = example
+        .search(query.original(), LookupOptions::default())
         .await
         .unwrap();
     if !result.is_empty() {
@@ -66,15 +56,9 @@ async fn test_search_www() {
     let mut query: Query = Query::new();
     query.set_name(www_name);
     let query = LowerQuery::from(query);
-    let request_info = RequestInfo::new(
-        SocketAddr::from((Ipv4Addr::LOCALHOST, 53)),
-        Protocol::Udp,
-        TEST_HEADER,
-        &query,
-    );
 
-    let result = ZoneAuthority::new(example)
-        .search(request_info, LookupOptions::default())
+    let result = example
+        .search(query.original(), LookupOptions::default())
         .await
         .unwrap();
     if !result.is_empty() {
@@ -91,11 +75,11 @@ async fn test_search_www() {
 async fn test_authority() {
     subscribe();
 
-    let authority = ZoneAuthority::new(create_example());
+    let authority = create_example();
 
     assert_eq!(
         authority
-            .soa()
+            .lookup(authority.origin(), RecordType::SOA, Default::default())
             .await
             .unwrap()
             .iter()
@@ -204,7 +188,7 @@ async fn test_authority() {
 #[tokio::test]
 async fn test_authorize() {
     use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
-    use hickory_server::authority::MessageRequest;
+    use walnut_dns::messages::Message;
 
     subscribe();
 
@@ -218,7 +202,7 @@ async fn test_authorize() {
     message.add_query(Query::default());
 
     let bytes = message.to_bytes().unwrap();
-    let message = MessageRequest::from_bytes(&bytes).unwrap();
+    let message = Message::from_bytes(&bytes).unwrap();
 
     assert_eq!(
         authority.authorize(&message).await,
@@ -922,7 +906,7 @@ async fn test_get_nsec() {
     subscribe();
     let name = Name::from_str("zzz.example.com.").unwrap();
     let authority = create_secure_example();
-    let lower_name = LowerName::from(name.clone());
+    let lower_name = Name::from(name.clone());
 
     let results = authority
         .get_nsec_records(&lower_name, LookupOptions::for_dnssec(true))
@@ -974,7 +958,7 @@ async fn test_journal() {
         .cloned()
         .collect();
     assert!(new_rrset.iter().all(|r| *r == new_record));
-    let lower_delete_name = LowerName::from(delete_name);
+    let lower_delete_name = Name::from(delete_name);
 
     let delete_rrset = authority
         .lookup(&lower_delete_name, RecordType::A, LookupOptions::default())
@@ -1040,11 +1024,21 @@ async fn test_recovery() {
 
     assert!(
         recovered_authority
-            .soa()
+            .lookup(
+                recovered_authority.origin(),
+                RecordType::SOA,
+                Default::default()
+            )
             .await
             .unwrap()
             .iter()
-            .zip(authority.soa().await.unwrap().iter())
+            .zip(
+                authority
+                    .lookup(authority.origin(), RecordType::SOA, Default::default())
+                    .await
+                    .unwrap()
+                    .iter()
+            )
             .all(|(r1, r2)| {
                 tracing::info!("Comparing records: {:?} and {:?}", r1, r2);
                 r1 == r2
@@ -1081,22 +1075,16 @@ async fn test_recovery() {
 #[tokio::test]
 async fn test_axfr() {
     subscribe();
-    let mut authority = ZoneAuthority::new(create_example());
+    let mut authority = create_example();
     authority.set_allow_axfr(true);
 
     let query = LowerQuery::from(Query::query(
         Name::from_str("example.com.").unwrap(),
         RecordType::AXFR,
     ));
-    let request_info = RequestInfo::new(
-        SocketAddr::from((Ipv4Addr::LOCALHOST, 53)),
-        Protocol::Udp,
-        TEST_HEADER,
-        &query,
-    );
 
     let result = authority
-        .search(request_info, LookupOptions::default())
+        .search(query.original(), LookupOptions::default())
         .await
         .unwrap();
 
@@ -1107,22 +1095,16 @@ async fn test_axfr() {
 #[tokio::test]
 async fn test_refused_axfr() {
     subscribe();
-    let mut authority = ZoneAuthority::new(create_example());
+    let mut authority = create_example();
     authority.set_allow_axfr(false);
 
     let query = LowerQuery::from(Query::query(
         Name::from_str("example.com.").unwrap(),
         RecordType::AXFR,
     ));
-    let request_info = RequestInfo::new(
-        SocketAddr::from((Ipv4Addr::LOCALHOST, 53)),
-        Protocol::Udp,
-        TEST_HEADER,
-        &query,
-    );
 
     let result = authority
-        .search(request_info, LookupOptions::default())
+        .search(query.original(), LookupOptions::default())
         .await;
 
     // just update this if the count goes up in the authority
