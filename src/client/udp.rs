@@ -23,7 +23,8 @@ use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 use tokio_util::udp::UdpFramed;
 
-use super::{DnsClientError, codec::TaggedMessage};
+use super::DnsClientError;
+use crate::messages::Message;
 
 #[derive(Clone)]
 enum Bind {
@@ -47,7 +48,7 @@ impl DnsUdpTransport {
     }
 }
 
-impl tower::Service<&TaggedMessage> for DnsUdpTransport {
+impl tower::Service<&Message> for DnsUdpTransport {
     type Response = DnsUdpAddressed;
 
     type Error = io::Error;
@@ -58,7 +59,7 @@ impl tower::Service<&TaggedMessage> for DnsUdpTransport {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, _: &TaggedMessage) -> Self::Future {
+    fn call(&mut self, _: &Message) -> Self::Future {
         let bind = self.bind.clone();
         let addr = self.address.clone();
         Box::pin(async move {
@@ -105,12 +106,12 @@ impl PoolableStream for DnsUdpAddressed {
 
 #[derive(Clone)]
 pub struct DnsUdpProtocol {
-    codec: DnsCodec<TaggedMessage, TaggedMessage>,
+    codec: DnsCodec<Message, Message>,
     spawn: bool,
 }
 
 impl DnsUdpProtocol {
-    pub fn new(codec: DnsCodec<TaggedMessage, TaggedMessage>, spawn: bool) -> Self {
+    pub fn new(codec: DnsCodec<Message, Message>, spawn: bool) -> Self {
         Self { codec, spawn }
     }
 }
@@ -140,9 +141,9 @@ impl tower::Service<DnsUdpAddressed> for DnsUdpProtocol {
 }
 
 type FramedDnsConnection = FramedConnection<
-    UdpFramed<DnsCodec<TaggedMessage, TaggedMessage>, Arc<UdpSocket>>,
-    (TaggedMessage, SocketAddr),
-    (TaggedMessage, SocketAddr),
+    UdpFramed<DnsCodec<Message, Message>, Arc<UdpSocket>>,
+    (Message, SocketAddr),
+    (Message, SocketAddr),
 >;
 
 #[derive(Debug, Clone)]
@@ -151,8 +152,8 @@ pub struct DnsUdpConnection {
     destination: SocketAddr,
 }
 
-impl tower::Service<TaggedMessage> for DnsUdpConnection {
-    type Response = TaggedMessage;
+impl tower::Service<Message> for DnsUdpConnection {
+    type Response = Message;
 
     type Error = DnsClientError;
 
@@ -163,19 +164,19 @@ impl tower::Service<TaggedMessage> for DnsUdpConnection {
             .map_err(|error| DnsClientError::Protocol(error.into()))
     }
 
-    fn call(&mut self, req: TaggedMessage) -> Self::Future {
+    fn call(&mut self, req: Message) -> Self::Future {
         DnsUdpConnectionFuture(self.connection.send((req, self.destination)))
     }
 }
 
-impl Connection<TaggedMessage> for DnsUdpConnection {
-    type Response = TaggedMessage;
+impl Connection<Message> for DnsUdpConnection {
+    type Response = Message;
 
     type Error = DnsClientError;
 
     type Future = DnsUdpConnectionFuture;
 
-    fn send_request(&mut self, request: TaggedMessage) -> Self::Future {
+    fn send_request(&mut self, request: Message) -> Self::Future {
         DnsUdpConnectionFuture(self.connection.send((request, self.destination)))
     }
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -185,7 +186,7 @@ impl Connection<TaggedMessage> for DnsUdpConnection {
     }
 }
 
-impl PoolableConnection<TaggedMessage> for DnsUdpConnection {
+impl PoolableConnection<Message> for DnsUdpConnection {
     fn is_open(&self) -> bool {
         //UDP is always open
         true
@@ -208,14 +209,14 @@ impl PoolableConnection<TaggedMessage> for DnsUdpConnection {
 pub struct DnsUdpConnectionFuture(
     #[pin]
     ResponseFuture<
-        UdpFramed<DnsCodec<TaggedMessage, TaggedMessage>, Arc<UdpSocket>>,
-        (TaggedMessage, SocketAddr),
-        (TaggedMessage, SocketAddr),
+        UdpFramed<DnsCodec<Message, Message>, Arc<UdpSocket>>,
+        (Message, SocketAddr),
+        (Message, SocketAddr),
     >,
 );
 
 impl Future for DnsUdpConnectionFuture {
-    type Output = Result<TaggedMessage, DnsClientError>;
+    type Output = Result<Message, DnsClientError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match ready!(self.project().0.poll(cx)) {

@@ -13,13 +13,13 @@ use hickory_proto::{
         domain::usage::{self, ResolverUsage, ZoneUsage},
         rdata::{A, AAAA, PTR},
     },
-    xfer::{DnsRequest, DnsResponse},
 };
 use once_cell::sync::Lazy;
 use std::pin::Pin;
 
 use super::Lookup;
-use crate::client::DnsClientError;
+use crate::messages::{DnsRequest, DnsResponse};
+use crate::{client::DnsClientError, messages::Message};
 
 /// An opaque future type for reserved names service responses.
 ///
@@ -254,7 +254,7 @@ where
                 if let Some(lookup) = resolver.resolve(query) {
                     // Reserved name hit - return direct response
                     tracing::trace!("Reserved name hit for {}", lookup.name());
-                    let mut msg: hickory_proto::op::Message = lookup.into();
+                    let mut msg: Message = lookup.into();
                     msg.set_id(req.id());
                     Ok(DnsResponse::from_message(msg)
                         .expect("protocol error from reserved name response"))
@@ -270,6 +270,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::messages::DnsRequestOptions;
+
     use super::*;
     use hickory_proto::rr::{Name, RecordType};
     use std::str::FromStr;
@@ -383,7 +385,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reserved_names_service_localhost() {
-        use hickory_proto::op::Message;
+        use crate::messages::Message;
         use tower::Service;
 
         // Create a mock service that should never be called for localhost
@@ -400,7 +402,7 @@ mod tests {
             Name::from_str("localhost.").unwrap(),
             RecordType::A,
         ));
-        let request = DnsRequest::new(msg, hickory_proto::xfer::DnsRequestOptions::default());
+        let request = DnsRequest::new(msg, DnsRequestOptions::default());
 
         let response = service.call(request).await.unwrap();
         assert_eq!(response.response_code(), ResponseCode::NoError);
@@ -409,7 +411,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reserved_names_service_forward() {
-        use hickory_proto::op::Message;
+        use crate::messages::Message;
         use tower::Service;
 
         // Create a mock service that returns NXDOMAIN
@@ -433,7 +435,7 @@ mod tests {
             Name::from_str("example.com.").unwrap(),
             RecordType::A,
         ));
-        let request = DnsRequest::new(msg, hickory_proto::xfer::DnsRequestOptions::default());
+        let request = DnsRequest::new(msg, DnsRequestOptions::default());
 
         let response = service.call(request).await.unwrap();
         assert_eq!(response.response_code(), ResponseCode::NXDomain);
@@ -441,7 +443,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reserved_names_service_invalid_domain() {
-        use hickory_proto::op::Message;
+        use crate::messages::Message;
         use tower::Service;
 
         // Create a mock service that should never be called for invalid domains
@@ -458,7 +460,7 @@ mod tests {
             Name::from_str("test.invalid.").unwrap(),
             RecordType::A,
         ));
-        let request = DnsRequest::new(msg, hickory_proto::xfer::DnsRequestOptions::default());
+        let request = DnsRequest::new(msg, DnsRequestOptions::default());
 
         let response = service.call(request).await.unwrap();
         assert_eq!(response.response_code(), ResponseCode::NXDomain);

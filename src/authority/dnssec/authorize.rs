@@ -1,12 +1,12 @@
 use hickory_proto::{
     dnssec::{Verifier as _, rdata::DNSSECRData},
     op::ResponseCode,
-    rr::{LowerName, RecordType},
+    rr::RecordType,
 };
-use hickory_server::authority::{LookupControlFlow, LookupOptions, MessageRequest, UpdateResult};
+use hickory_server::authority::{LookupControlFlow, LookupOptions, UpdateResult};
 use tracing::{info, warn};
 
-use crate::Lookup;
+use crate::{Lookup, messages::Message};
 
 use super::DnsSecZone;
 
@@ -64,7 +64,7 @@ where
     ///   requestor.
     /// ```
     ///
-    pub async fn authorize(&self, update_message: &MessageRequest) -> UpdateResult<()> {
+    pub async fn authorize(&self, update_message: &Message) -> UpdateResult<()> {
         use tracing::debug;
 
         // 3.3.3 - Pseudocode for Permission Checking
@@ -94,8 +94,10 @@ where
                 .iter()
                 .filter_map(|sig0| sig0.data().as_dnssec().and_then(DNSSECRData::as_sig))
             {
-                let name = LowerName::from(sig.signer_name());
-                let keys = self.lookup(&name, RecordType::KEY, LookupOptions::default());
+                let name = sig.signer_name();
+                let keys = self
+                    .lookup(name, RecordType::KEY, LookupOptions::default())
+                    .await;
 
                 let keys = match keys {
                     LookupControlFlow::Continue(Ok(keys)) => keys,

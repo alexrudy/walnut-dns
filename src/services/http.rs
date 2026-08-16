@@ -9,12 +9,11 @@ use std::{
 
 use bytes::{Buf, Bytes, BytesMut};
 use chateau::info::ConnectionInfo;
-use hickory_proto::op::Message;
-use hickory_server::{authority::MessageRequest, server::Request};
 use http::HeaderMap;
 use tokio_util::codec::{Decoder, Encoder as _};
 use tracing::debug;
 
+use crate::messages::{Message, Protocol, server::Incoming};
 use crate::{
     codec::{DnsCodec, DnsCodecRecovery},
     error::HickoryError,
@@ -84,7 +83,7 @@ impl<S> tower::Layer<S> for DnsOverHttpLayer {
 pub struct DnsOverHttp<S> {
     dns_service: S,
     version: http::Version,
-    codec: DnsCodecRecovery<Message, MessageRequest>,
+    codec: DnsCodecRecovery<Message, Message>,
 }
 
 impl<S> DnsOverHttp<S> {
@@ -99,7 +98,7 @@ impl<S> DnsOverHttp<S> {
 
 impl<S, B> tower::Service<http::Request<B>> for DnsOverHttp<S>
 where
-    S: tower::Service<Request, Response = Message, Error = HickoryError> + Clone,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError> + Clone,
     B: http_body::Body,
     B::Data: fmt::Debug + AsRef<[u8]>,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -177,7 +176,7 @@ where
 #[pin_project::pin_project(project=StateProject)]
 enum DoHFState<B, S>
 where
-    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
 {
     Collect {
         #[pin]
@@ -202,24 +201,24 @@ where
 #[pin_project::pin_project]
 pub struct DnsOverHttpFuture<B, S>
 where
-    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
 {
     #[pin]
     state: DoHFState<B, S>,
     version: http::Version,
     address: SocketAddr,
-    codec: DnsCodecRecovery<Message, MessageRequest>,
+    codec: DnsCodecRecovery<Message, Message>,
 }
 
 impl<B, S> DnsOverHttpFuture<B, S>
 where
-    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
 {
     fn error(
         error: HickoryError,
         version: http::Version,
         address: SocketAddr,
-        codec: DnsCodecRecovery<Message, MessageRequest>,
+        codec: DnsCodecRecovery<Message, Message>,
     ) -> Self {
         Self {
             state: DoHFState::Error { error: Some(error) },
@@ -234,7 +233,7 @@ where
         service: S,
         version: http::Version,
         address: SocketAddr,
-        codec: DnsCodecRecovery<Message, MessageRequest>,
+        codec: DnsCodecRecovery<Message, Message>,
     ) -> Self {
         Self {
             state: DoHFState::Decode { bytes, service },
@@ -249,7 +248,7 @@ where
         service: S,
         version: http::Version,
         address: SocketAddr,
-        codec: DnsCodecRecovery<Message, MessageRequest>,
+        codec: DnsCodecRecovery<Message, Message>,
     ) -> Self {
         Self {
             state: DoHFState::Collect {
@@ -286,7 +285,7 @@ where
 
 impl<B, S> Future for DnsOverHttpFuture<B, S>
 where
-    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
     B: http_body::Body,
     B::Data: fmt::Debug + AsRef<[u8]>,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -328,9 +327,7 @@ where
                 },
                 StateProject::Decode { bytes, service } => match this.codec.decode(bytes) {
                     Ok(Some(request)) => {
-                        match request
-                            .with_address(*this.address, hickory_proto::xfer::Protocol::Https)
-                        {
+                        match request.with_address(*this.address, Protocol::Https) {
                             crate::codec::DnsRequest::Message(request) => {
                                 let future = service.call(request);
                                 this.state.set(DoHFState::Execute { future })

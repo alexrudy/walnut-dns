@@ -4,7 +4,7 @@ use std::sync::Arc;
 use hickory_proto::dnssec::crypto::signing_key_from_der;
 use hickory_proto::dnssec::{Algorithm, DnsSecResult};
 use hickory_proto::dnssec::{SigSigner, rdata::DNSKEY};
-use hickory_proto::rr::{LowerName, Name};
+use hickory_proto::rr::Name;
 use rustls_pki_types::PrivateKeyDer;
 use zeroize::Zeroizing;
 
@@ -213,16 +213,13 @@ impl DnsSecStore {
 #[async_trait::async_trait]
 impl CatalogStore<DnsSecZone<Zone>> for DnsSecStore {
     #[tracing::instrument(skip_all, fields(%origin), level = "debug")]
-    async fn find(
-        &self,
-        origin: &LowerName,
-    ) -> Result<Option<Vec<DnsSecZone<Zone>>>, CatalogError> {
+    async fn find(&self, origin: &Name) -> Result<Option<Vec<DnsSecZone<Zone>>>, CatalogError> {
         let zones = self.catalog.find(origin).await?;
         if let Some(zones) = zones {
             Ok(Some(
                 zones
                     .into_iter()
-                    .map(|z| self.map_zone(z.into_inner()))
+                    .map(|z| self.map_zone(z))
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(CatalogError::new)?,
             ))
@@ -231,11 +228,7 @@ impl CatalogStore<DnsSecZone<Zone>> for DnsSecStore {
         }
     }
 
-    async fn upsert(
-        &self,
-        name: LowerName,
-        zones: &[DnsSecZone<Zone>],
-    ) -> Result<(), CatalogError> {
+    async fn upsert(&self, name: Name, zones: &[DnsSecZone<Zone>]) -> Result<(), CatalogError> {
         let mut conn = self.catalog.connection().await?;
         crate::block_in_place(|| {
             let tx = conn.transaction()?;
@@ -253,20 +246,14 @@ impl CatalogStore<DnsSecZone<Zone>> for DnsSecStore {
         })
     }
 
-    async fn list(&self, name: &LowerName) -> Result<Vec<Name>, CatalogError> {
+    async fn list(&self, name: &Name) -> Result<Vec<Name>, CatalogError> {
         self.catalog.list(name).await
     }
 
-    async fn remove(
-        &self,
-        name: &LowerName,
-    ) -> Result<Option<Vec<DnsSecZone<Zone>>>, CatalogError> {
-        self.catalog.remove(name).await.map(|dz| {
-            dz.map(|zs| {
-                zs.into_iter()
-                    .map(|z| DnsSecZone::new(z.into_inner()))
-                    .collect()
-            })
-        })
+    async fn remove(&self, name: &Name) -> Result<Option<Vec<DnsSecZone<Zone>>>, CatalogError> {
+        self.catalog
+            .remove(name)
+            .await
+            .map(|dz| dz.map(|zs| zs.into_iter().map(|z| DnsSecZone::new(z)).collect()))
     }
 }

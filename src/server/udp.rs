@@ -8,14 +8,14 @@ use std::{fmt, io};
 use chateau::server::{Accept, Protocol};
 use futures::Sink;
 use futures::Stream;
-use hickory_proto::op::Message;
-use hickory_server::authority::MessageRequest;
-use hickory_server::server::Request;
 use tokio_util::udp::UdpFramed;
 use tracing::trace;
 
 use crate::codec::{CodecError, DnsCodec, DnsCodecRecovery, DnsRequest};
 use crate::error::HickoryError;
+use crate::messages::Message;
+use crate::messages::Protocol as DnsProtocol;
+use crate::messages::server::Incoming;
 
 use super::connection::DnsConnection;
 
@@ -30,9 +30,9 @@ impl DnsOverUdp {
     }
 }
 
-impl<S> Protocol<S, UdpSocket, Request> for DnsOverUdp
+impl<S> Protocol<S, UdpSocket, Incoming<Message>> for DnsOverUdp
 where
-    S: tower::Service<Request, Response = Message, Error = HickoryError> + 'static,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError> + 'static,
     S::Future: Send + 'static,
 {
     type Response = Message;
@@ -44,7 +44,7 @@ where
     fn serve_connection(&self, stream: UdpSocket, service: S) -> Self::Connection {
         let codec = UdpFramed::new(
             stream,
-            DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp).with_recovery(),
+            DnsCodec::new_for_protocol(DnsProtocol::Udp).with_recovery(),
         );
         DnsConnection::new(service, DnsFramedUdp::new(codec))
     }
@@ -54,11 +54,11 @@ where
 #[pin_project::pin_project]
 pub struct DnsFramedUdp {
     #[pin]
-    framed: UdpFramed<DnsCodecRecovery<Message, MessageRequest>, UdpSocket>,
+    framed: UdpFramed<DnsCodecRecovery<Message, Message>, UdpSocket>,
 }
 
 impl DnsFramedUdp {
-    pub fn new(framed: UdpFramed<DnsCodecRecovery<Message, MessageRequest>, UdpSocket>) -> Self {
+    pub fn new(framed: UdpFramed<DnsCodecRecovery<Message, Message>, UdpSocket>) -> Self {
         Self { framed }
     }
 }
@@ -87,11 +87,10 @@ impl Stream for DnsFramedUdp {
     type Item = Result<DnsRequest, CodecError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.project().framed.poll_next(cx).map(|r| {
-            r.map(|r| {
-                r.map(|(msg, addr)| msg.with_address(addr, hickory_proto::xfer::Protocol::Udp))
-            })
-        })
+        self.project()
+            .framed
+            .poll_next(cx)
+            .map(|r| r.map(|r| r.map(|(msg, addr)| msg.with_address(addr, DnsProtocol::Udp))))
     }
 }
 

@@ -13,9 +13,8 @@ pub use self::dnssec::{DnsKey, DnsSecStore};
 use self::journal::SqliteJournal;
 use self::record::RecordPersistence;
 use self::zone::ZonePersistence;
-use crate::authority::ZoneAuthority;
 use crate::catalog::{CatalogError, CatalogStore};
-use crate::rr::{LowerName, Name, Zone, ZoneID};
+use crate::rr::{Name, Zone, ZoneID};
 
 pub mod dnssec;
 pub mod journal;
@@ -420,12 +419,9 @@ impl SqliteStore {
 }
 
 #[async_trait::async_trait]
-impl CatalogStore<ZoneAuthority<Zone>> for SqliteStore {
+impl CatalogStore<Zone> for SqliteStore {
     #[tracing::instrument(skip_all, fields(%origin), level = "debug")]
-    async fn find(
-        &self,
-        origin: &LowerName,
-    ) -> Result<Option<Vec<ZoneAuthority<Zone>>>, CatalogError> {
+    async fn find(&self, origin: &Name) -> Result<Option<Vec<Zone>>, CatalogError> {
         let mut conn = self.manager.get().await?;
         crate::block_in_place(|| {
             let tx = conn.transaction()?;
@@ -436,16 +432,12 @@ impl CatalogStore<ZoneAuthority<Zone>> for SqliteStore {
                 "found {n} zones",
                 n = zones.as_ref().map(|z| z.len()).unwrap_or_default()
             );
-            Ok(zones.map(|z| z.into_iter().map(ZoneAuthority::new).collect()))
+            Ok(zones)
         })
     }
 
     #[tracing::instrument(skip_all, fields(zone=%name), level = "debug")]
-    async fn upsert(
-        &self,
-        name: LowerName,
-        zones: &[ZoneAuthority<Zone>],
-    ) -> Result<(), CatalogError> {
+    async fn upsert(&self, name: Name, zones: &[Zone]) -> Result<(), CatalogError> {
         let mut conn = self.manager.get().await?;
         crate::block_in_place(|| {
             let tx = conn.transaction()?;
@@ -464,7 +456,7 @@ impl CatalogStore<ZoneAuthority<Zone>> for SqliteStore {
     }
 
     #[tracing::instrument(skip_all, level = "debug")]
-    async fn list(&self, name: &LowerName) -> Result<Vec<Name>, CatalogError> {
+    async fn list(&self, name: &Name) -> Result<Vec<Name>, CatalogError> {
         let conn = self.manager.get().await?;
         tracing::trace!("List records for {name}");
         crate::block_in_place(|| {
@@ -476,10 +468,7 @@ impl CatalogStore<ZoneAuthority<Zone>> for SqliteStore {
     }
 
     #[tracing::instrument(skip_all, fields(zone=%name), level = "debug")]
-    async fn remove(
-        &self,
-        name: &LowerName,
-    ) -> Result<Option<Vec<ZoneAuthority<Zone>>>, CatalogError> {
+    async fn remove(&self, name: &Name) -> Result<Option<Vec<Zone>>, CatalogError> {
         let mut conn = self.manager.get().await?;
         crate::block_in_place(|| {
             let tx = conn.transaction()?;
@@ -488,7 +477,7 @@ impl CatalogStore<ZoneAuthority<Zone>> for SqliteStore {
             let n = zx.clear(name)?;
             tracing::debug!("removed {n} zones");
             tx.commit()?;
-            Ok(zones.map(|z| z.into_iter().map(ZoneAuthority::new).collect()))
+            Ok(zones)
         })
     }
 }
@@ -577,7 +566,8 @@ impl<const N: usize> QueryBuilder<N> {
 mod tests {
     use super::*;
     use crate::{
-        Lookup as _, ZoneInfo as _,
+        ZoneInfo as _,
+        authority::Records as _,
         rr::{Record, SerialNumber, TimeToLive, Zone, ZoneType},
     };
     use hickory_proto::rr::{RecordType, rdata};
@@ -703,7 +693,7 @@ mod tests {
 
         let catalog = SqliteStore::new_in_memory().await.unwrap();
         let zone = create_test_zone("test.example.com.");
-        let zone_name = LowerName::from(zone.name().clone());
+        let zone_name = Name::from(zone.name().clone());
         let expected_name = zone.name().clone();
 
         // Upsert zone
@@ -719,8 +709,7 @@ mod tests {
     async fn test_catalog_find_nonexistent_zone() {
         crate::subscribe();
         let catalog = SqliteStore::new_in_memory().await.unwrap();
-        let nonexistent_name =
-            LowerName::from(Name::from_utf8("nonexistent.example.com.").unwrap());
+        let nonexistent_name = Name::from(Name::from_utf8("nonexistent.example.com.").unwrap());
 
         // Find nonexistent zone
         let found_zones = catalog.find(&nonexistent_name).await.unwrap();
@@ -754,7 +743,7 @@ mod tests {
         let catalog = SqliteStore::new_in_memory().await.unwrap();
 
         // Start with empty list
-        let root = LowerName::new(&Name::root());
+        let root = Name::root();
         let initial_list = catalog.list(&root).await.unwrap();
         assert!(initial_list.is_empty());
 
@@ -763,7 +752,7 @@ mod tests {
         let zone_name = zone.name().clone();
         catalog.insert(&zone).await.unwrap();
 
-        let root = LowerName::new(&Name::root());
+        let root = Name::root();
         // List should contain the zone
         let zone_list = catalog.list(&root).await.unwrap();
         assert_eq!(zone_list.len(), 1);
@@ -799,7 +788,7 @@ mod tests {
         catalog.insert(&zone2).await.unwrap();
 
         // List should contain both zones
-        let root = LowerName::new(&Name::root());
+        let root = Name::root();
         let zone_list = catalog.list(&root).await.unwrap();
         assert_eq!(zone_list.len(), 2);
         assert!(zone_list.contains(&zone1_name));
@@ -826,7 +815,7 @@ mod tests {
             .unwrap();
 
         // List should contain both zones
-        let root = LowerName::new(&Name::root());
+        let root = Name::root();
         let zone_list = catalog.list(&root).await.unwrap();
         assert_eq!(zone_list.len(), 2);
         assert!(zone_list.contains(&name.into()));
@@ -866,7 +855,7 @@ mod tests {
 
         let catalog = SqliteStore::new_in_memory().await.unwrap();
         let zone = create_test_zone("test.example.com.");
-        let zone_name = LowerName::from(zone.name().clone());
+        let zone_name = Name::from(zone.name().clone());
 
         // Test that the catalog can handle concurrent access via Arc<Mutex<Connection>>
         let catalog_clone = catalog.clone();
@@ -925,7 +914,7 @@ mod tests {
         catalog.insert(&zone).await.unwrap();
 
         // Search with different case
-        let upper_name = LowerName::from(Name::from_utf8("TEST.EXAMPLE.COM.").unwrap());
+        let upper_name = Name::from(Name::from_utf8("TEST.EXAMPLE.COM.").unwrap());
         let found_zones = catalog.find(&upper_name).await.unwrap().unwrap();
         assert_eq!(found_zones.len(), 1);
         assert_eq!(found_zones[0].name(), &expected_name);

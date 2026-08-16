@@ -25,16 +25,18 @@ use std::collections::HashSet;
 use std::ops::{Deref, DerefMut, RangeBounds};
 use std::sync::Arc;
 
-use hickory_proto::op::ResponseCode;
-use hickory_proto::rr::{DNSClass, LowerName, RecordType, RrKey};
-use hickory_server::authority::{AnyRecords, AuthLookup, Authority, AuthorityObject};
+use hickory_proto::op::{Query, ResponseCode};
+use hickory_proto::rr::{DNSClass, LowerName, Name, RecordType, RrKey};
+use hickory_server::authority::{AnyRecords, AuthLookup};
 use hickory_server::authority::{LookupControlFlow, LookupError};
-use hickory_server::authority::{LookupObject, LookupOptions, LookupRecords};
-use hickory_server::authority::{MessageRequest, Nsec3QueryInfo, UpdateResult};
-use hickory_server::{dnssec::NxProofKind, server::RequestInfo};
+use hickory_server::authority::{LookupOptions, LookupRecords};
+use hickory_server::authority::{Nsec3QueryInfo, UpdateResult};
+use hickory_server::dnssec::NxProofKind;
 
+use crate::messages::Message;
+use crate::messages::server::Incoming;
 use crate::rr::{
-    AsHickory as _, Mismatch, Name, Record, RecordSet, SerialNumber, TimeToLive, ZoneType,
+    AsHickory as _, Mismatch, Record, RecordSet, SerialNumber, TimeToLive, Zone, ZoneType,
 };
 
 pub(crate) mod dnssec;
@@ -62,13 +64,13 @@ pub trait ZoneInfo {
 
     /// Get the zone origin name in lowercase
     ///
-    /// Returns the zone origin as a LowerName, which is used for efficient
+    /// Returns the zone origin as a Name, which is used for efficient
     /// DNS name comparisons and lookups.
     ///
     /// # Returns
     ///
     /// The zone's origin name in lowercase format
-    fn origin(&self) -> &LowerName;
+    fn origin(&self) -> &Name;
 
     /// Get the zone type
     ///
@@ -143,18 +145,7 @@ pub trait ZoneInfo {
     fn minimum_ttl(&self) -> TimeToLive;
 }
 
-/// Provides DNS record lookup and modification capabilities for a zone
-///
-/// This trait extends ZoneInfo to provide the core functionality needed for
-/// DNS query processing and zone updates. It defines methods for retrieving,
-/// modifying, and managing DNS records within a zone.
-///
-/// The trait supports:
-/// - Direct record access by name and type
-/// - Record iteration and traversal
-/// - Record insertion and deletion
-/// - DNS query processing with CNAME resolution and wildcard support
-pub trait Lookup: ZoneInfo {
+pub trait Records {
     /// Get a record set by its key
     ///
     /// Retrieves a record set matching the specified name and type.
@@ -287,7 +278,72 @@ pub trait Lookup: ZoneInfo {
         T: Ord + ?Sized,
         RrKey: Borrow<T> + Ord,
         R: RangeBounds<T>;
+}
 
+impl<A> Records for A
+where
+    A: Deref + DerefMut,
+    <A as Deref>::Target: Records,
+{
+    fn get(&self, key: &RrKey) -> Option<&RecordSet> {
+        self.deref().get(key)
+    }
+
+    fn get_mut(&mut self, key: &RrKey) -> Option<&mut RecordSet> {
+        self.deref_mut().get_mut(key)
+    }
+
+    fn keys(&self) -> impl Iterator<Item = &RrKey> {
+        self.deref().keys()
+    }
+
+    fn records(&self) -> impl Iterator<Item = &RecordSet> {
+        self.deref().records()
+    }
+
+    fn records_reversed(&self) -> impl Iterator<Item = &RecordSet> {
+        self.deref().records_reversed()
+    }
+
+    fn records_mut(&mut self) -> impl Iterator<Item = &mut RecordSet> {
+        self.deref_mut().records_mut()
+    }
+
+    fn upsert(&mut self, record: Record, serial: SerialNumber) -> Result<bool, Mismatch> {
+        self.deref_mut().upsert(record, serial)
+    }
+
+    fn remove(&mut self, key: &RrKey) -> Option<RecordSet> {
+        self.deref_mut().remove(key)
+    }
+
+    fn replace(&mut self, rrset: RecordSet) -> Option<RecordSet> {
+        self.deref_mut().replace(rrset)
+    }
+
+    fn range<T, R>(&self, range: R) -> impl Iterator<Item = (&RrKey, &RecordSet)>
+    where
+        T: Ord + ?Sized,
+        RrKey: Borrow<T> + Ord,
+        R: RangeBounds<T>,
+    {
+        self.deref().range(range)
+    }
+}
+
+/// Provides DNS record lookup and modification capabilities for a zone
+///
+/// This trait extends ZoneInfo to provide the core functionality needed for
+/// DNS query processing and zone updates. It defines methods for retrieving,
+/// modifying, and managing DNS records within a zone.
+///
+/// The trait supports:
+/// - Direct record access by name and type
+/// - Record iteration and traversal
+/// - Record insertion and deletion
+/// - DNS query processing with CNAME resolution and wildcard support
+#[async_trait::async_trait]
+pub trait Lookup: ZoneInfo {
     /// Perform a DNS lookup against this zone
     ///
     /// Processes a DNS query by searching for matching records, handling
@@ -303,9 +359,34 @@ pub trait Lookup: ZoneInfo {
     /// # Returns
     ///
     /// A lookup control flow indicating how the query should be processed
-    fn lookup(
+    async fn lookup(
         &self,
-        name: &LowerName,
+        name: &Name,
+        query_type: RecordType,
+        lookup_options: LookupOptions,
+    ) -> LookupControlFlow<AuthLookup>;
+
+    /// Returns the SOA record for the zone
+    async fn soa_secure(&self, lookup_options: LookupOptions) -> LookupControlFlow<AuthLookup> {
+        self.lookup(self.origin(), RecordType::SOA, lookup_options)
+            .await
+    }
+
+    /// Get the NS, NameServer, record for the zone
+    async fn ns(&self, lookup_options: LookupOptions) -> LookupControlFlow<AuthLookup> {
+        self.lookup(self.origin(), RecordType::NS, lookup_options)
+            .await
+    }
+}
+
+#[async_trait::async_trait]
+impl<A> Lookup for A
+where
+    A: Records + ZoneInfo + Sync + 'static,
+{
+    async fn lookup(
+        &self,
+        name: &Name,
         query_type: RecordType,
         lookup_options: LookupOptions,
     ) -> LookupControlFlow<AuthLookup> {
@@ -314,16 +395,226 @@ pub trait Lookup: ZoneInfo {
     }
 }
 
+#[async_trait::async_trait]
+pub trait Search: Lookup + Sync {
+    /// Using the specified query, perform a lookup against this zone.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - the query to perform the lookup with.
+    /// * `lookup_options` - Query-related lookup options (e.g., DNSSEC DO bit, supported hash
+    ///                      algorithms, etc.)
+    ///
+    /// # Return value
+    ///
+    /// A LookupControlFlow containing the lookup that should be returned to the client.
+    #[tracing::instrument(skip_all, fields(query=%query.query_type()), level="trace")]
+    async fn search(
+        &self,
+        query: &Query,
+        lookup_options: LookupOptions,
+    ) -> LookupControlFlow<AuthLookup> {
+        let lookup_name = query.name();
+        let record_type: RecordType = query.query_type();
+
+        // if this is an AXFR zone transfer, verify that this is either the Secondary or Primary
+        //  for AXFR the first and last record must be the SOA
+        if RecordType::AXFR == record_type {
+            // TODO: support more advanced AXFR options
+            if !self.is_axfr_allowed() {
+                tracing::trace!(
+                    "AXFR requested for zone {} but is not permitted",
+                    self.name()
+                );
+                return LookupControlFlow::Continue(Err(LookupError::from(ResponseCode::Refused)));
+            }
+
+            match self.zone_type() {
+                ZoneType::Primary | ZoneType::Secondary => (),
+                _ => {
+                    tracing::trace!(
+                        "AXFR requested for zone {} but zone is not Primary or Secondary",
+                        self.name()
+                    );
+                    return LookupControlFlow::Continue(Err(LookupError::from(
+                        ResponseCode::NXDomain,
+                    )));
+                }
+            }
+        }
+
+        match record_type {
+            RecordType::SOA => {
+                tracing::trace!("SOA requested for zone {}", self.name());
+                Lookup::lookup(self, ZoneInfo::origin(self), record_type, lookup_options).await
+            }
+            RecordType::AXFR => {
+                tracing::trace!("AXFR requested for zone {}", self.name());
+                use LookupControlFlow::Continue;
+                let start_soa =
+                    if let Continue(Ok(res)) = Lookup::soa_secure(self, lookup_options).await {
+                        res.unwrap_records()
+                    } else {
+                        LookupRecords::Empty
+                    };
+                let end_soa = if let Continue(Ok(res)) = Lookup::lookup(
+                    self,
+                    self.origin(),
+                    RecordType::SOA,
+                    LookupOptions::default(),
+                )
+                .await
+                {
+                    res.unwrap_records()
+                } else {
+                    LookupRecords::Empty
+                };
+
+                let records = if let Continue(Ok(res)) =
+                    Lookup::lookup(self, lookup_name, record_type, lookup_options).await
+                {
+                    res.unwrap_records()
+                } else {
+                    LookupRecords::Empty
+                };
+
+                LookupControlFlow::Continue(Ok(AuthLookup::AXFR {
+                    start_soa,
+                    end_soa,
+                    records,
+                }))
+            }
+            _ => {
+                tracing::trace!("{record_type} requested for zone {}", self.name());
+                Lookup::lookup(self, lookup_name, record_type, lookup_options).await
+            }
+        }
+    }
+}
+
+impl<A> Search for A where A: Lookup + Sync {}
+
+#[async_trait::async_trait]
+pub trait Update: ZoneInfo {
+    /// Takes the UpdateMessage, extracts the Records, and applies the changes to the record set.
+    ///
+    /// # Arguments
+    ///
+    /// * `update` - The `UpdateMessage` records will be extracted and used to perform the update
+    ///              actions as specified in the above RFC.
+    ///
+    /// # Return value
+    ///
+    /// true if any of additions, updates or deletes were made to the zone, false otherwise. Err is
+    ///  returned in the case of bad data, etc.
+    ///
+    /// # Specification
+    ///
+    /// [RFC 2136](https://tools.ietf.org/html/rfc2136), DNS Update, April 1997
+    ///
+    /// ```text
+    ///
+    /// 3.4 - Process Update Section
+    ///
+    ///   Next, the Update Section is processed as follows.
+    ///
+    /// 3.4.2 - Update
+    ///
+    ///   The Update Section is parsed into RRs and these RRs are processed in
+    ///   order.
+    ///
+    /// 3.4.2.1. If any system failure (such as an out of memory condition,
+    ///   or a hardware error in persistent storage) occurs during the
+    ///   processing of this section, signal SERVFAIL to the requestor and undo
+    ///   all updates applied to the zone during this transaction.
+    ///
+    /// 3.4.2.2. Any Update RR whose CLASS is the same as ZCLASS is added to
+    ///   the zone.  In case of duplicate RDATAs (which for SOA RRs is always
+    ///   the case, and for WKS RRs is the case if the ADDRESS and PROTOCOL
+    ///   fields both match), the Zone RR is replaced by Update RR.  If the
+    ///   TYPE is SOA and there is no Zone SOA RR, or the new SOA.SERIAL is
+    ///   lower (according to [RFC1982]) than or equal to the current Zone SOA
+    ///   RR's SOA.SERIAL, the Update RR is ignored.  In the case of a CNAME
+    ///   Update RR and a non-CNAME Zone RRset or vice versa, ignore the CNAME
+    ///   Update RR, otherwise replace the CNAME Zone RR with the CNAME Update
+    ///   RR.
+    ///
+    /// 3.4.2.3. For any Update RR whose CLASS is ANY and whose TYPE is ANY,
+    ///   all Zone RRs with the same NAME are deleted, unless the NAME is the
+    ///   same as ZNAME in which case only those RRs whose TYPE is other than
+    ///   SOA or NS are deleted.  For any Update RR whose CLASS is ANY and
+    ///   whose TYPE is not ANY all Zone RRs with the same NAME and TYPE are
+    ///   deleted, unless the NAME is the same as ZNAME in which case neither
+    ///   SOA or NS RRs will be deleted.
+    ///
+    /// 3.4.2.4. For any Update RR whose class is NONE, any Zone RR whose
+    ///   NAME, TYPE, RDATA and RDLENGTH are equal to the Update RR is deleted,
+    ///   unless the NAME is the same as ZNAME and either the TYPE is SOA or
+    ///   the TYPE is NS and the matching Zone RR is the only NS remaining in
+    ///   the RRset, in which case this Update RR is ignored.
+    ///
+    /// 3.4.2.5. Signal NOERROR to the requestor.
+    /// ```
+    async fn update(&mut self, _update: &Incoming<Message>) -> UpdateResult<bool>;
+
+    async fn get_nsec_records(
+        &self,
+        name: &Name,
+        lookup_options: LookupOptions,
+    ) -> LookupControlFlow<AuthLookup>;
+
+    async fn get_nsec3_records(
+        &self,
+        info: Nsec3QueryInfo<'_>,
+        lookup_options: LookupOptions,
+    ) -> LookupControlFlow<AuthLookup>;
+
+    fn nx_proof_kind(&self) -> Option<&NxProofKind>;
+}
+
+#[async_trait::async_trait]
+impl Update for Zone {
+    async fn update(&mut self, _update: &Incoming<Message>) -> UpdateResult<bool> {
+        // No update for non-DNSSEC Zone
+        if ZoneInfo::is_axfr_allowed(self) {
+            tracing::warn!(origin=%ZoneInfo::origin(self), "No update for non-DNSSEC Zone");
+        }
+        Err(ResponseCode::NotImp)
+    }
+
+    #[expect(unused_variables)]
+    async fn get_nsec_records(
+        &self,
+        name: &Name,
+        lookup_options: LookupOptions,
+    ) -> LookupControlFlow<AuthLookup> {
+        LookupControlFlow::Continue(Ok(AuthLookup::default()))
+    }
+
+    #[expect(unused_variables)]
+    async fn get_nsec3_records(
+        &self,
+        info: Nsec3QueryInfo<'_>,
+        lookup_options: LookupOptions,
+    ) -> LookupControlFlow<AuthLookup> {
+        LookupControlFlow::Continue(Ok(AuthLookup::default()))
+    }
+
+    fn nx_proof_kind(&self) -> Option<&NxProofKind> {
+        None
+    }
+}
+
 struct LookupZone<'z, Z: ?Sized>(&'z Z);
 
 impl<'z, Z> LookupZone<'z, Z>
 where
-    Z: Lookup + ?Sized,
+    Z: Lookup + Records + ZoneInfo + ?Sized,
 {
     #[tracing::instrument(level = "trace", skip_all, fields(query=%query_type))]
     fn lookup(
         &self,
-        name: &LowerName,
+        name: &Name,
         query_type: RecordType,
         lookup_options: LookupOptions,
     ) -> LookupControlFlow<AuthLookup> {
@@ -420,7 +711,7 @@ where
                 if self
                     .0
                     .keys()
-                    .any(|key| key.name() == name || name.zone_of(key.name()))
+                    .any(|key| (&*key.name() as &Name) == name || name.zone_of(key.name()))
                 {
                     tracing::trace!("Other types exist at the same name: NameExists");
                     return Continue(Err(LookupError::NameExists));
@@ -448,7 +739,7 @@ where
     /// Perform an AXFR or ANY record lookup, returning all available records for this zone.
     fn lookup_any(
         &self,
-        name: &LowerName,
+        name: &Name,
         query_type: RecordType,
         lookup_options: LookupOptions,
     ) -> LookupChain<LookupRecords> {
@@ -461,7 +752,7 @@ where
                 .map(|rset| Arc::new(rset.as_hickory()))
                 .collect(),
             query_type,
-            name.clone(),
+            LowerName::new(name),
         );
 
         tracing::trace!("Lookup AXFR|ANY {} records", self.0.records().count());
@@ -474,7 +765,7 @@ where
     /// Perform a direct lookup for a set of records matching the query type
     fn lookup_records(
         &self,
-        name: &LowerName,
+        name: &Name,
         query_type: RecordType,
         lookup_options: LookupOptions,
     ) -> Option<RecordSet> {
@@ -488,14 +779,14 @@ where
 
     fn lookup_record(
         &self,
-        name: &LowerName,
+        name: &Name,
         query_type: RecordType,
         _lookup_options: LookupOptions,
     ) -> Option<&RecordSet> {
         tracing::trace!("Lookup {name} {query_type}");
         // this range covers all the records for any of the RecordTypes at a given label.
-        let start_range_key = RrKey::new(name.clone(), RecordType::Unknown(u16::MIN));
-        let end_range_key = RrKey::new(name.clone(), RecordType::Unknown(u16::MAX));
+        let start_range_key = RrKey::new(LowerName::new(name), RecordType::Unknown(u16::MIN));
+        let end_range_key = RrKey::new(LowerName::new(name), RecordType::Unknown(u16::MAX));
 
         fn aname_covers_type(key_type: RecordType, query_type: RecordType) -> bool {
             (query_type == RecordType::A || query_type == RecordType::AAAA)
@@ -517,7 +808,7 @@ where
     #[tracing::instrument("wildcard", skip_all, level = "trace")]
     fn lookup_wildcard(
         &self,
-        name: &LowerName,
+        name: &Name,
         query_type: RecordType,
         lookup_options: LookupOptions,
     ) -> Option<RecordSet> {
@@ -553,9 +844,9 @@ where
 
     fn additional_search(
         &self,
-        original_name: &LowerName,
+        original_name: &Name,
         original_query_type: RecordType,
-        next_name: LowerName,
+        next_name: Name,
         _search_type: RecordType,
         lookup_options: LookupOptions,
     ) -> Option<Vec<RecordSet>> {
@@ -610,390 +901,5 @@ where
             tracing::trace!("No additional seach found");
             None
         }
-    }
-}
-
-/// DNS Zone Authority wrapper
-///
-/// ZoneAuthority is a wrapper that provides the Authority trait implementation
-/// for any type that implements the Lookup and ZoneInfo traits. This allows
-/// different zone storage backends to be used interchangeably within the
-/// hickory-dns server framework.
-///
-/// The wrapper handles the integration between the zone storage interface
-/// and the DNS server's authority interface, providing features like:
-/// - DNS query processing
-/// - AXFR (zone transfer) support
-/// - DNS UPDATE operations
-/// - SOA record management
-/// - DNSSEC integration points
-#[derive(Debug, Clone)]
-pub struct ZoneAuthority<Z>(Z);
-
-impl<Z> ZoneAuthority<Z> {
-    /// Create a new zone authority
-    ///
-    /// Wraps a zone implementation to provide DNS authority functionality.
-    ///
-    /// # Arguments
-    ///
-    /// * `zone` - The zone implementation to wrap
-    ///
-    /// # Returns
-    ///
-    /// A new ZoneAuthority instance
-    pub fn new(zone: Z) -> Self {
-        Self(zone)
-    }
-
-    /// Extract the inner zone implementation
-    ///
-    /// Unwraps the authority to return the underlying zone implementation.
-    ///
-    /// # Returns
-    ///
-    /// The wrapped zone implementation
-    pub fn into_inner(self) -> Z {
-        self.0
-    }
-}
-
-impl<Z> AsRef<dyn AuthorityObject> for ZoneAuthority<Z>
-where
-    Z: Lookup + ZoneInfo + Send + Sync + 'static,
-{
-    fn as_ref(&self) -> &(dyn AuthorityObject + 'static) {
-        self
-    }
-}
-
-impl<Z> AsRef<Z> for ZoneAuthority<Z>
-where
-    Z: Lookup + ZoneInfo + Send + Sync + 'static,
-{
-    fn as_ref(&self) -> &Z {
-        &self.0
-    }
-}
-
-impl<Z> Deref for ZoneAuthority<Z> {
-    type Target = Z;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<Z> DerefMut for ZoneAuthority<Z> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-#[async_trait::async_trait]
-impl<Z> Authority for ZoneAuthority<Z>
-where
-    Z: Lookup + ZoneInfo + Send + Sync + 'static,
-{
-    type Lookup = AuthLookup;
-
-    /// What type is this zone
-    fn zone_type(&self) -> hickory_server::authority::ZoneType {
-        self.0.zone_type().into()
-    }
-
-    /// Return true if AXFR is allowed
-    fn is_axfr_allowed(&self) -> bool {
-        self.0.is_axfr_allowed()
-    }
-
-    /// Takes the UpdateMessage, extracts the Records, and applies the changes to the record set.
-    ///
-    /// # Arguments
-    ///
-    /// * `update` - The `UpdateMessage` records will be extracted and used to perform the update
-    ///              actions as specified in the above RFC.
-    ///
-    /// # Return value
-    ///
-    /// true if any of additions, updates or deletes were made to the zone, false otherwise. Err is
-    ///  returned in the case of bad data, etc.
-    ///
-    /// # Specification
-    ///
-    /// [RFC 2136](https://tools.ietf.org/html/rfc2136), DNS Update, April 1997
-    ///
-    /// ```text
-    ///
-    /// 3.4 - Process Update Section
-    ///
-    ///   Next, the Update Section is processed as follows.
-    ///
-    /// 3.4.2 - Update
-    ///
-    ///   The Update Section is parsed into RRs and these RRs are processed in
-    ///   order.
-    ///
-    /// 3.4.2.1. If any system failure (such as an out of memory condition,
-    ///   or a hardware error in persistent storage) occurs during the
-    ///   processing of this section, signal SERVFAIL to the requestor and undo
-    ///   all updates applied to the zone during this transaction.
-    ///
-    /// 3.4.2.2. Any Update RR whose CLASS is the same as ZCLASS is added to
-    ///   the zone.  In case of duplicate RDATAs (which for SOA RRs is always
-    ///   the case, and for WKS RRs is the case if the ADDRESS and PROTOCOL
-    ///   fields both match), the Zone RR is replaced by Update RR.  If the
-    ///   TYPE is SOA and there is no Zone SOA RR, or the new SOA.SERIAL is
-    ///   lower (according to [RFC1982]) than or equal to the current Zone SOA
-    ///   RR's SOA.SERIAL, the Update RR is ignored.  In the case of a CNAME
-    ///   Update RR and a non-CNAME Zone RRset or vice versa, ignore the CNAME
-    ///   Update RR, otherwise replace the CNAME Zone RR with the CNAME Update
-    ///   RR.
-    ///
-    /// 3.4.2.3. For any Update RR whose CLASS is ANY and whose TYPE is ANY,
-    ///   all Zone RRs with the same NAME are deleted, unless the NAME is the
-    ///   same as ZNAME in which case only those RRs whose TYPE is other than
-    ///   SOA or NS are deleted.  For any Update RR whose CLASS is ANY and
-    ///   whose TYPE is not ANY all Zone RRs with the same NAME and TYPE are
-    ///   deleted, unless the NAME is the same as ZNAME in which case neither
-    ///   SOA or NS RRs will be deleted.
-    ///
-    /// 3.4.2.4. For any Update RR whose class is NONE, any Zone RR whose
-    ///   NAME, TYPE, RDATA and RDLENGTH are equal to the Update RR is deleted,
-    ///   unless the NAME is the same as ZNAME and either the TYPE is SOA or
-    ///   the TYPE is NS and the matching Zone RR is the only NS remaining in
-    ///   the RRset, in which case this Update RR is ignored.
-    ///
-    /// 3.4.2.5. Signal NOERROR to the requestor.
-    /// ```
-    async fn update(&self, _update: &MessageRequest) -> UpdateResult<bool> {
-        // No update for non-DNSSEC Zone
-        if Authority::is_axfr_allowed(self) {
-            tracing::warn!(origin=%Authority::origin(self), "No update for non-DNSSEC Zone");
-        }
-        Err(ResponseCode::NotImp)
-    }
-
-    /// Get the origin of this zone, i.e. example.com is the origin for www.example.com
-    fn origin(&self) -> &LowerName {
-        self.0.origin()
-    }
-
-    /// Looks up all Resource Records matching the given `Name` and `RecordType`.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The name to look up.
-    /// * `rtype` - The `RecordType` to look up. `RecordType::ANY` will return all records matching
-    ///             `name`. `RecordType::AXFR` will return all record types except `RecordType::SOA`
-    ///             due to the requirements that on zone transfers the `RecordType::SOA` must both
-    ///             precede and follow all other records.
-    /// * `lookup_options` - Query-related lookup options (e.g., DNSSEC DO bit, supported hash
-    ///                      algorithms, etc.)
-    ///
-    /// # Return value
-    ///
-    /// A LookupControlFlow containing the lookup that should be returned to the client.
-    async fn lookup(
-        &self,
-        name: &LowerName,
-        query_type: RecordType,
-        lookup_options: LookupOptions,
-    ) -> LookupControlFlow<Self::Lookup> {
-        tracing::trace!("Starting lookup for name: {}, type: {}", name, query_type);
-        let result = self.0.lookup(name, query_type, lookup_options);
-        match &result {
-            LookupControlFlow::Continue(Ok(lookup)) => {
-                tracing::trace!(
-                    "Lookup for name: {}, type: {} found {} records (CONTINUE)",
-                    name,
-                    query_type,
-                    lookup.iter().count()
-                );
-            }
-            LookupControlFlow::Continue(Err(_)) => {
-                tracing::trace!(
-                    "Lookup for name: {}, type: {} error (CONTINUE)",
-                    name,
-                    query_type,
-                );
-            }
-            LookupControlFlow::Break(Ok(lookup)) => {
-                tracing::trace!(
-                    "Lookup for name: {}, type: {} found {} records (BREAK)",
-                    name,
-                    query_type,
-                    lookup.iter().count()
-                );
-            }
-            LookupControlFlow::Break(Err(_)) => {
-                tracing::trace!(
-                    "Lookup for name: {}, type: {} error (Break)",
-                    name,
-                    query_type,
-                );
-            }
-            LookupControlFlow::Skip => {
-                tracing::trace!("Lookup for name: {}, type: {} skipped", name, query_type)
-            }
-        };
-        result
-    }
-
-    /// Consulting lookup for all Resource Records matching the given `Name` and `RecordType`.
-    /// This will be called in a chained authority configuration after an authority in the chain
-    /// has returned a lookup with a LookupControlFlow::Continue action. Every other authority in
-    /// the chain will be called via this consult method, until one either returns a
-    /// LookupControlFlow::Break action, or all authorities have been consulted.  The authority that
-    /// generated the primary lookup (the one returned via 'lookup') will not be consulted.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The name to look up.
-    /// * `rtype` - The `RecordType` to look up. `RecordType::ANY` will return all records matching
-    ///             `name`. `RecordType::AXFR` will return all record types except `RecordType::SOA`
-    ///             due to the requirements that on zone transfers the `RecordType::SOA` must both
-    ///             precede and follow all other records.
-    /// * `lookup_options` - Query-related lookup options (e.g., DNSSEC DO bit, supported hash
-    ///                      algorithms, etc.)
-    /// * `last_result` - The lookup returned by a previous authority in a chained configuration.
-    ///                   If a subsequent authority does not modify this lookup, it will be returned
-    ///                   to the client after consulting all authorities in the chain.
-    ///
-    /// # Return value
-    ///
-    /// A LookupControlFlow containing the lookup that should be returned to the client.  This can
-    /// be the same last_result that was passed in, or a new lookup, depending on the logic of the
-    /// authority in question.
-    async fn consult(
-        &self,
-        _name: &LowerName,
-        _rtype: RecordType,
-        _lookup_options: LookupOptions,
-        last_result: LookupControlFlow<Box<dyn LookupObject>>,
-    ) -> LookupControlFlow<Box<dyn LookupObject>> {
-        last_result
-    }
-
-    /// Using the specified query, perform a lookup against this zone.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - the query to perform the lookup with.
-    /// * `lookup_options` - Query-related lookup options (e.g., DNSSEC DO bit, supported hash
-    ///                      algorithms, etc.)
-    ///
-    /// # Return value
-    ///
-    /// A LookupControlFlow containing the lookup that should be returned to the client.
-    #[tracing::instrument(skip_all, fields(query=%request_info.query.query_type()), level="trace")]
-    async fn search(
-        &self,
-        request_info: RequestInfo<'_>,
-        lookup_options: LookupOptions,
-    ) -> LookupControlFlow<Self::Lookup> {
-        let lookup_name = request_info.query.name();
-        let record_type: RecordType = request_info.query.query_type();
-
-        // if this is an AXFR zone transfer, verify that this is either the Secondary or Primary
-        //  for AXFR the first and last record must be the SOA
-        if RecordType::AXFR == record_type {
-            // TODO: support more advanced AXFR options
-            if !self.0.is_axfr_allowed() {
-                tracing::trace!(
-                    "AXFR requested for zone {} but is not permitted",
-                    self.0.name()
-                );
-                return LookupControlFlow::Continue(Err(LookupError::from(ResponseCode::Refused)));
-            }
-
-            match self.0.zone_type() {
-                ZoneType::Primary | ZoneType::Secondary => (),
-                _ => {
-                    tracing::trace!(
-                        "AXFR requested for zone {} but zone is not Primary or Secondary",
-                        self.0.name()
-                    );
-                    return LookupControlFlow::Continue(Err(LookupError::from(
-                        ResponseCode::NXDomain,
-                    )));
-                }
-            }
-        }
-
-        match record_type {
-            RecordType::SOA => {
-                tracing::trace!("SOA requested for zone {}", self.0.name());
-                Authority::lookup(self, Authority::origin(self), record_type, lookup_options).await
-            }
-            RecordType::AXFR => {
-                tracing::trace!("AXFR requested for zone {}", self.0.name());
-                use LookupControlFlow::Continue;
-                let start_soa =
-                    if let Continue(Ok(res)) = Authority::soa_secure(self, lookup_options).await {
-                        res.unwrap_records()
-                    } else {
-                        LookupRecords::Empty
-                    };
-                let end_soa = if let Continue(Ok(res)) = Authority::soa(self).await {
-                    res.unwrap_records()
-                } else {
-                    LookupRecords::Empty
-                };
-
-                let records = if let Continue(Ok(res)) =
-                    Authority::lookup(self, lookup_name, record_type, lookup_options).await
-                {
-                    res.unwrap_records()
-                } else {
-                    LookupRecords::Empty
-                };
-
-                LookupControlFlow::Continue(Ok(AuthLookup::AXFR {
-                    start_soa,
-                    end_soa,
-                    records,
-                }))
-            }
-            _ => {
-                tracing::trace!("{record_type} requested for zone {}", self.0.name());
-                Authority::lookup(self, lookup_name, record_type, lookup_options).await
-            }
-        }
-    }
-
-    /// Return the NSEC records based on the given name
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - given this name (i.e. the lookup name), return the NSEC record that is less than
-    ///            this
-    /// * `lookup_options` - Query-related lookup options (e.g., DNSSEC DO bit, supported hash
-    ///                      algorithms, etc.)
-    #[allow(unused_variables)]
-    async fn get_nsec_records(
-        &self,
-        name: &LowerName,
-        lookup_options: LookupOptions,
-    ) -> LookupControlFlow<Self::Lookup> {
-        tracing::trace!("get NSEC recods for non-secure zonze");
-        LookupControlFlow::Continue(Ok(AuthLookup::default()))
-    }
-
-    /// Return the NSEC3 records based on the information available for a query.
-    #[allow(unused_variables)]
-    async fn get_nsec3_records(
-        &self,
-        info: Nsec3QueryInfo<'_>,
-        lookup_options: LookupOptions,
-    ) -> LookupControlFlow<Self::Lookup> {
-        tracing::trace!("get NSEC3 recods for non-secure zonze");
-        LookupControlFlow::Continue(Ok(AuthLookup::default()))
-    }
-
-    /// Returns the kind of non-existence proof used for this zone.
-    fn nx_proof_kind(&self) -> Option<&NxProofKind> {
-        tracing::trace!("get NxProofKind for non-secure zone");
-        None
     }
 }

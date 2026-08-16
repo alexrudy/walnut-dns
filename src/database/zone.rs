@@ -1,4 +1,4 @@
-use hickory_proto::rr::{LowerName, Name};
+use hickory_proto::rr::{Name};
 use rusqlite::named_params;
 
 use crate::database::record::RecordPersistence;
@@ -42,7 +42,7 @@ impl<'c> ZonePersistence<'c> {
 
     /// Find zones based on zone name
     #[tracing::instrument(skip_all, fields(zone=%name), level = "debug")]
-    pub(crate) fn find(&self, name: &LowerName) -> rusqlite::Result<Option<Vec<Zone>>> {
+    pub(crate) fn find(&self, name: &Name) -> rusqlite::Result<Option<Vec<Zone>>> {
         let mut stmt = self
             .connection
             .prepare(&Self::TABLE.select("WHERE lower(name) = lower(:name)"))?;
@@ -105,7 +105,7 @@ impl<'c> ZonePersistence<'c> {
     }
 
     #[tracing::instrument(skip_all, fields(zone=%name), level = "trace")]
-    pub(crate) fn clear(&self, name: &LowerName) -> rusqlite::Result<usize> {
+    pub(crate) fn clear(&self, name: &Name) -> rusqlite::Result<usize> {
         // CASCADE will handle deleting the associated records.
         let mut stmt = self.connection.prepare(&format!(
             "DELETE FROM {} WHERE lower(name) = lower(:name)",
@@ -116,7 +116,7 @@ impl<'c> ZonePersistence<'c> {
     }
 
     #[tracing::instrument(skip_all, level = "trace")]
-    pub(crate) fn list(&self, root: &LowerName) -> rusqlite::Result<Vec<Name>> {
+    pub(crate) fn list(&self, root: &Name) -> rusqlite::Result<Vec<Name>> {
         let mut stmt = self.connection.prepare(&format!(
             "SELECT DISTINCT name FROM {table} WHERE lower(name) LIKE :name",
             table = Self::TABLE.table

@@ -1,13 +1,13 @@
 use std::{pin::Pin, task::Poll};
 
 use bytes::BytesMut;
-use hickory_proto::op::Message;
 use http_body_util::BodyExt;
 use tokio_util::codec::{Decoder as _, Encoder as _};
 
+use crate::messages::{Message, Protocol};
 use crate::{codec::DnsCodec, services::http::DnsBody};
 
-use super::{DnsClientError, codec::TaggedMessage};
+use super::DnsClientError;
 
 const MIME_APPLICATION_DNS: &str = "application/dns-message";
 
@@ -45,14 +45,14 @@ impl<S> DnsOverHttp<S> {
         Self {
             dns_service,
             version,
-            codec: DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Https),
+            codec: DnsCodec::new_for_protocol(Protocol::Https),
             method: http::Method::POST,
             uri,
         }
     }
 }
 
-impl<S> tower::Service<TaggedMessage> for DnsOverHttp<S>
+impl<S> tower::Service<Message> for DnsOverHttp<S>
 where
     S: tower::Service<http::Request<DnsBody>, Response = http::Response<hyper::body::Incoming>>
         + Clone
@@ -61,7 +61,7 @@ where
     S::Future: Send + 'static,
     S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    type Response = TaggedMessage;
+    type Response = Message;
 
     type Error = DnsClientError;
 
@@ -76,7 +76,7 @@ where
             .map_err(|error| DnsClientError::Service(error.into()))
     }
 
-    fn call(&mut self, req: TaggedMessage) -> Self::Future {
+    fn call(&mut self, req: Message) -> Self::Future {
         let svc = self.dns_service.clone();
         let mut svc = std::mem::replace(&mut self.dns_service, svc);
         let mut codec = self.codec.clone();
@@ -138,17 +138,17 @@ where
             let msg = codec
                 .decode(&mut body)?
                 .expect("Entire frame is availalbe to codec");
-            Ok(TaggedMessage::from(msg))
+            Ok(Message::from(msg))
         }))
     }
 }
 
 pub struct DnsOverHttpsFuture(
-    Pin<Box<dyn Future<Output = Result<TaggedMessage, DnsClientError>> + Send>>,
+    Pin<Box<dyn Future<Output = Result<Message, DnsClientError>> + Send>>,
 );
 
 impl Future for DnsOverHttpsFuture {
-    type Output = Result<TaggedMessage, DnsClientError>;
+    type Output = Result<Message, DnsClientError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         self.0.as_mut().poll(cx)

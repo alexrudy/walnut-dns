@@ -9,7 +9,8 @@ use std::{
 use clap::{ArgGroup, arg};
 use tracing_subscriber::EnvFilter;
 use walnut_dns::{
-    Lookup, SqliteStore, ZoneInfo,
+    SqliteStore, ZoneInfo,
+    authority::Records,
     catalog::CatalogStore as _,
     client::nameserver::{ConnectionConfig, Nameserver, NameserverConfig, ProtocolConfig},
     notify::{NotifyConfig, NotifyManager},
@@ -401,7 +402,7 @@ fn notify_servers(
                 )
                 .await?;
         } else {
-            for rrset in Lookup::records(&*zone)
+            for rrset in Records::records(&zone)
                 .filter(|r| r.record_type() == *record_type && r.dns_class() == *class)
             {
                 println!(
@@ -443,7 +444,7 @@ fn show_zone_from_db(db: &Path, zone: &Name) -> Result<(), Box<dyn std::error::E
         };
 
         println!("Zone: {}", zone.origin());
-        for rrset in Lookup::records(&*zone) {
+        for rrset in Records::records(&zone) {
             for record in rrset.records() {
                 println!(
                     "{} {} {}: {}",

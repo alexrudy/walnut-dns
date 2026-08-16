@@ -9,9 +9,8 @@ use std::{
 
 use futures::{Stream as _, stream::FuturesUnordered};
 use hickory_proto::{
-    op::{Edns, Message, MessageType, OpCode, Query, ResponseCode},
+    op::{Edns, MessageType, OpCode, Query, ResponseCode},
     rr::{DNSClass, Name, RecordType},
-    xfer::{DnsRequest, DnsRequestOptions, DnsResponse},
 };
 use pin_project::pin_project;
 use rand::Rng as _;
@@ -21,7 +20,8 @@ use tower::{ServiceExt, util::Oneshot};
 use tracing::{debug, instrument};
 
 use crate::client::nameserver::Nameserver;
-use crate::client::{DnsClientError, DnsRequestMiddleware, TaggedMessage};
+use crate::client::{DnsClientError, DnsRequestMiddleware};
+use crate::messages::{DnsRequest, DnsRequestOptions, DnsResponse, Message};
 use crate::rr::RecordSet;
 
 #[derive(Debug, Error)]
@@ -47,7 +47,7 @@ impl Default for NotifyConfig {
 
 #[derive(Debug, Clone)]
 pub struct NotifyManager {
-    nameservers: Vec<DnsRequestMiddleware<Nameserver, TaggedMessage>>,
+    nameservers: Vec<DnsRequestMiddleware<Nameserver, Message>>,
     config: NotifyConfig,
 }
 
@@ -75,9 +75,7 @@ impl NotifyManager {
         query_type: RecordType,
         rrset: Option<R>,
         options: DnsRequestOptions,
-    ) -> NotifyFuture<
-        Oneshot<IntoNotifyError<DnsRequestMiddleware<Nameserver, TaggedMessage>>, DnsRequest>,
-    >
+    ) -> NotifyFuture<Oneshot<IntoNotifyError<DnsRequestMiddleware<Nameserver, Message>>, DnsRequest>>
     where
         R: Into<RecordSet>,
     {

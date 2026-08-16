@@ -9,9 +9,8 @@ use std::{ops::Add, time::Duration};
 use chrono::{DateTime, TimeDelta, TimeZone as _, Utc};
 use hickory_proto::{
     ProtoError, ProtoErrorKind,
-    op::{Message, Query, ResponseCode},
+    op::{Query, ResponseCode},
     rr::{DNSClass, Name, RData, RecordType},
-    xfer::DnsResponse,
 };
 use rusqlite::{
     ToSql,
@@ -21,6 +20,7 @@ use thiserror::Error;
 
 use crate::{
     database::FromRow,
+    messages::{DnsResponse, Message},
     rr::{AsHickory as _, QueryID, Record, SqlName, TimeToLive},
 };
 
@@ -338,11 +338,10 @@ impl TryFrom<DnsResponse> for Lookup {
         let response_code = response.response_code();
         let negative_ttl = response.negative_ttl().map(|ttl| ttl.into());
         let (message, _) = response.into_parts();
-        let parts = message.into_parts();
 
         let ttl = if matches!(response_code, ResponseCode::NoError) {
             // For successful responses, use minimum TTL from answer records
-            parts
+            message
                 .answers
                 .iter()
                 .map(|rr| rr.ttl().into())
@@ -357,16 +356,16 @@ impl TryFrom<DnsResponse> for Lookup {
 
         Ok(Lookup {
             id: QueryID::new(),
-            query: parts
+            query: message
                 .queries
                 .into_iter()
                 .next()
                 .ok_or_else(|| ProtoErrorKind::BadQueryCount(0))?,
-            records: parts
+            records: message
                 .answers
                 .into_iter()
-                .chain(parts.name_servers)
-                .chain(parts.additionals)
+                .chain(message.name_servers)
+                .chain(message.additionals)
                 .map(Record::from)
                 .collect(),
             response_code,

@@ -1,7 +1,6 @@
-use hickory_proto::rr::{DNSClass, LowerName, RData, RecordData, RecordType, RrKey};
+use hickory_proto::rr::{DNSClass, Name, RData, RecordData, RecordType, RrKey};
 
 use super::{AsHickory, SerialNumber, record::Record, ttl::TimeToLive};
-use hickory_proto::rr::Name;
 
 /// A collection of like resource records.
 ///
@@ -558,10 +557,7 @@ impl RecordSet {
 
     /// Give a query type, if this record set points to a new name (e.g. via CNAME, ANAME, or another record which must be resolved)
     /// return the new name to resolve and the record type we are searching for now.
-    pub(crate) fn next_lookup_name(
-        &self,
-        query_type: RecordType,
-    ) -> Option<(LowerName, RecordType)> {
+    pub(crate) fn next_lookup_name(&self, query_type: RecordType) -> Option<(Name, RecordType)> {
         match (self.record_type(), query_type) {
             (t @ RecordType::ANAME, RecordType::A)
             | (t @ RecordType::ANAME, RecordType::AAAA)
@@ -570,7 +566,7 @@ impl RecordSet {
                     record
                         .rdata()
                         .as_aname()
-                        .map(|aname| (LowerName::new(&aname.0), t))
+                        .map(|aname| (aname.0.clone(), t))
                         .inspect(|(name, record_type)| {
                             tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
                         })
@@ -579,7 +575,7 @@ impl RecordSet {
             (t @ RecordType::NS, RecordType::NS) => self
                 .records()
                 .next()
-                .and_then(|record| record.rdata().as_ns().map(|ns| (LowerName::from(&ns.0), t)))
+                .and_then(|record| record.rdata().as_ns().map(|ns| (ns.0.clone(), t)))
                 .inspect(|(name, record_type)| {
                     tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
                 }),
@@ -587,7 +583,7 @@ impl RecordSet {
                 record
                     .rdata()
                     .as_cname()
-                    .map(|cname| (LowerName::from(&cname.0), t))
+                    .map(|cname| (cname.0.clone(), t))
                     .inspect(|(name, record_type)| {
                         tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
                     })
@@ -596,7 +592,7 @@ impl RecordSet {
                 record
                     .rdata()
                     .as_mx()
-                    .map(|mx| (LowerName::from(mx.exchange()), t))
+                    .map(|mx| (mx.exchange().clone(), t))
                     .inspect(|(name, record_type)| {
                         tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
                     })
@@ -605,7 +601,7 @@ impl RecordSet {
                 record
                     .rdata()
                     .as_srv()
-                    .map(|srv| (LowerName::from(srv.target()), t))
+                    .map(|srv| (srv.target().clone(), t))
                     .inspect(|(name, record_type)| {
                         tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
                     })
@@ -928,8 +924,9 @@ mod tests {
         let name = create_test_name();
         let rrset = RecordSet::new(name.clone(), RecordType::A);
         let rrkey = rrset.rrkey();
+        let rrname: Name = rrkey.name().into();
 
-        assert_eq!(rrkey.name(), &LowerName::from(name));
+        assert_eq!(name, rrname);
         assert_eq!(rrkey.record_type, RecordType::A);
     }
 

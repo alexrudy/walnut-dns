@@ -1,14 +1,15 @@
 use std::collections::BTreeMap;
 
 use chrono::Utc;
-use hickory_proto::rr::LowerName;
+use hickory_proto::rr::Name;
 use hickory_proto::serialize::binary::BinEncodable;
 use rusqlite::named_params;
 
+use crate::authority::Records as _;
 use crate::lookup::{EntryMeta, Lookup};
 use crate::rr::QueryID;
 use crate::{
-    Lookup as _, ZoneInfo as _,
+    ZoneInfo as _,
     database::FromRow as _,
     rr::{Record, SerialNumber, SqlName, Zone, ZoneID},
 };
@@ -46,11 +47,7 @@ impl<'c> RecordPersistence<'c> {
 
     /// Populate a series of zones with records
     #[tracing::instrument("populate_many", skip_all, level = "trace")]
-    pub(crate) fn populate_zones(
-        &self,
-        origin: &LowerName,
-        zones: &mut [Zone],
-    ) -> rusqlite::Result<()> {
+    pub(crate) fn populate_zones(&self, origin: &Name, zones: &mut [Zone]) -> rusqlite::Result<()> {
         tracing::trace!("Joined load for {} zones", zones.len());
         let mut stmt = self.connection.prepare(&Self::TABLE.select_for_join(
             "JOIN zone ON record.zone_id = zone.id WHERE lower(zone.name) == lower(:name)",

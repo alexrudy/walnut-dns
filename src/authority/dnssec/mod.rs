@@ -8,14 +8,16 @@ use hickory_proto::ProtoError;
 use hickory_proto::dnssec::rdata::{DNSKEY, DNSSECRData, KEY, NSEC, NSEC3, NSEC3PARAM, RRSIG, SIG};
 use hickory_proto::dnssec::{DnsSecError, DnsSecResult, Nsec3HashAlgorithm, SigSigner, TBS};
 use hickory_proto::rr::{DNSClass, LowerName, RData, RecordType, RrKey};
-use hickory_server::authority::{AuthLookup, Authority, UpdateRequest as _};
+use hickory_server::authority::AuthLookup;
 use hickory_server::authority::{LookupControlFlow, LookupError};
-use hickory_server::authority::{LookupObject, LookupOptions, LookupRecords};
-use hickory_server::authority::{MessageRequest, Nsec3QueryInfo, UpdateResult};
-use hickory_server::{dnssec::NxProofKind, server::RequestInfo};
+use hickory_server::authority::{LookupOptions, LookupRecords};
+use hickory_server::authority::{Nsec3QueryInfo, UpdateResult};
+use hickory_server::dnssec::NxProofKind;
 
-use super::{Lookup, ZoneAuthority, ZoneInfo};
+use super::{Lookup, Records, Update, ZoneInfo};
 use crate::catalog::CatalogError;
+use crate::messages::Message;
+use crate::messages::server::{Incoming, UpdateRequest as _};
 use crate::rr::{AsHickory as _, Mismatch, Name, Record, RecordSet, TimeToLive};
 
 mod authorize;
@@ -96,7 +98,7 @@ pub enum DnsSecZoneError {
 /// - Configurable DNSSEC settings
 #[derive(Clone)]
 pub struct DnsSecZone<Z> {
-    zone: ZoneAuthority<Z>,
+    zone: Z,
     secure_keys: Vec<Arc<SigSigner>>,
     nx_proof_kind: Option<NxProofKind>,
     allow_update: bool,
@@ -114,7 +116,7 @@ where
 }
 
 impl<Z> Deref for DnsSecZone<Z> {
-    type Target = ZoneAuthority<Z>;
+    type Target = Z;
 
     fn deref(&self) -> &Self::Target {
         &self.zone
@@ -161,7 +163,7 @@ where
     /// A new DNSSEC-enabled zone
     pub fn new(zone: Z) -> Self {
         Self {
-            zone: ZoneAuthority::new(zone),
+            zone,
             secure_keys: Vec::new(),
             nx_proof_kind: None,
             allow_update: false,
@@ -316,16 +318,16 @@ where
 /// DNSSEC helper functions
 impl<Z> DnsSecZone<Z>
 where
-    Z: ZoneInfo + Lookup,
+    Z: Records + ZoneInfo + Lookup,
 {
     fn get_hashed_owner_name(
         &self,
         info: &Nsec3QueryInfo<'_>,
-        name: &LowerName,
-    ) -> Result<LowerName, ProtoError> {
+        name: &Name,
+    ) -> Result<Name, ProtoError> {
         let hash = info.algorithm.hash(info.salt, name, info.iterations)?;
         let label = data_encoding::BASE32_DNSSEC.encode(hash.as_ref());
-        Ok(LowerName::new(&self.origin().prepend_label(label)?))
+        self.origin().prepend_label(label)
     }
 
     fn proof(&self, info: Nsec3QueryInfo<'_>) -> Result<Vec<RecordSet>, LookupError> {
@@ -337,7 +339,7 @@ where
         } = info;
 
         let rr_key = RrKey::new(
-            self.get_hashed_owner_name(&info, self.origin())?,
+            LowerName::new(&self.get_hashed_owner_name(&info, self.origin())?),
             RecordType::NSEC3,
         );
         let qname_match = self.get(&rr_key);
@@ -385,7 +387,7 @@ where
         if wildcard_match {
             let wildcard_at_closest_encloser = next_closer_name.into_wildcard();
             let rr_key = RrKey::new(
-                self.get_hashed_owner_name(&info, &wildcard_at_closest_encloser)?,
+                LowerName::new(&self.get_hashed_owner_name(&info, &wildcard_at_closest_encloser)?),
                 RecordType::NSEC3,
             );
 
@@ -406,15 +408,15 @@ where
 
     fn closest_encloser_proof(
         &self,
-        name: &LowerName,
+        name: &Name,
         info: &Nsec3QueryInfo<'_>,
-    ) -> Result<Option<(LowerName, RecordSet)>, ProtoError> {
+    ) -> Result<Option<(Name, RecordSet)>, ProtoError> {
         let mut next_closer_name = name.clone();
         let mut closest_encloser = next_closer_name.base_name();
 
         while !closest_encloser.is_root() {
             let rr_key = RrKey::new(
-                self.get_hashed_owner_name(info, &closest_encloser)?,
+                LowerName::new(&self.get_hashed_owner_name(info, &closest_encloser)?),
                 RecordType::NSEC3,
             );
             if let Some(rrs) = self.get(&rr_key) {
@@ -430,7 +432,7 @@ where
 
     fn find_cover(
         &self,
-        name: &LowerName,
+        name: &Name,
         info: &Nsec3QueryInfo<'_>,
     ) -> Result<Option<RecordSet>, ProtoError> {
         let owner_name = self.get_hashed_owner_name(info, name)?;
@@ -444,7 +446,7 @@ where
         // the NSEC3 record with the largest owner name.
         Ok(records
             .filter(|rr_set| rr_set.record_type() == RecordType::NSEC3)
-            .filter(|rr_set| rr_set.name() < &*owner_name)
+            .filter(|rr_set| rr_set.name() < &owner_name)
             .max_by_key(|rr_set| rr_set.name())
             .or_else(|| {
                 self.records()
@@ -454,13 +456,13 @@ where
             .cloned())
     }
 
-    fn closest_nsec(&self, name: &LowerName) -> Option<RecordSet> {
+    fn closest_nsec(&self, name: &Name) -> Option<RecordSet> {
         for rr_set in self.records_reversed() {
             if rr_set.record_type() != RecordType::NSEC {
                 continue;
             }
 
-            if *name < rr_set.name().into() {
+            if name < rr_set.name() {
                 continue;
             }
 
@@ -475,7 +477,7 @@ where
 
             let next_domain_name = nsec.next_domain_name();
             // the search name is less than the next NSEC record
-            if *name < next_domain_name.into() ||
+            if name < next_domain_name ||
                 // this is the last record, and wraps to the beginning of the zone
                 next_domain_name < rr_set.name()
             {
@@ -517,7 +519,7 @@ where
             for key in self.zone.keys() {
                 match &mut nsec_info {
                     None => nsec_info = Some((&key.name, BTreeSet::from([key.record_type]))),
-                    Some((name, vec)) if LowerName::new(name) == key.name => {
+                    Some((name, vec)) if *name == &*key.name => {
                         vec.insert(key.record_type);
                     }
                     Some((name, vec)) => {
@@ -588,7 +590,7 @@ where
             ([RecordType::NSEC3PARAM].into(), true),
         );
 
-        let mut delegation_points = HashSet::<LowerName>::new();
+        let mut delegation_points = HashSet::<Name>::new();
 
         for key in self.zone.keys() {
             if !self.zone.origin().zone_of(&key.name) {
@@ -597,17 +599,17 @@ where
             }
             if delegation_points
                 .iter()
-                .any(|name| name.zone_of(&key.name) && name != &key.name)
+                .any(|name| name.zone_of(&key.name) && name != &*key.name)
             {
                 // Non-authoritative record below zone cut
                 continue;
             }
-            if key.record_type == RecordType::NS && &key.name != self.zone.origin() {
-                delegation_points.insert(key.name.clone());
+            if key.record_type == RecordType::NS && &*key.name != self.zone.origin() {
+                delegation_points.insert(key.name.clone().into());
             }
 
             // Store the type of the current record under its domain name
-            match record_types.entry(key.name.clone()) {
+            match record_types.entry(key.name.clone().into()) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => {
                     let (rtypes, exists): &mut (HashSet<RecordType>, bool) = entry.get_mut();
                     rtypes.insert(key.record_type);
@@ -804,7 +806,7 @@ where
 
 impl<Z> DnsSecZone<Z>
 where
-    Z: ZoneInfo + Lookup,
+    Z: ZoneInfo + Records + Lookup,
 {
     /// Add an authentication key for DNS updates
     ///
@@ -909,82 +911,53 @@ where
     }
 }
 
-#[async_trait::async_trait]
-impl<Z> Authority for DnsSecZone<Z>
+impl<Z> ZoneInfo for DnsSecZone<Z>
 where
-    Z: Lookup + ZoneInfo + Clone + Send + Sync + 'static,
+    Z: ZoneInfo,
 {
-    type Lookup = AuthLookup;
-
-    /// What type is this zone
-    fn zone_type(&self) -> hickory_server::authority::ZoneType {
-        Authority::zone_type(&self.zone).into()
+    fn name(&self) -> &Name {
+        self.zone.name()
     }
 
-    /// Return true if AXFR is allowed
+    fn origin(&self) -> &Name {
+        self.zone.origin()
+    }
+
+    fn zone_type(&self) -> crate::rr::ZoneType {
+        self.zone.zone_type()
+    }
+
     fn is_axfr_allowed(&self) -> bool {
-        Authority::is_axfr_allowed(&self.zone)
+        self.zone.is_axfr_allowed()
     }
 
-    /// Takes the UpdateMessage, extracts the Records, and applies the changes to the record set.
-    ///
-    /// [RFC 2136](https://tools.ietf.org/html/rfc2136), DNS Update, April 1997
-    ///
-    /// ```text
-    ///
-    /// 3.4 - Process Update Section
-    ///
-    ///   Next, the Update Section is processed as follows.
-    ///
-    /// 3.4.2 - Update
-    ///
-    ///   The Update Section is parsed into RRs and these RRs are processed in
-    ///   order.
-    ///
-    /// 3.4.2.1. If any system failure (such as an out of memory condition,
-    ///   or a hardware error in persistent storage) occurs during the
-    ///   processing of this section, signal SERVFAIL to the requestor and undo
-    ///   all updates applied to the zone during this transaction.
-    ///
-    /// 3.4.2.2. Any Update RR whose CLASS is the same as ZCLASS is added to
-    ///   the zone.  In case of duplicate RDATAs (which for SOA RRs is always
-    ///   the case, and for WKS RRs is the case if the ADDRESS and PROTOCOL
-    ///   fields both match), the Zone RR is replaced by Update RR.  If the
-    ///   TYPE is SOA and there is no Zone SOA RR, or the new SOA.SERIAL is
-    ///   lower (according to [RFC1982]) than or equal to the current Zone SOA
-    ///   RR's SOA.SERIAL, the Update RR is ignored.  In the case of a CNAME
-    ///   Update RR and a non-CNAME Zone RRset or vice versa, ignore the CNAME
-    ///   Update RR, otherwise replace the CNAME Zone RR with the CNAME Update
-    ///   RR.
-    ///
-    /// 3.4.2.3. For any Update RR whose CLASS is ANY and whose TYPE is ANY,
-    ///   all Zone RRs with the same NAME are deleted, unless the NAME is the
-    ///   same as ZNAME in which case only those RRs whose TYPE is other than
-    ///   SOA or NS are deleted.  For any Update RR whose CLASS is ANY and
-    ///   whose TYPE is not ANY all Zone RRs with the same NAME and TYPE are
-    ///   deleted, unless the NAME is the same as ZNAME in which case neither
-    ///   SOA or NS RRs will be deleted.
-    ///
-    /// 3.4.2.4. For any Update RR whose class is NONE, any Zone RR whose
-    ///   NAME, TYPE, RDATA and RDLENGTH are equal to the Update RR is deleted,
-    ///   unless the NAME is the same as ZNAME and either the TYPE is SOA or
-    ///   the TYPE is NS and the matching Zone RR is the only NS remaining in
-    ///   the RRset, in which case this Update RR is ignored.
-    ///
-    /// 3.4.2.5. Signal NOERROR to the requestor.
-    /// ```
-    ///
-    /// # Arguments
-    ///
-    /// * `update` - The `UpdateMessage` records will be extracted and used to perform the update
-    ///              actions as specified in the above RFC.
-    ///
-    /// # Return value
-    ///
-    /// true if any of additions, updates or deletes were made to the zone, false otherwise. Err is
-    ///  returned in the case of bad data, etc.
-    async fn update(&self, update: &MessageRequest) -> UpdateResult<bool> {
-        //let this = &mut self.in_memory.lock().await;
+    fn dns_class(&self) -> DNSClass {
+        self.zone.dns_class()
+    }
+
+    fn serial(&self) -> crate::rr::SerialNumber {
+        self.zone.serial()
+    }
+
+    fn soa(&self) -> Option<&Record> {
+        self.zone.soa()
+    }
+
+    fn increment_soa_serial(&mut self) -> crate::rr::SerialNumber {
+        self.zone.increment_soa_serial()
+    }
+
+    fn minimum_ttl(&self) -> TimeToLive {
+        self.zone.minimum_ttl()
+    }
+}
+
+#[async_trait::async_trait]
+impl<Z> Update for DnsSecZone<Z>
+where
+    Z: Update + Lookup + Records + Clone + Sync + Send + 'static,
+{
+    async fn update(&mut self, update: &Incoming<Message>) -> UpdateResult<bool> {
         // the spec says to authorize after prereqs, seems better to auth first.
         self.authorize(update).await?;
         self.verify_prerequisites(update.prerequisites()).await?;
@@ -994,89 +967,6 @@ where
         updated_zone.update_records(update.updates(), true).await?;
 
         Ok(true)
-    }
-
-    /// Get the origin of this zone, i.e. example.com is the origin for www.example.com
-    fn origin(&self) -> &LowerName {
-        Authority::origin(&self.zone)
-    }
-
-    /// Looks up all Resource Records matching the given `Name` and `RecordType`.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The name to look up.
-    /// * `rtype` - The `RecordType` to look up. `RecordType::ANY` will return all records matching
-    ///             `name`. `RecordType::AXFR` will return all record types except `RecordType::SOA`
-    ///             due to the requirements that on zone transfers the `RecordType::SOA` must both
-    ///             precede and follow all other records.
-    /// * `lookup_options` - Query-related lookup options (e.g., DNSSEC DO bit, supported hash
-    ///                      algorithms, etc.)
-    ///
-    /// # Return value
-    ///
-    /// A LookupControlFlow containing the lookup that should be returned to the client.
-    async fn lookup(
-        &self,
-        name: &LowerName,
-        query_type: RecordType,
-        lookup_options: LookupOptions,
-    ) -> LookupControlFlow<Self::Lookup> {
-        Authority::lookup(&self.zone, name, query_type, lookup_options).await
-    }
-
-    /// Consulting lookup for all Resource Records matching the given `Name` and `RecordType`.
-    /// This will be called in a chained authority configuration after an authority in the chain
-    /// has returned a lookup with a LookupControlFlow::Continue action. Every other authority in
-    /// the chain will be called via this consult method, until one either returns a
-    /// LookupControlFlow::Break action, or all authorities have been consulted.  The authority that
-    /// generated the primary lookup (the one returned via 'lookup') will not be consulted.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The name to look up.
-    /// * `rtype` - The `RecordType` to look up. `RecordType::ANY` will return all records matching
-    ///             `name`. `RecordType::AXFR` will return all record types except `RecordType::SOA`
-    ///             due to the requirements that on zone transfers the `RecordType::SOA` must both
-    ///             precede and follow all other records.
-    /// * `lookup_options` - Query-related lookup options (e.g., DNSSEC DO bit, supported hash
-    ///                      algorithms, etc.)
-    /// * `last_result` - The lookup returned by a previous authority in a chained configuration.
-    ///                   If a subsequent authority does not modify this lookup, it will be returned
-    ///                   to the client after consulting all authorities in the chain.
-    ///
-    /// # Return value
-    ///
-    /// A LookupControlFlow containing the lookup that should be returned to the client.  This can
-    /// be the same last_result that was passed in, or a new lookup, depending on the logic of the
-    /// authority in question.
-    async fn consult(
-        &self,
-        _name: &LowerName,
-        _rtype: RecordType,
-        _lookup_options: LookupOptions,
-        last_result: LookupControlFlow<Box<dyn LookupObject>>,
-    ) -> LookupControlFlow<Box<dyn LookupObject>> {
-        last_result
-    }
-
-    /// Using the specified query, perform a lookup against this zone.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - the query to perform the lookup with.
-    /// * `lookup_options` - Query-related lookup options (e.g., DNSSEC DO bit, supported hash
-    ///                      algorithms, etc.)
-    ///
-    /// # Return value
-    ///
-    /// A LookupControlFlow containing the lookup that should be returned to the client.
-    async fn search(
-        &self,
-        request_info: RequestInfo<'_>,
-        lookup_options: LookupOptions,
-    ) -> LookupControlFlow<Self::Lookup> {
-        self.zone.search(request_info, lookup_options).await
     }
 
     /// Return the NSEC records based on the given name
@@ -1090,10 +980,10 @@ where
     #[allow(unused_variables)]
     async fn get_nsec_records(
         &self,
-        name: &LowerName,
+        name: &Name,
         lookup_options: LookupOptions,
-    ) -> LookupControlFlow<Self::Lookup> {
-        let rr_key = RrKey::new(name.clone(), RecordType::NSEC);
+    ) -> LookupControlFlow<AuthLookup> {
+        let rr_key = RrKey::new(LowerName::new(name), RecordType::NSEC);
         let no_data = self
             .get(&rr_key)
             .map(|rr_set| LookupRecords::new(lookup_options, rr_set.as_hickory().into()));
@@ -1149,7 +1039,7 @@ where
         &self,
         info: Nsec3QueryInfo<'_>,
         lookup_options: LookupOptions,
-    ) -> LookupControlFlow<Self::Lookup> {
+    ) -> LookupControlFlow<AuthLookup> {
         LookupControlFlow::Continue(self.proof(info).map(|proof| {
             LookupRecords::many(
                 lookup_options,

@@ -138,7 +138,7 @@ where
             }
 
             let origin = self.origin();
-            if !origin.zone_of(&require.name().into()) {
+            if !origin.zone_of(&require.name()) {
                 warn!("{} is not a zone_of {}", require.name(), origin);
                 return Err(ResponseCode::NotZone);
             }
@@ -155,6 +155,7 @@ where
                                         RecordType::ANY,
                                         LookupOptions::default(),
                                     )
+                                    .await
                                     .unwrap_or_default()
                                     .was_empty()
                                 {
@@ -167,6 +168,7 @@ where
                             rrset => {
                                 if self
                                     .lookup(&required_name, rrset, LookupOptions::default())
+                                    .await
                                     .unwrap_or_default()
                                     .was_empty()
                                 {
@@ -191,6 +193,7 @@ where
                                         RecordType::ANY,
                                         LookupOptions::default(),
                                     )
+                                    .await
                                     .unwrap_or_default()
                                     .was_empty()
                                 {
@@ -203,6 +206,7 @@ where
                             rrset => {
                                 if !self
                                     .lookup(&required_name, rrset, LookupOptions::default())
+                                    .await
                                     .unwrap_or_default()
                                     .was_empty()
                                 {
@@ -225,6 +229,7 @@ where
                             require.record_type(),
                             LookupOptions::default(),
                         )
+                        .await
                         .unwrap_or_default()
                         .iter()
                         .any(|rr| rr == require)
@@ -314,7 +319,7 @@ where
         //           else
         //                return (FORMERR)
         for rr in records {
-            if !self.origin().zone_of(&rr.name().into()) {
+            if !self.origin().zone_of(&rr.name()) {
                 return Err(ResponseCode::NotZone);
             }
 

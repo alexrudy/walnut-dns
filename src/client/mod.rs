@@ -6,25 +6,23 @@ use std::task::{Context, Poll};
 
 use chateau::services::SharedService;
 use hickory_proto::ProtoError;
-use hickory_proto::op::{Edns, Header, Message, OpCode, Query, ResponseCode};
+use hickory_proto::op::{Edns, Header, OpCode, Query, ResponseCode};
 use hickory_proto::rr::{DNSClass, Name, RecordType};
-use hickory_proto::xfer::{DnsRequest, DnsRequestOptions, DnsResponse};
 use pin_project::pin_project;
 use serde::Deserialize;
 use tower::ServiceExt;
 
 use crate::cache::{DnsCache, DnsCacheService};
 use crate::codec::CodecError;
+use crate::messages::{DnsRequest, DnsRequestOptions, DnsResponse, Message};
 use crate::rr::RecordSet;
 
-pub use self::codec::TaggedMessage;
-pub use self::codec::{DnsCodecLayer, DnsCodecService};
 #[cfg(feature = "h2")]
 pub use self::http::{DnsOverHttp, DnsOverHttpLayer, DnsOverHttpsFuture};
 pub use self::messages::{DnsRequestLayer, DnsRequestMiddleware, ResponseAdapter};
 use self::nameserver::{Nameserver, NameserverConfig, Pool, PoolConfig};
 
-mod codec;
+// mod codec;
 #[cfg(feature = "h2")]
 mod http;
 mod messages;
@@ -44,6 +42,15 @@ pub struct ClientConfiguration {
     bind: Option<IpAddr>,
 }
 
+impl From<NameserverConfig> for ClientConfiguration {
+    fn from(config: NameserverConfig) -> Self {
+        ClientConfiguration {
+            nameserver: vec![config],
+            ..Default::default()
+        }
+    }
+}
+
 impl Default for ClientConfiguration {
     fn default() -> Self {
         ClientConfiguration {
@@ -55,16 +62,31 @@ impl Default for ClientConfiguration {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ClientSettings {
+    max_payload_len: u16,
+}
+
+impl From<ClientConfiguration> for ClientSettings {
+    fn from(value: ClientConfiguration) -> Self {
+        ClientSettings {
+            max_payload_len: value.max_payload_len,
+        }
+    }
+}
+
 /// A DNS Client
 #[derive(Debug, Clone)]
 pub struct Client {
     inner: DnsService,
-    config: Arc<ClientConfiguration>,
+    config: Arc<ClientSettings>,
 }
 
 impl Client {
     pub fn new(configuration: ClientConfiguration) -> Client {
-        let config = Arc::new(configuration.clone());
+        let config = Arc::new(ClientSettings {
+            max_payload_len: configuration.max_payload_len,
+        });
         let svc = Pool::new(
             configuration
                 .nameserver
@@ -84,6 +106,19 @@ impl Client {
             inner: SharedService::new(DnsCacheService::new(self.inner, cache)),
             config: self.config,
         }
+    }
+
+    pub fn from_service(service: DnsService, max_payload_len: u16) -> Self {
+        Self {
+            inner: service,
+            config: Arc::new(ClientSettings { max_payload_len }),
+        }
+    }
+
+    /// Send a message, with options. We assume that the options have already been applied to the message.
+    pub fn send(&self, message: Message, options: DnsRequestOptions) -> ClientResponseFuture {
+        let request = DnsRequest::new(message, options);
+        ClientResponseFuture(self.inner.clone().oneshot(request))
     }
 
     #[tracing::instrument(skip_all, fields(dns.label=%query.name, dns.type=%query.query_type, dns.id=tracing::field::Empty))]

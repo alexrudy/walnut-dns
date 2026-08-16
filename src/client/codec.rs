@@ -7,93 +7,13 @@ use std::task::{Context, Poll, ready};
 use chateau::client::conn::protocol::framed::Tagged;
 use hickory_proto::{
     ProtoError,
-    op::Message,
     serialize::binary::{BinDecodable, BinEncodable},
-    xfer::{DnsRequest, DnsResponse},
 };
 
 use crate::codec::{CodecError, DnsMessage};
+use crate::messages::{DnsRequest, DnsRequestOptions, DnsResponse, Message};
 
 use super::DnsClientError;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaggedMessage(Message);
-
-impl Tagged for TaggedMessage {
-    type Tag = u16;
-
-    fn tag(&self) -> Self::Tag {
-        self.0.id()
-    }
-}
-
-impl From<DnsRequest> for TaggedMessage {
-    fn from(request: DnsRequest) -> Self {
-        let (message, _) = request.into_parts();
-        message.into()
-    }
-}
-
-impl TryFrom<TaggedMessage> for DnsResponse {
-    type Error = ProtoError;
-
-    fn try_from(message: TaggedMessage) -> Result<Self, Self::Error> {
-        DnsResponse::from_message(message.into())
-    }
-}
-
-impl From<TaggedMessage> for Message {
-    fn from(tagged: TaggedMessage) -> Self {
-        tagged.0
-    }
-}
-
-impl From<Message> for TaggedMessage {
-    fn from(message: Message) -> Self {
-        TaggedMessage(message)
-    }
-}
-
-impl Deref for TaggedMessage {
-    type Target = Message;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for TaggedMessage {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl DnsMessage for TaggedMessage {
-    fn header(&self) -> &hickory_proto::op::Header {
-        self.0.header()
-    }
-
-    fn extensions(&self) -> Option<&hickory_proto::op::Edns> {
-        self.0.extensions().as_ref()
-    }
-}
-
-impl BinEncodable for TaggedMessage {
-    fn emit(
-        &self,
-        encoder: &mut hickory_proto::serialize::binary::BinEncoder<'_>,
-    ) -> Result<(), ProtoError> {
-        self.0.emit(encoder)
-    }
-}
-
-impl<'a> BinDecodable<'a> for TaggedMessage {
-    fn read(
-        decoder: &mut hickory_proto::serialize::binary::BinDecoder<'a>,
-    ) -> Result<Self, ProtoError> {
-        Message::read(decoder).map(TaggedMessage)
-    }
-}
 
 /// A layer which converts requests and responses to [`DnsCodecItem`]
 /// for inner services.

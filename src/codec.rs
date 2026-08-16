@@ -5,14 +5,14 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use bytes::{Buf, BufMut};
 use chateau::client::conn::protocol::framed::Tagged;
 use hickory_proto::ProtoError;
-use hickory_proto::op::{Edns, Header, Message, ResponseCode};
+use hickory_proto::op::{Edns, Header, ResponseCode};
 use hickory_proto::serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder};
 use hickory_proto::udp::MAX_RECEIVE_BUFFER_SIZE;
-use hickory_proto::xfer::Protocol;
-use hickory_server::{authority::MessageRequest, server::Request};
 use tokio_util::codec::{Decoder, Encoder};
 use tracing::{debug, error, trace};
 
+use crate::messages::server::Incoming;
+use crate::messages::{Message, Protocol};
 use crate::server::response::encode_fallback_servfail_response;
 
 /// The wire codec for standard DNS messages defined in RFC 1035.
@@ -50,7 +50,6 @@ impl<Req, Res> DnsCodec<Req, Res> {
             Protocol::Udp => (false, Some(MAX_RECEIVE_BUFFER_SIZE as u16)),
             #[cfg(feature = "h2")]
             Protocol::Https => (false, None),
-            _ => unimplemented!("Unknown protocol"),
         };
 
         Self::new(length_delimited, max_response_size)
@@ -114,11 +113,11 @@ pub enum MessageDecoded<M> {
     Failed(Header, ResponseCode),
 }
 
-impl MessageDecoded<MessageRequest> {
+impl MessageDecoded<Message> {
     pub fn with_address(self, addr: SocketAddr, protocol: Protocol) -> DnsRequest {
         match self {
             MessageDecoded::Message(message_request) => {
-                DnsRequest::Message(Request::new(message_request, addr, protocol))
+                DnsRequest::Message(Incoming::new(message_request, addr, protocol))
             }
             MessageDecoded::Failed(header, response_code) => DnsRequest::Failed((
                 Message::error_msg(header.id(), header.op_code(), response_code),
@@ -129,7 +128,7 @@ impl MessageDecoded<MessageRequest> {
 
     pub fn without_address(self, protocol: Protocol) -> DnsRequest {
         match self {
-            MessageDecoded::Message(message_request) => DnsRequest::Message(Request::new(
+            MessageDecoded::Message(message_request) => DnsRequest::Message(Incoming::new(
                 message_request,
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
                 protocol,
@@ -161,7 +160,7 @@ where
 /// to the underlying protocol.
 #[derive(Debug)]
 pub enum DnsRequest {
-    Message(Request),
+    Message(Incoming<Message>),
     Failed((Message, SocketAddr)),
 }
 

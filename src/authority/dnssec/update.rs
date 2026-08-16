@@ -5,13 +5,16 @@ use hickory_proto::{
 use hickory_server::authority::UpdateResult;
 use tracing::{error, info};
 
-use crate::Lookup;
+use crate::{
+    Lookup,
+    authority::{Records, Update},
+};
 
 use super::DnsSecZone;
 
 impl<Z> DnsSecZone<Z>
 where
-    Z: Lookup,
+    Z: Lookup + Update + Records,
 {
     /// Process DNS UPDATE records to modify the zone
     ///
@@ -146,7 +149,9 @@ where
                 DNSClass::ANY => {
                     // This is a delete of entire RRSETs, either many or one. In either case, the spec is clear:
                     match rr.record_type() {
-                        t @ RecordType::SOA | t @ RecordType::NS if rr_name == *self.origin() => {
+                        t @ RecordType::SOA | t @ RecordType::NS
+                            if *self.origin() == rr_name.to_lowercase() =>
+                        {
                             // SOA and NS records are not to be deleted if they are the origin records
                             info!("skipping delete of {:?} see RFC 2136 - 3.4.2.3", t);
                             continue;
@@ -168,7 +173,7 @@ where
                                 .filter(|k| {
                                     !((k.record_type == RecordType::SOA
                                         || k.record_type == RecordType::NS)
-                                        && k.name != *origin)
+                                        && k.name.to_lowercase() != *origin)
                                 })
                                 .filter(|k| k.name == rr_name)
                                 .cloned()

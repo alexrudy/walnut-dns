@@ -1,19 +1,19 @@
 use std::{collections::BTreeMap, fs, io, path::Path};
 
 use hickory_proto::{
-    rr::{DNSClass, LowerName, RecordType, RrKey, rdata},
+    rr::{DNSClass, Name, RecordType, RrKey, rdata},
     serialize::txt::Parser,
 };
 use rusqlite::{ToSql, types::FromSql};
 use tracing::{debug, error, info};
 
 use crate::{
-    authority::{Lookup, ZoneAuthority, ZoneInfo},
+    authority::{Records, ZoneInfo},
     database::FromRow,
 };
 
 use super::{
-    Name, Record, SerialNumber, SqlName, TimeToLive, ZoneID,
+    Record, SerialNumber, SqlName, TimeToLive, ZoneID,
     rset::{Mismatch, RecordSet},
 };
 
@@ -28,6 +28,12 @@ pub enum ZoneType {
     Secondary = 2,
     /// This nameserver provides exteranal zone data
     External = 3,
+}
+
+impl ZoneType {
+    pub fn is_authoritative(&self) -> bool {
+        matches!(self, ZoneType::Primary | ZoneType::Secondary)
+    }
 }
 
 impl From<ZoneType> for hickory_server::authority::ZoneType {
@@ -87,7 +93,7 @@ pub struct Zone {
     id: ZoneID,
     zone_type: ZoneType,
     name: Name,
-    origin: LowerName,
+    origin: Name,
     allow_axfr: bool,
     dns_class: DNSClass,
     records: BTreeMap<RrKey, RecordSet>,
@@ -117,7 +123,7 @@ impl Zone {
     ) -> Self {
         let mut records = BTreeMap::new();
         records.insert(soa.rrkey(), RecordSet::from_record(name.clone(), soa));
-        let origin = (&name).into();
+        let origin = name.to_lowercase();
 
         Self {
             id: ZoneID::new(),
@@ -153,7 +159,7 @@ impl Zone {
         for record in records {
             rrsets.insert(record.rrkey(), record);
         }
-        let origin = (&name).into();
+        let origin = name.to_lowercase();
 
         Self {
             id: ZoneID::new(),
@@ -297,7 +303,7 @@ impl FromRow for Zone {
         let zone_type = row.get("zone_type")?;
         let allow_axfr = row.get("allow_axfr")?;
         let dns_class = row.get::<_, u16>("dns_class")?.into();
-        let origin = (&name).into();
+        let origin = name.to_lowercase();
 
         Ok(Zone {
             id,
@@ -316,7 +322,7 @@ impl ZoneInfo for Zone {
         &self.name
     }
 
-    fn origin(&self) -> &LowerName {
+    fn origin(&self) -> &Name {
         &self.origin
     }
 
@@ -376,7 +382,7 @@ impl ZoneInfo for Zone {
     }
 }
 
-impl Lookup for Zone {
+impl Records for Zone {
     fn get(&self, key: &RrKey) -> Option<&RecordSet> {
         self.records.get(key)
     }
@@ -469,12 +475,6 @@ impl Lookup for Zone {
 
     fn replace(&mut self, rrset: RecordSet) -> Option<RecordSet> {
         self.records.insert(rrset.rrkey(), rrset)
-    }
-}
-
-impl From<Zone> for ZoneAuthority<Zone> {
-    fn from(value: Zone) -> Self {
-        ZoneAuthority::new(value)
     }
 }
 

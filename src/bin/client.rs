@@ -3,10 +3,11 @@ use std::time::Duration;
 
 use chrono::Utc;
 use clap::arg;
-use hickory_proto::{op::Query, rr::RecordType, xfer::DnsRequestOptions};
+use hickory_proto::{op::Query, rr::RecordType};
 use tracing::trace;
 use tracing_subscriber::EnvFilter;
 use walnut_dns::client::ClientConfiguration;
+use walnut_dns::messages::DnsRequestOptions;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), ()> {

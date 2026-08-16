@@ -15,17 +15,19 @@ use std::fmt;
 use std::task::{Context, Poll};
 use std::{borrow::Borrow, sync::Arc};
 
-use hickory_proto::op::{Edns, Header, LowerQuery, Message, MessageType, OpCode, ResponseCode};
-use hickory_proto::rr::{LowerName, RecordSet, RecordType};
+use hickory_proto::op::{Edns, Header, LowerQuery, MessageType, OpCode, ResponseCode};
+use hickory_proto::rr::{RecordSet, RecordType};
 use hickory_server::authority::{
-    AuthLookup, AuthorityObject, EmptyLookup, LookupControlFlow, LookupError, LookupObject,
-    LookupOptions, LookupRecords, MessageResponse, MessageResponseBuilder,
+    AuthLookup, LookupControlFlow, LookupError, LookupOptions, LookupRecords,
 };
-use hickory_server::server::{Request, RequestHandler, RequestInfo, ResponseHandler, ResponseInfo};
 
 use crate::authority::edns::lookup_options_for_edns;
+use crate::authority::{Search, Update};
 use crate::error::HickoryError;
+use crate::messages::Message;
+use crate::messages::server::Incoming;
 use crate::rr::Name;
+use crate::{Lookup, ZoneInfo};
 
 /// Error type for catalog operations
 ///
@@ -79,7 +81,7 @@ pub trait CatalogStore<A> {
     /// # Errors
     ///
     /// Returns an error if the storage backend fails
-    async fn find(&self, origin: &LowerName) -> Result<Option<Vec<A>>, CatalogError>;
+    async fn find(&self, origin: &Name) -> Result<Option<Vec<A>>, CatalogError>;
 
     /// Insert or update zones for a given name
     ///
@@ -98,7 +100,7 @@ pub trait CatalogStore<A> {
     /// # Errors
     ///
     /// Returns an error if the storage backend fails
-    async fn upsert(&self, name: LowerName, zones: &[A]) -> Result<(), CatalogError>;
+    async fn upsert(&self, name: Name, zones: &[A]) -> Result<(), CatalogError>;
 
     /// List all zone names in the catalog
     ///
@@ -112,7 +114,7 @@ pub trait CatalogStore<A> {
     /// # Errors
     ///
     /// Returns an error if the storage backend fails
-    async fn list(&self, origin: &LowerName) -> Result<Vec<Name>, CatalogError>;
+    async fn list(&self, origin: &Name) -> Result<Vec<Name>, CatalogError>;
 
     /// Remove a zone from the catalog
     ///
@@ -129,7 +131,7 @@ pub trait CatalogStore<A> {
     /// # Errors
     ///
     /// Returns an error if the storage backend fails
-    async fn remove(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError>;
+    async fn remove(&self, name: &Name) -> Result<Option<Vec<A>>, CatalogError>;
 }
 
 /// DNS Zone Catalog
@@ -165,10 +167,10 @@ impl<A> Clone for Catalog<A> {
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument("send", skip_all, level = "trace")]
 async fn lookup_response(
-    response: LookupControlFlow<Box<dyn LookupObject>>,
+    response: LookupControlFlow<AuthLookup>,
     response_edns: Option<Edns>,
-    request: &Request,
-    authority: &dyn AuthorityObject,
+    request: &Incoming<Message>,
+    authority: &(dyn Lookup + Sync + 'static),
     request_id: u16,
     query: &LowerQuery,
     edns: Option<&Edns>,
@@ -185,7 +187,7 @@ async fn lookup_response(
 
     let mut message = Message::new();
     message.set_header(response_header);
-    message.add_queries(request.queries().iter().map(|q| q.original().clone()));
+    message.add_queries(request.queries().iter().map(|q| q.clone()));
     message.add_answers(sections.answers.iter().cloned());
     message.add_name_servers(sections.ns.iter().cloned());
     message.add_name_servers(sections.soa.iter().cloned());
@@ -199,15 +201,15 @@ async fn lookup_response(
 }
 
 struct LookupSections {
-    answers: Box<dyn LookupObject>,
-    ns: Box<dyn LookupObject>,
-    soa: Box<dyn LookupObject>,
-    additionals: Box<dyn LookupObject>,
+    answers: AuthLookup,
+    ns: AuthLookup,
+    soa: AuthLookup,
+    additionals: AuthLookup,
 }
 
 async fn build_response(
-    result: Result<Box<dyn LookupObject>, LookupError>,
-    authority: &dyn AuthorityObject,
+    result: Result<AuthLookup, LookupError>,
+    authority: &(dyn Lookup + Sync),
     _request_id: u16,
     request_header: &Header,
     query: &LowerQuery,
@@ -234,10 +236,10 @@ async fn build_response(
                 return (
                     response_header,
                     LookupSections {
-                        answers: Box::<AuthLookup>::default(),
-                        ns: Box::<AuthLookup>::default(),
-                        soa: Box::<AuthLookup>::default(),
-                        additionals: Box::<AuthLookup>::default(),
+                        answers: AuthLookup::default(),
+                        ns: AuthLookup::default(),
+                        soa: AuthLookup::default(),
+                        additionals: AuthLookup::default(),
                     },
                 );
             }
@@ -297,22 +299,16 @@ async fn build_response(
         let (answers, additionals) = match answers {
             Some(mut answers) => match answers.take_additionals() {
                 Some(additionals) => (answers, additionals),
-                None => (
-                    answers,
-                    Box::<AuthLookup>::default() as Box<dyn LookupObject>,
-                ),
+                None => (answers, LookupRecords::default()),
             },
-            None => (
-                Box::<AuthLookup>::default() as Box<dyn LookupObject>,
-                Box::<AuthLookup>::default() as Box<dyn LookupObject>,
-            ),
+            None => (AuthLookup::default(), LookupRecords::default()),
         };
 
         let sections = LookupSections {
             answers,
-            ns: ns.unwrap_or_else(|| Box::<AuthLookup>::default()),
-            soa: soa.unwrap_or_else(|| Box::<AuthLookup>::default()),
-            additionals,
+            ns: ns.unwrap_or_else(|| AuthLookup::default()),
+            soa: soa.unwrap_or_else(|| AuthLookup::default()),
+            additionals: additionals.into(),
         };
         (response_header, sections)
     } else {
@@ -320,8 +316,8 @@ async fn build_response(
         response_header.set_recursion_available(true);
 
         enum Answer {
-            Normal(Box<dyn LookupObject>),
-            NoRecords(Box<AuthLookup>),
+            Normal(AuthLookup),
+            NoRecords(AuthLookup),
         }
 
         let (answers, authorities) = match result {
@@ -335,14 +331,14 @@ async fn build_response(
                 return (
                     response_header,
                     LookupSections {
-                        answers: Box::new(EmptyLookup),
-                        ns: Box::new(EmptyLookup),
-                        soa: Box::new(EmptyLookup),
-                        additionals: Box::new(EmptyLookup),
+                        answers: AuthLookup::Empty,
+                        ns: AuthLookup::Empty,
+                        soa: AuthLookup::Empty,
+                        additionals: AuthLookup::Empty,
                     },
                 );
             }
-            Ok(l) => (Answer::Normal(l), Box::<AuthLookup>::default()),
+            Ok(l) => (Answer::Normal(l.into()), AuthLookup::default()),
             Err(e) if e.is_no_records_found() || e.is_nx_domain() => {
                 tracing::debug!(error = ?e, "error resolving");
 
@@ -374,12 +370,12 @@ async fn build_response(
                         })
                         .collect();
 
-                    Box::new(AuthLookup::answers(
+                    AuthLookup::answers(
                         LookupRecords::many(LookupOptions::default(), authorities),
                         None,
-                    ))
+                    )
                 } else {
-                    Box::<AuthLookup>::default()
+                    AuthLookup::default()
                 };
 
                 if let Some(soa) = e.into_soa() {
@@ -387,21 +383,15 @@ async fn build_response(
                     let record_set = Arc::new(RecordSet::from(soa));
                     let records = LookupRecords::new(LookupOptions::default(), record_set);
 
-                    (
-                        Answer::NoRecords(Box::new(AuthLookup::SOA(records))),
-                        authorities,
-                    )
+                    (Answer::NoRecords(AuthLookup::SOA(records)), authorities)
                 } else {
-                    (Answer::Normal(Box::new(EmptyLookup)), authorities)
+                    (Answer::Normal(AuthLookup::Empty), authorities)
                 }
             }
             Err(e) => {
                 response_header.set_response_code(ResponseCode::ServFail);
                 tracing::debug!(error = ?e, "error resolving");
-                (
-                    Answer::Normal(Box::new(EmptyLookup)),
-                    Box::<AuthLookup>::default(),
-                )
+                (Answer::Normal(AuthLookup::Empty), AuthLookup::Empty)
             }
         };
 
@@ -421,10 +411,7 @@ async fn build_response(
                 })
                 .collect();
 
-            Box::new(AuthLookup::answers(
-                LookupRecords::many(LookupOptions::default(), auth),
-                None,
-            ))
+            AuthLookup::answers(LookupRecords::many(LookupOptions::default(), auth), None)
         } else {
             authorities
         };
@@ -433,14 +420,14 @@ async fn build_response(
             Answer::Normal(answers) => LookupSections {
                 answers,
                 ns: authorities,
-                soa: Box::<AuthLookup>::default(),
-                additionals: Box::<AuthLookup>::default(),
+                soa: AuthLookup::default(),
+                additionals: AuthLookup::default(),
             },
             Answer::NoRecords(soa) => LookupSections {
-                answers: Box::new(EmptyLookup),
+                answers: AuthLookup::Empty,
                 ns: authorities,
                 soa,
-                additionals: Box::<AuthLookup>::default(),
+                additionals: AuthLookup::Empty,
             },
         };
 
@@ -449,12 +436,11 @@ async fn build_response(
 }
 
 async fn lookup(
-    request_info: RequestInfo<'_>,
-    authorities: &[&dyn AuthorityObject],
-    request: &Request,
+    authorities: &[&(dyn Search + 'static)],
+    request: &Incoming<Message>,
     response_edns: Option<Edns>,
 ) -> Result<Message, LookupError> {
-    let edns = request.edns();
+    let edns = request.extensions().as_ref();
     let lookup_options = lookup_options_for_edns(edns);
     let request_id = request.id();
 
@@ -463,9 +449,9 @@ async fn lookup(
         tracing::info!("request: {request_id} lookup_options: {lookup_options:?}");
     }
 
-    let query = request_info.query;
+    let query = request.query().expect("a single query in the request");
 
-    for (authority_index, authority) in authorities.iter().enumerate() {
+    for authority in authorities.iter() {
         tracing::debug!(
             origin = %authority.origin(),
             qtype = %query.query_type(),
@@ -473,7 +459,7 @@ async fn lookup(
             "querying"
         );
 
-        let mut result = authority.search(request_info.clone(), lookup_options).await;
+        let result = authority.search(query, lookup_options).await;
 
         if let LookupControlFlow::Skip = result {
             tracing::trace!("authority {} skipped", authority.origin());
@@ -484,25 +470,7 @@ async fn lookup(
                 authority.origin()
             );
 
-            // For LookupControlFlow::Continue results, we'll call consult on every
-            // authority, except the authority that returned the Continue result.
-            for (continue_index, consult_authority) in authorities.iter().enumerate() {
-                if continue_index == authority_index {
-                    tracing::trace!("skipping current authority consult (index {continue_index})");
-                    continue;
-                } else {
-                    tracing::trace!("calling authority consult (index {continue_index})");
-                }
-
-                result = consult_authority
-                    .consult(
-                        request_info.query.name(),
-                        request_info.query.query_type(),
-                        lookup_options_for_edns(response_edns.as_ref()),
-                        result,
-                    )
-                    .await
-            }
+            // Originally, hickory called authority.consult() here...
         } else {
             tracing::trace!(
                 "authority {} did handle request with break",
@@ -517,7 +485,7 @@ async fn lookup(
             request,
             &**authority,
             request_id,
-            query,
+            &query.clone().into(),
             edns,
         )
         .await;
@@ -566,7 +534,7 @@ impl<A> Catalog<A> {
     /// # Errors
     ///
     /// Returns an error if the underlying storage fails
-    pub async fn upsert(&self, name: LowerName, zones: Vec<A>) -> Result<(), CatalogError> {
+    pub async fn upsert(&self, name: Name, zones: Vec<A>) -> Result<(), CatalogError> {
         (*self.zones).upsert(name, &zones).await
     }
 
@@ -585,7 +553,7 @@ impl<A> Catalog<A> {
     /// # Errors
     ///
     /// Returns an error if the underlying storage fails
-    pub async fn remove(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError> {
+    pub async fn remove(&self, name: &Name) -> Result<Option<Vec<A>>, CatalogError> {
         (*self.zones).remove(name).await
     }
 
@@ -605,7 +573,7 @@ impl<A> Catalog<A> {
     /// # Errors
     ///
     /// Returns an error if the underlying storage fails
-    pub async fn find(&self, name: &LowerName) -> Result<Option<Vec<A>>, CatalogError> {
+    pub async fn find(&self, name: &Name) -> Result<Option<Vec<A>>, CatalogError> {
         tracing::debug!("searching for {}", name);
         (*self.zones).find(name).await
     }
@@ -624,14 +592,14 @@ impl<A> Catalog<A> {
     /// # Errors
     ///
     /// Returns an error if the underlying storage fails
-    pub async fn list(&self, name: &LowerName) -> Result<Vec<Name>, CatalogError> {
+    pub async fn list(&self, name: &Name) -> Result<Vec<Name>, CatalogError> {
         (*self.zones).list(name).await
     }
 }
 
 impl<A> Catalog<A>
 where
-    A: AsRef<dyn AuthorityObject>,
+    A: Search + Lookup + 'static,
 {
     /// Process a DNS lookup request
     ///
@@ -651,7 +619,7 @@ where
     #[tracing::instrument(skip_all, fields(id=%request.id(), name=tracing::field::Empty))]
     pub async fn lookup(
         &self,
-        request: &Request,
+        request: &Incoming<Message>,
         edns: Option<Edns>,
     ) -> Result<Message, HickoryError> {
         self.handle_lookup(request, edns).await
@@ -659,7 +627,7 @@ where
 
     async fn handle_lookup(
         &self,
-        request: &Request,
+        request: &Incoming<Message>,
         edns: Option<Edns>,
     ) -> Result<Message, HickoryError> {
         let Ok(request_info) = request.request_info() else {
@@ -695,10 +663,12 @@ where
 
         tracing::trace!("{} authorities found", authorities.len());
 
-        let refs = authorities.iter().map(|za| za.as_ref()).collect::<Vec<_>>();
+        let refs = authorities
+            .iter()
+            .map(|za| za as _)
+            .collect::<Vec<&(dyn Search + 'static)>>();
 
         match lookup(
-            request_info.clone(),
             &refs,
             request,
             edns.as_ref().map(|arc| Borrow::<Edns>::borrow(arc).clone()),
@@ -716,7 +686,7 @@ where
 
 impl<A> Catalog<A>
 where
-    A: AsRef<dyn AuthorityObject>,
+    A: ZoneInfo,
 {
     /// Insert a single zone into the catalog
     ///
@@ -735,11 +705,20 @@ where
     ///
     /// Returns an error if the underlying storage fails
     pub async fn insert(&self, zone: A) -> Result<(), CatalogError> {
-        let name = LowerName::new(zone.as_ref().origin());
+        let name = zone.origin().clone();
         (*self.zones).upsert(name, &[zone]).await
     }
+}
 
-    async fn update(&self, request: &Request, edns: Option<Edns>) -> Result<Message, HickoryError> {
+impl<A> Catalog<A>
+where
+    A: Update + Sync + Send + 'static,
+{
+    async fn update(
+        &self,
+        request: &Incoming<Message>,
+        edns: Option<Edns>,
+    ) -> Result<Message, HickoryError> {
         let request_info = match request.request_info() {
             Ok(request_info) => request_info,
             Err(error) => {
@@ -786,8 +765,8 @@ where
             }
         };
 
-        if let Some(authority) = authorities.into_iter().next() {
-            let update_result = AuthorityObject::update(authority.as_ref(), request).await;
+        if let Some(mut authority) = authorities.into_iter().next() {
+            let update_result = Update::update(&mut authority, request).await;
             let response_code = match update_result {
                 // successful update
                 Ok(..) => ResponseCode::NoError,
@@ -799,7 +778,7 @@ where
             }
 
             let mut response = Message::new();
-            response.add_queries(request.queries().iter().map(|lq| lq.original().clone()));
+            response.add_queries(request.queries().iter().map(|lq| lq.clone()));
             response
                 .set_id(request.id())
                 .set_op_code(OpCode::Update)
@@ -818,11 +797,16 @@ where
             ResponseCode::ServFail,
         ))
     }
+}
 
-    async fn handle_edns(&self, request: &Request) -> Result<Option<Edns>, Message> {
-        if let Some(req_edns) = request.edns() {
+impl<A> Catalog<A>
+where
+    A: Lookup + Search + Update + Sync + Send + 'static,
+{
+    async fn handle_edns(&self, request: &Incoming<Message>) -> Result<Option<Edns>, Message> {
+        if let Some(req_edns) = request.extensions().as_ref() {
             let mut response = Message::new();
-            response.add_queries(request.queries().iter().map(|lq| lq.original().clone()));
+            response.add_queries(request.queries().iter().map(|lq| lq.clone()));
             let mut response_header = Header::response_from_request(request.header());
 
             let mut resp_edns: Edns = Edns::new();
@@ -856,7 +840,7 @@ where
     #[tracing::instrument("query", skip_all, fields(op=%request.op_code(), id=%request.id(), name=tracing::field::Empty), level="debug")]
     async fn handle_query(
         &self,
-        request: &Request,
+        request: &Incoming<Message>,
         edns: Option<Edns>,
     ) -> Result<Message, HickoryError> {
         match request.op_code() {
@@ -868,50 +852,11 @@ where
             }
         }
     }
-
-    async fn respond_error_code<R: ResponseHandler>(
-        &self,
-        response_handle: &mut R,
-        request: &Request,
-        response_code: ResponseCode,
-    ) -> ResponseInfo {
-        let mut header = Header::new();
-        header.set_response_code(response_code);
-        self.respond(
-            response_handle,
-            MessageResponseBuilder::from_message_request(request)
-                .error_msg(request.header(), response_code),
-        )
-        .await
-    }
-
-    async fn respond<'q, 'a, R: ResponseHandler>(
-        &self,
-        response_handle: &mut R,
-        message: MessageResponse<
-            'q,
-            'a,
-            impl Iterator<Item = &'a hickory_proto::rr::Record> + Send,
-            impl Iterator<Item = &'a hickory_proto::rr::Record> + Send,
-            impl Iterator<Item = &'a hickory_proto::rr::Record> + Send,
-            impl Iterator<Item = &'a hickory_proto::rr::Record> + Send,
-        >,
-    ) -> ResponseInfo {
-        return match response_handle.send_response(message).await {
-            Ok(info) => info,
-            Err(error) => {
-                tracing::error!("Send error: {error}");
-                let mut header = Header::new();
-                header.set_response_code(ResponseCode::ServFail);
-                header.into()
-            }
-        };
-    }
 }
 
-impl<A> tower::Service<Request> for Catalog<A>
+impl<A> tower::Service<Incoming<Message>> for Catalog<A>
 where
-    A: AsRef<dyn AuthorityObject> + Send + 'static,
+    A: Search + Lookup + Update + Send + 'static,
 {
     type Response = Message;
 
@@ -923,7 +868,7 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, request: Request) -> Self::Future {
+    fn call(&mut self, request: Incoming<Message>) -> Self::Future {
         tracing::trace!("request {}", request.message_type());
 
         let catalog = self.clone();
@@ -945,68 +890,6 @@ where
     }
 }
 
-#[async_trait::async_trait]
-impl<A> RequestHandler for Catalog<A>
-where
-    A: AsRef<dyn AuthorityObject> + Send + 'static,
-{
-    async fn handle_request<R>(&self, request: &Request, mut response_handle: R) -> ResponseInfo
-    where
-        R: ResponseHandler,
-    {
-        let edns = match self.handle_edns(request).await {
-            Ok(edns) => edns,
-            Err(message) => {
-                return self
-                    .respond(
-                        &mut response_handle,
-                        MessageResponseBuilder::from_message_request(request)
-                            .build_no_records(*message.header()),
-                    )
-                    .await;
-            }
-        };
-
-        let msg = match request.message_type() {
-            MessageType::Query => self.handle_query(request, edns).await,
-            MessageType::Response => {
-                tracing::warn!("got a response as a request from id: {}", request.id());
-                return self
-                    .respond_error_code(&mut response_handle, request, ResponseCode::FormErr)
-                    .await;
-            }
-        };
-
-        match msg {
-            Ok(message) => {
-                let rmsg = MessageResponseBuilder::from_message_request(request);
-                let ns = message.name_servers();
-                let first_soa = ns
-                    .iter()
-                    .position(|rr| rr.record_type() == RecordType::SOA)
-                    .unwrap_or(ns.len());
-
-                let (ns_only, soa_only) = ns.split_at(first_soa);
-
-                let msg = rmsg.build(
-                    *message.header(),
-                    message.answers().iter(),
-                    ns_only.iter(),
-                    soa_only.iter(),
-                    message.additionals().iter(),
-                );
-
-                self.respond(&mut response_handle, msg).await
-            }
-            Err(error) => {
-                tracing::error!("Error handling request: {error}");
-                self.respond_error_code(&mut response_handle, request, ResponseCode::ServFail)
-                    .await
-            }
-        }
-    }
-}
-
 mod future {
     use std::{
         fmt,
@@ -1014,7 +897,7 @@ mod future {
         task::{Context, Poll},
     };
 
-    use hickory_proto::op::Message;
+    use crate::messages::Message;
 
     use crate::error::HickoryError;
 

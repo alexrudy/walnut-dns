@@ -1,7 +1,4 @@
-use hickory_proto::{
-    ProtoError,
-    rr::{LowerName, Name},
-};
+use hickory_proto::{ProtoError, rr::Name};
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, Value, ValueRef};
 use std::{ops::Deref, str};
 
@@ -12,12 +9,6 @@ pub struct SqlName(Name);
 impl From<Name> for SqlName {
     fn from(name: Name) -> Self {
         SqlName(name)
-    }
-}
-
-impl From<LowerName> for SqlName {
-    fn from(name: LowerName) -> Self {
-        SqlName(name.into())
     }
 }
 
@@ -116,7 +107,7 @@ mod tests {
     #[test]
     fn test_sql_name_from_lower_name() {
         let name = Name::from_utf8("example.com.").unwrap();
-        let lower_name = LowerName::from(name);
+        let lower_name = Name::from(name);
         let sql_name = SqlName::from(lower_name);
 
         assert!(sql_name.to_utf8().starts_with("example.com."));

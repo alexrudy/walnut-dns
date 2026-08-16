@@ -7,14 +7,11 @@ use std::task::{Context, Poll};
 
 use chrono::Utc;
 use futures::future::BoxFuture;
-use hickory_proto::{
-    op::ResponseCode,
-    xfer::{DnsRequest, DnsResponse},
-};
-
-use crate::client::DnsClientError;
+use hickory_proto::op::ResponseCode;
 
 use super::DnsCache;
+use crate::client::DnsClientError;
+use crate::messages::{DnsRequest, DnsResponse, Message};
 
 /// Tower layer for adding DNS caching to a service.
 ///
@@ -160,7 +157,7 @@ where
                 Ok(Some(answer)) => {
                     // Cache hit - return cached response
                     tracing::trace!("cache hit, reconstructing answer message");
-                    let mut msg: hickory_proto::op::Message = answer.into();
+                    let mut msg: Message = answer.into();
                     msg.set_id(req.id());
                     Ok(
                         DnsResponse::from_message(msg)

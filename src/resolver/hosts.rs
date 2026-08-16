@@ -11,14 +11,14 @@ use std::{
 };
 
 use futures::future::BoxFuture;
-use hickory_proto::{
-    op::Query,
-    xfer::{DnsRequest, DnsResponse},
-};
+use hickory_proto::op::Query;
 use hickory_resolver::Hosts;
 
 use super::Lookup;
-use crate::client::DnsClientError;
+use crate::{
+    client::DnsClientError,
+    messages::{DnsRequest, DnsResponse, Message},
+};
 
 /// An opaque future type for hosts service responses.
 ///
@@ -258,7 +258,7 @@ where
         if let Some(lookup) = self.resolver.resolve(query) {
             // Hosts file hit - return direct response immediately
             tracing::trace!("Hosts file hit for {}", lookup.name());
-            let mut msg: hickory_proto::op::Message = lookup.into();
+            let mut msg: Message = lookup.into();
             msg.set_id(req.id());
             let response =
                 DnsResponse::from_message(msg).expect("protocol error from hosts file response");
@@ -281,6 +281,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::messages::DnsRequestOptions;
+
     use super::*;
     use hickory_proto::{
         op::ResponseCode,
@@ -413,7 +415,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hosts_service_localhost_a_resolution() {
-        use hickory_proto::op::Message;
+        use crate::messages::Message;
         use tower::Service;
 
         let resolver = create_test_hosts_with_data();
@@ -431,7 +433,7 @@ mod tests {
             Name::from_str("localhost.").unwrap(),
             RecordType::A,
         ));
-        let request = DnsRequest::new(msg, hickory_proto::xfer::DnsRequestOptions::default());
+        let request = DnsRequest::new(msg, DnsRequestOptions::default());
 
         let response = service.call(request).await.unwrap();
         assert_eq!(response.response_code(), ResponseCode::NoError);
@@ -440,7 +442,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hosts_service_test_local_resolution() {
-        use hickory_proto::op::Message;
+        use crate::messages::Message;
         use tower::Service;
 
         let resolver = create_test_hosts_with_data();
@@ -467,7 +469,7 @@ mod tests {
             Name::from_str("test.local.").unwrap(),
             RecordType::A,
         ));
-        let request = DnsRequest::new(msg, hickory_proto::xfer::DnsRequestOptions::default());
+        let request = DnsRequest::new(msg, DnsRequestOptions::default());
 
         let response = service.call(request).await.unwrap();
         assert_eq!(response.response_code(), ResponseCode::NoError);
@@ -476,7 +478,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hosts_service_forwarding_behavior() {
-        use hickory_proto::op::Message;
+        use crate::messages::Message;
         use tower::Service;
 
         // Create a mock service that returns NXDOMAIN for forwarded queries
@@ -501,7 +503,7 @@ mod tests {
         for (hostname, record_type) in forwarded_queries {
             let mut msg = Message::new();
             msg.add_query(Query::query(Name::from_str(hostname).unwrap(), record_type));
-            let request = DnsRequest::new(msg, hickory_proto::xfer::DnsRequestOptions::default());
+            let request = DnsRequest::new(msg, DnsRequestOptions::default());
 
             let response = service.call(request).await.unwrap();
             assert_eq!(response.response_code(), ResponseCode::NXDomain);

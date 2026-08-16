@@ -10,7 +10,6 @@ use std::{
 };
 
 use futures::future::BoxFuture;
-use hickory_proto::xfer::Protocol;
 use serde::Deserialize;
 use tracing::Instrument as _;
 
@@ -20,7 +19,8 @@ pub use self::connection::{
 use self::monitor::{ConnectionStats, MonitoredConnection, PriorityTier};
 pub use self::pool::{Pool, PoolConfig};
 
-use super::{DnsClientError, codec::TaggedMessage};
+use super::DnsClientError;
+use crate::messages::{Message, Protocol};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConnectionPolicy {
@@ -48,6 +48,14 @@ pub struct Nameserver {
 }
 
 impl Nameserver {
+    pub fn empty(address: IpAddr) -> Self {
+        Self {
+            connections: Vec::new(),
+            address,
+            policy: ConnectionPolicy::default(),
+        }
+    }
+
     pub fn new(configuration: NameserverConfig, bind: Option<IpAddr>) -> Self {
         Self {
             connections: configuration
@@ -56,8 +64,8 @@ impl Nameserver {
                 .map(|cfg| {
                     let protocol = cfg.protocol.protocol();
                     MonitoredConnection::new(
-                        NameServerConnection::from_config(configuration.address, &cfg, bind),
                         &protocol,
+                        NameServerConnection::from_config(configuration.address, &cfg, bind),
                     )
                 })
                 .collect(),
@@ -72,6 +80,11 @@ impl Nameserver {
 
     pub fn stats(&self) -> Option<&ConnectionStats> {
         self.connections.iter().map(|conn| conn.monitor()).min()
+    }
+
+    pub fn push_connection(&mut self, connection: NameServerConnection) {
+        self.connections
+            .push(MonitoredConnection::new(&connection.protocol(), connection));
     }
 
     fn select_connection(&mut self) -> Option<&mut MonitoredConnection<NameServerConnection>> {
@@ -102,8 +115,8 @@ impl Nameserver {
     }
 }
 
-impl tower::Service<TaggedMessage> for Nameserver {
-    type Response = TaggedMessage;
+impl tower::Service<Message> for Nameserver {
+    type Response = Message;
 
     type Error = DnsClientError;
 
@@ -113,7 +126,7 @@ impl tower::Service<TaggedMessage> for Nameserver {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: TaggedMessage) -> Self::Future {
+    fn call(&mut self, req: Message) -> Self::Future {
         let addr = self.address();
         let conn = self.select_connection();
 
@@ -143,10 +156,10 @@ impl tower::Service<TaggedMessage> for Nameserver {
     }
 }
 
-pub struct NameserverFuture(BoxFuture<'static, Result<TaggedMessage, DnsClientError>>);
+pub struct NameserverFuture(BoxFuture<'static, Result<Message, DnsClientError>>);
 
 impl Future for NameserverFuture {
-    type Output = Result<TaggedMessage, DnsClientError>;
+    type Output = Result<Message, DnsClientError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.0.as_mut().poll(cx)

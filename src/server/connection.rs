@@ -9,10 +9,6 @@ use chateau::info::HasConnectionInfo;
 use chateau::server::Connection;
 use futures::stream::FuturesUnordered;
 use futures::{Sink, Stream, TryStream};
-use hickory_proto::op::Message;
-use hickory_proto::xfer::Protocol;
-use hickory_server::authority::MessageRequest;
-use hickory_server::server::Request;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Framed;
 use tracing::instrument::Instrumented;
@@ -20,14 +16,16 @@ use tracing::{Instrument, debug, debug_span, trace, trace_span, warn};
 
 use crate::codec::{CodecError, DnsCodec, DnsCodecRecovery, DnsRequest};
 use crate::error::HickoryError;
+use crate::messages::server::Incoming;
+use crate::messages::{Message, Protocol};
 
 #[pin_project::pin_project]
 pub struct DnsFramedStream<IO> {
     addr: Option<SocketAddr>,
 
     #[pin]
-    codec: Framed<IO, DnsCodecRecovery<Message, MessageRequest>>,
-    protocol: hickory_proto::xfer::Protocol,
+    codec: Framed<IO, DnsCodecRecovery<Message, Message>>,
+    protocol: Protocol,
 }
 
 impl<IO> DnsFramedStream<IO>
@@ -174,7 +172,7 @@ where
 #[pin_project::pin_project]
 pub struct DnsConnection<S, F>
 where
-    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
 {
     service: ServiceState<S>,
     #[pin]
@@ -188,7 +186,7 @@ where
 
 impl<S, F> DnsConnection<S, F>
 where
-    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
 {
     pub fn new(service: S, codec: F) -> Self {
         Self {
@@ -204,7 +202,7 @@ where
 impl<S, IO> DnsConnection<S, DnsFramedStream<IO>>
 where
     IO: AsyncRead + AsyncWrite,
-    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
 {
     /// Creates a new `DnsFramedStream` without an address, meaning that
     /// no address validation is performed on send.
@@ -220,7 +218,7 @@ impl<S, IO> DnsConnection<S, DnsFramedStream<IO>>
 where
     IO: AsyncRead + AsyncWrite + HasConnectionInfo,
     IO::Addr: Into<SocketAddr> + Clone,
-    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
 {
     /// Creates a new `DnsFramedStream` with an address, meaning that
     /// address validation is performed on send.
@@ -231,7 +229,7 @@ where
 
 impl<S, F> fmt::Debug for DnsConnection<S, F>
 where
-    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DNSConnection").finish()
@@ -245,7 +243,7 @@ enum ReadAction {
 
 impl<S, F> DnsConnection<S, F>
 where
-    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
     F: Stream<Item = Result<DnsRequest, CodecError>>,
 {
     fn poll_read(
@@ -267,7 +265,7 @@ where
                     trace!("Recieved message");
 
                     let id = message.id();
-                    let addr = message.src();
+                    let addr = message.address();
 
                     let mut svc = match this.service {
                         ServiceState::Pending(_) => None,
@@ -316,7 +314,7 @@ where
 
 impl<S, F> DnsConnection<S, F>
 where
-    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
 {
     fn poll_tasks(
         mut self: Pin<&mut Self>,
@@ -339,7 +337,7 @@ where
 
 impl<S, F> DnsConnection<S, F>
 where
-    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
     F: Sink<(Message, SocketAddr), Error = CodecError>,
 {
     fn poll_write(
@@ -381,7 +379,7 @@ where
 
 impl<S, F> Future for DnsConnection<S, F>
 where
-    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
     F: Stream<Item = Result<DnsRequest, CodecError>>
         + Sink<(Message, SocketAddr), Error = CodecError>,
 {
@@ -443,7 +441,7 @@ where
 
 impl<S, F> Connection for DnsConnection<S, F>
 where
-    S: tower::Service<Request, Response = Message, Error = HickoryError>,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
 {
     fn graceful_shutdown(self: Pin<&mut Self>) {
         *self.project().cancelled = true;

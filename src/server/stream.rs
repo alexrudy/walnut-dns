@@ -4,24 +4,23 @@ use std::marker::PhantomData;
 use std::net::SocketAddr;
 
 use chateau::{info::HasConnectionInfo, server::Protocol};
-use hickory_proto::op::Message;
-use hickory_server::server::Request;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::error::HickoryError;
+use crate::messages::{Message, Protocol as DnsProtocol};
+use crate::{error::HickoryError, messages::server::Incoming};
 
 use super::connection::{DnsConnection, DnsFramedStream};
 
 #[derive(Debug, Default)]
 pub struct DnsOverStream<IO> {
-    protocol: hickory_proto::xfer::Protocol,
+    protocol: DnsProtocol,
     stream: PhantomData<fn(IO)>,
 }
 
 impl<IO> DnsOverStream<IO> {
     pub fn tcp() -> Self {
         Self {
-            protocol: hickory_proto::xfer::Protocol::Tcp,
+            protocol: DnsProtocol::Tcp,
             stream: PhantomData,
         }
     }
@@ -29,17 +28,17 @@ impl<IO> DnsOverStream<IO> {
     #[cfg(feature = "tls")]
     pub fn tls() -> Self {
         Self {
-            protocol: hickory_proto::xfer::Protocol::Tls,
+            protocol: DnsProtocol::Tls,
             stream: PhantomData,
         }
     }
 }
 
-impl<S, IO> Protocol<S, IO, Request> for DnsOverStream<IO>
+impl<S, IO> Protocol<S, IO, Incoming<Message>> for DnsOverStream<IO>
 where
     IO: AsyncRead + AsyncWrite + HasConnectionInfo + 'static,
     IO::Addr: Into<SocketAddr> + Clone,
-    S: tower::Service<Request, Response = Message, Error = HickoryError> + 'static,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError> + 'static,
     S::Future: Send + 'static,
 {
     type Response = Message;
@@ -71,10 +70,10 @@ impl<IO> DnsOverStreamUnprotected<IO> {
     }
 }
 
-impl<S, IO> Protocol<S, IO, Request> for DnsOverStreamUnprotected<IO>
+impl<S, IO> Protocol<S, IO, Incoming<Message>> for DnsOverStreamUnprotected<IO>
 where
     IO: AsyncRead + AsyncWrite + 'static,
-    S: tower::Service<Request, Response = Message, Error = HickoryError> + 'static,
+    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError> + 'static,
     S::Future: Send + 'static,
 {
     type Response = Message;

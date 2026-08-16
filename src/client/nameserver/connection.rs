@@ -16,12 +16,15 @@ use chateau::client::conn::transport::tcp::{
 use chateau::client::{ConnectionManagerService, pool::manager::ConnectionManagerConfig};
 use chateau::services::SharedService;
 use futures::future::BoxFuture;
+#[cfg(feature = "tls")]
+use rustls::ClientConfig;
 use serde::Deserialize;
 
 use crate::client::DnsClientError;
 use crate::client::udp::{DnsUdpProtocol, DnsUdpTransport};
 use crate::codec::CodecError;
-use crate::{client::codec::TaggedMessage, codec::DnsCodec};
+use crate::codec::DnsCodec;
+use crate::messages::{Message, Protocol};
 
 use super::ConnectionPolicy;
 
@@ -48,14 +51,14 @@ where
 /// A single connection to a nameserver
 #[derive(Debug, Clone)]
 pub struct NameServerConnection {
-    service: SharedService<TaggedMessage, TaggedMessage, DnsClientError>,
-    config: Arc<ConnectionConfig>,
+    service: SharedService<Message, Message, DnsClientError>,
+    protocol: Protocol,
     address: SocketAddr,
 }
 
 impl NameServerConnection {
-    pub fn protocol(&self) -> hickory_proto::xfer::Protocol {
-        self.config.protocol.protocol()
+    pub fn protocol(&self) -> Protocol {
+        self.protocol
     }
 
     pub fn address(&self) -> SocketAddr {
@@ -107,8 +110,7 @@ impl NameServerConnection {
     fn new_udp(address: IpAddr, config: &ConnectionConfig, bind: IpAddr) -> Self {
         let addr = SocketAddr::new(address, config.port);
         let bind = SocketAddr::new(bind, 0);
-        let codec: DnsCodec<TaggedMessage, TaggedMessage> =
-            DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Udp);
+        let codec: DnsCodec<Message, Message> = DnsCodec::new_for_protocol(Protocol::Udp);
 
         let transport = DnsUdpTransport::new(bind, addr);
         let protocol = DnsUdpProtocol::new(codec, false);
@@ -128,15 +130,14 @@ impl NameServerConnection {
             ));
         Self {
             service: SharedService::new(svc),
-            config: Arc::new(config.clone()),
+            protocol: Protocol::Udp,
             address: addr,
         }
     }
 
     fn new_tcp(address: IpAddr, config: &ConnectionConfig, bind: IpAddr) -> Self {
         let addr = SocketAddr::new(address, config.port);
-        let codec: DnsCodec<TaggedMessage, TaggedMessage> =
-            DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Tcp);
+        let codec: DnsCodec<Message, Message> = DnsCodec::new_for_protocol(Protocol::Tcp);
         let protocol = FramedProtocol::new(codec);
 
         let mut manager_cfg = ConnectionManagerConfig::default();
@@ -166,7 +167,49 @@ impl NameServerConnection {
             ));
         Self {
             service: SharedService::new(service),
-            config: Arc::new(config.clone()),
+            protocol: Protocol::Tcp,
+            address: addr,
+        }
+    }
+
+    #[cfg(feature = "tls")]
+    pub fn build_tls(
+        addr: SocketAddr,
+        tcp_config: TcpTransportConfig,
+        tls_config: Arc<ClientConfig>,
+        server_name: Box<str>,
+        timeout: Option<u64>,
+    ) -> Self {
+        use chateau::client::conn::transport::TlsConnectionError;
+
+        let codec: DnsCodec<Message, Message> = DnsCodec::new_for_protocol(Protocol::Tls);
+        let protocol = FramedProtocol::new(codec);
+
+        let transport = StaticHostTlsTransport::new(
+            SimpleTcpTransport::new(StaticResolver::new(SocketAddrs::from(addr)), tcp_config),
+            tls_config,
+            server_name,
+        );
+
+        let mut manager_cfg = ConnectionManagerConfig::default();
+        manager_cfg.idle_timeout = timeout.map(|timeout| Duration::from_secs(timeout));
+        manager_cfg.max_idle_per_host = 1;
+        manager_cfg.continue_after_preemption = true;
+
+        let service = tower::ServiceBuilder::new()
+            .map_err(
+                into_dns_error::<TlsConnectionError<TcpConnectionError>, CodecError, CodecError>,
+            )
+            .service(ConnectionManagerService::new(
+                transport,
+                protocol,
+                ClientExecutorService::new(),
+                manager_cfg,
+            ));
+
+        Self {
+            service: SharedService::new(service),
+            protocol: Protocol::Tls,
             address: addr,
         }
     }
@@ -183,8 +226,7 @@ impl NameServerConnection {
         use chateau::client::conn::transport::TlsConnectionError;
 
         let addr = SocketAddr::new(address, config.port);
-        let codec: DnsCodec<TaggedMessage, TaggedMessage> =
-            DnsCodec::new_for_protocol(hickory_proto::xfer::Protocol::Tls);
+        let codec: DnsCodec<Message, Message> = DnsCodec::new_for_protocol(Protocol::Tls);
         let mut tlsconfig = rustls::ClientConfig::builder()
             .with_root_certificates(rustls::RootCertStore {
                 roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
@@ -228,8 +270,51 @@ impl NameServerConnection {
 
         Self {
             service: SharedService::new(service),
-            config: Arc::new(config.clone()),
+            protocol: Protocol::Tls,
             address: addr,
+        }
+    }
+
+    pub fn build_https(
+        address: SocketAddr,
+        tcp_config: TcpTransportConfig,
+        tls_config: Arc<ClientConfig>,
+        server_name: Box<str>,
+        endpoint: Box<str>,
+        timeout: Option<u64>,
+    ) -> Self {
+        use hyperdriver::bridge::rt::TokioExecutor;
+        use hyperdriver::client::conn::transport::tcp::SimpleTcpTransport;
+
+        use crate::client::DnsOverHttpLayer;
+
+        let transport = StaticHostTlsTransport::new(
+            SimpleTcpTransport::new(StaticResolver::new(SocketAddrs::from(address)), tcp_config),
+            tls_config,
+            server_name,
+        );
+        let protocol = hyperdriver::client::conn::protocol::Http2Builder::new(TokioExecutor);
+
+        let uri = format!("https://dns/{endpoint}").parse().unwrap();
+
+        let mut manager_cfg = ConnectionManagerConfig::default();
+        manager_cfg.idle_timeout = timeout.map(|timeout| Duration::from_secs(timeout));
+        manager_cfg.max_idle_per_host = 1;
+        manager_cfg.continue_after_preemption = true;
+
+        let service = tower::ServiceBuilder::new()
+            .layer(DnsOverHttpLayer::new(http::Version::HTTP_2, uri))
+            .service(ConnectionManagerService::new(
+                transport,
+                protocol,
+                ClientExecutorService::new(),
+                manager_cfg,
+            ));
+
+        Self {
+            service: SharedService::new(service),
+            protocol: Protocol::Tls,
+            address,
         }
     }
 
@@ -293,22 +378,22 @@ impl NameServerConnection {
 
         Self {
             service: SharedService::new(svc),
-            config: Arc::new(config.clone()),
+            protocol: Protocol::Https,
             address: addr,
         }
     }
 }
 
-impl tower::Service<TaggedMessage> for NameServerConnection {
-    type Response = TaggedMessage;
+impl tower::Service<Message> for NameServerConnection {
+    type Response = Message;
     type Error = DnsClientError;
-    type Future = BoxFuture<'static, Result<TaggedMessage, DnsClientError>>;
+    type Future = BoxFuture<'static, Result<Message, DnsClientError>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.poll_ready(cx)
     }
 
-    fn call(&mut self, req: TaggedMessage) -> Self::Future {
+    fn call(&mut self, req: Message) -> Self::Future {
         self.service.call(req)
     }
 }
@@ -321,6 +406,24 @@ pub struct NameserverConfig {
     pub policy: ConnectionPolicy,
 }
 
+impl NameserverConfig {
+    pub fn new(
+        address: IpAddr,
+        connections: Vec<ConnectionConfig>,
+        policy: ConnectionPolicy,
+    ) -> Self {
+        Self {
+            address,
+            connections,
+            policy,
+        }
+    }
+
+    pub fn single(address: IpAddr, connection: ConnectionConfig) -> Self {
+        Self::new(address, vec![connection], ConnectionPolicy::default())
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConnectionConfig {
     pub protocol: ProtocolConfig,
@@ -328,6 +431,45 @@ pub struct ConnectionConfig {
 
     /// Timeout for the connection in seconds.
     pub timeout: Option<u64>,
+}
+
+impl ConnectionConfig {
+    pub fn new(protocol: ProtocolConfig, port: u16, timeout: Option<u64>) -> Self {
+        Self {
+            protocol,
+            port,
+            timeout,
+        }
+    }
+
+    pub fn udp() -> Self {
+        Self::new(ProtocolConfig::Udp, 53, None)
+    }
+
+    pub fn tcp() -> Self {
+        Self::new(ProtocolConfig::Tcp, 53, None)
+    }
+
+    pub fn tls(server_name: impl Into<Box<str>>) -> Self {
+        Self::new(
+            ProtocolConfig::Tls {
+                server_name: server_name.into(),
+            },
+            853,
+            None,
+        )
+    }
+
+    pub fn https(server_name: impl Into<Box<str>>, endpoint: impl Into<Box<str>>) -> Self {
+        Self::new(
+            ProtocolConfig::Https {
+                server_name: server_name.into(),
+                endpoint: endpoint.into(),
+            },
+            443,
+            None,
+        )
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -358,14 +500,14 @@ impl ProtocolConfig {
         }
     }
 
-    pub fn protocol(&self) -> hickory_proto::xfer::Protocol {
+    pub fn protocol(&self) -> Protocol {
         match self {
-            ProtocolConfig::Udp => hickory_proto::xfer::Protocol::Udp,
-            ProtocolConfig::Tcp => hickory_proto::xfer::Protocol::Tcp,
+            ProtocolConfig::Udp => Protocol::Udp,
+            ProtocolConfig::Tcp => Protocol::Tcp,
             #[cfg(feature = "tls")]
-            ProtocolConfig::Tls { .. } => hickory_proto::xfer::Protocol::Tls,
+            ProtocolConfig::Tls { .. } => Protocol::Tls,
             #[cfg(feature = "h2")]
-            ProtocolConfig::Https { .. } => hickory_proto::xfer::Protocol::Https,
+            ProtocolConfig::Https { .. } => Protocol::Https,
         }
     }
 }

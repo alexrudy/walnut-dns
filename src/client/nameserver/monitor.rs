@@ -8,10 +8,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use hickory_proto::xfer::Protocol;
 use pin_project::pin_project;
 
-use crate::client::{DnsClientError, codec::TaggedMessage};
+use crate::client::DnsClientError;
+use crate::messages::{Message, Protocol};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PriorityTier {
@@ -443,7 +443,7 @@ pub struct MonitoredConnection<S> {
 }
 
 impl<S> MonitoredConnection<S> {
-    pub fn new(service: S, protocol: &Protocol) -> Self {
+    pub fn new(protocol: &Protocol, service: S) -> Self {
         Self {
             service,
             monitor: ConnectionStats::new(protocol),
@@ -465,11 +465,11 @@ impl<S> MonitoredConnection<S> {
     }
 }
 
-impl<S> tower::Service<TaggedMessage> for MonitoredConnection<S>
+impl<S> tower::Service<Message> for MonitoredConnection<S>
 where
-    S: tower::Service<TaggedMessage, Response = TaggedMessage, Error = DnsClientError>,
+    S: tower::Service<Message, Response = Message, Error = DnsClientError>,
 {
-    type Response = TaggedMessage;
+    type Response = Message;
     type Error = DnsClientError;
     type Future = MonitoredFuture<S::Future>;
 
@@ -477,7 +477,7 @@ where
         self.service.poll_ready(cx)
     }
 
-    fn call(&mut self, req: TaggedMessage) -> Self::Future {
+    fn call(&mut self, req: Message) -> Self::Future {
         MonitoredFuture::new(self.service.call(req), &self.monitor, &self.protocol)
     }
 }

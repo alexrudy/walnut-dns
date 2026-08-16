@@ -10,12 +10,12 @@ use std::{
 
 use future_eyeballs::{EyeballConfiguration, EyeballSet, HappyEyeballsError};
 use futures::future::BoxFuture;
-use hickory_proto::op::Message;
 use serde::Deserialize;
 use tower::ServiceExt;
 use tracing::Instrument as _;
 
 use crate::client::DnsClientError;
+use crate::messages::Message;
 
 use super::Nameserver;
 

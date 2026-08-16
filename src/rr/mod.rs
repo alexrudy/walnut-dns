@@ -20,10 +20,6 @@ pub use self::zone::{Zone, ZoneType};
 ///
 pub use hickory_proto::rr::Name;
 
-/// DNS Name converted to the canonical lowercase form.
-///
-pub use hickory_proto::rr::LowerName;
-
 ///
 pub use hickory_proto::rr::DNSClass;
 

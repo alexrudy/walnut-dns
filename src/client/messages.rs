@@ -5,9 +5,9 @@ use std::pin::Pin;
 use std::task::{Context, Poll, ready};
 
 use hickory_proto::ProtoError;
-use hickory_proto::op::Message;
-use hickory_proto::xfer::{DnsRequest, DnsResponse};
 use pin_project::pin_project;
+
+use crate::messages::{DnsRequest, DnsResponse, Message};
 
 #[derive(Debug, Clone, Default)]
 pub struct DnsRequestLayer<M> {
