@@ -304,7 +304,7 @@ fn parse_protocol_matches(matches: &clap::ArgMatches) -> Vec<ConnectionConfig> {
 
     #[allow(unused_variables)]
     if let Some(occurences) = matches.get_occurrences::<String>("https") {
-        #[cfg(feature = "h2")]
+        #[cfg(all(feature = "h2", feature = "tls"))]
         {
             for occurence in occurences {
                 let mut parts: Vec<_> = occurence.rev().collect();
@@ -340,7 +340,7 @@ fn parse_protocol_matches(matches: &clap::ArgMatches) -> Vec<ConnectionConfig> {
                 });
             }
         }
-        #[cfg(not(feature = "h2"))]
+        #[cfg(not(all(feature = "h2", feature = "tls")))]
         {
             eprintln!("--https requires the h2 feature");
         }

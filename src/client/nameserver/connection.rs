@@ -89,7 +89,7 @@ impl NameServerConnection {
                     bind.unwrap_or(Ipv4Addr::UNSPECIFIED.into()),
                 )
             }
-            #[cfg(feature = "h2")]
+            #[cfg(all(feature = "h2", feature = "tls"))]
             ProtocolConfig::Https {
                 server_name,
                 endpoint,
@@ -275,6 +275,7 @@ impl NameServerConnection {
         }
     }
 
+    #[cfg(all(feature = "h2", feature = "tls"))]
     pub fn build_https(
         address: SocketAddr,
         tcp_config: TcpTransportConfig,
@@ -313,12 +314,12 @@ impl NameServerConnection {
 
         Self {
             service: SharedService::new(service),
-            protocol: Protocol::Tls,
+            protocol: Protocol::Https,
             address,
         }
     }
 
-    #[cfg(feature = "h2")]
+    #[cfg(all(feature = "h2", feature = "tls"))]
     fn new_https(
         address: IpAddr,
         config: &ConnectionConfig,
@@ -450,6 +451,7 @@ impl ConnectionConfig {
         Self::new(ProtocolConfig::Tcp, 53, None)
     }
 
+    #[cfg(feature = "tls")]
     pub fn tls(server_name: impl Into<Box<str>>) -> Self {
         Self::new(
             ProtocolConfig::Tls {
@@ -460,6 +462,7 @@ impl ConnectionConfig {
         )
     }
 
+    #[cfg(all(feature = "h2", feature = "tls"))]
     pub fn https(server_name: impl Into<Box<str>>, endpoint: impl Into<Box<str>>) -> Self {
         Self::new(
             ProtocolConfig::Https {
@@ -481,7 +484,7 @@ pub enum ProtocolConfig {
     Tls {
         server_name: Box<str>,
     },
-    #[cfg(feature = "h2")]
+    #[cfg(all(feature = "h2", feature = "tls"))]
     Https {
         server_name: Box<str>,
         endpoint: Box<str>,
@@ -495,7 +498,7 @@ impl ProtocolConfig {
             ProtocolConfig::Tcp => false,
             #[cfg(feature = "tls")]
             ProtocolConfig::Tls { .. } => true,
-            #[cfg(feature = "h2")]
+            #[cfg(all(feature = "h2", feature = "tls"))]
             ProtocolConfig::Https { .. } => true,
         }
     }
@@ -506,7 +509,7 @@ impl ProtocolConfig {
             ProtocolConfig::Tcp => Protocol::Tcp,
             #[cfg(feature = "tls")]
             ProtocolConfig::Tls { .. } => Protocol::Tls,
-            #[cfg(feature = "h2")]
+            #[cfg(all(feature = "h2", feature = "tls"))]
             ProtocolConfig::Https { .. } => Protocol::Https,
         }
     }

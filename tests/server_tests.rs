@@ -281,7 +281,7 @@ async fn test_server_www_tls() {
 }
 
 #[tokio::test]
-#[cfg(feature = "tls")]
+#[cfg(all(feature = "h2", feature = "tls"))]
 async fn test_server_www_https() {
     use std::env;
 
@@ -383,7 +383,7 @@ async fn lazy_tls_client(
     Client::from_service(svc, 2048)
 }
 
-#[cfg(feature = "tls")]
+#[cfg(all(feature = "h2", feature = "tls"))]
 async fn lazy_https_client(
     ipaddr: SocketAddr,
     dns_name: String,
@@ -517,7 +517,7 @@ async fn server_thread_tls(
         .unwrap();
 }
 
-#[cfg(feature = "h2")]
+#[cfg(all(feature = "h2", feature = "tls"))]
 async fn server_thread_https(
     listener: TcpListener,
     shutdown: oneshot::Receiver<()>,

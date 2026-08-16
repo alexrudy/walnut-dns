@@ -883,8 +883,10 @@ pub enum Protocol {
     /// TCP can be used for large queries, but not all NameServers support it
     Tcp,
     /// Tls for DNS over TLS
+    #[cfg(feature = "tls")]
     Tls,
     /// Https for DNS over HTTPS
+    #[cfg(feature = "h2")]
     Https,
 }
 
@@ -893,7 +895,9 @@ impl fmt::Display for Protocol {
         let protocol = match self {
             Self::Udp => "udp",
             Self::Tcp => "tcp",
+            #[cfg(feature = "tls")]
             Self::Tls => "tls",
+            #[cfg(feature = "h2")]
             Self::Https => "https",
         };
 
@@ -907,7 +911,9 @@ impl Protocol {
         match self {
             Self::Udp => true,
             Self::Tcp => false,
+            #[cfg(feature = "tls")]
             Self::Tls => false,
+            #[cfg(feature = "h2")]
             Self::Https => false,
         }
     }
@@ -922,7 +928,9 @@ impl Protocol {
         match self {
             Self::Udp => false,
             Self::Tcp => false,
+            #[cfg(feature = "tls")]
             Self::Tls => true,
+            #[cfg(feature = "h2")]
             Self::Https => true,
         }
     }
