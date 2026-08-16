@@ -1,4 +1,4 @@
-use hickory_proto::rr::{Name};
+use hickory_proto::rr::Name;
 use rusqlite::named_params;
 
 use crate::database::record::RecordPersistence;
