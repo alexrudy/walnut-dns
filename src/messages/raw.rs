@@ -1052,6 +1052,14 @@ impl fmt::Display for Message {
 mod tests {
     use super::*;
 
+    /// A minimal placeholder record used to populate message sections in the round-trip tests.
+    ///
+    /// This is equivalent to hickory-proto's crate-private `Record::stub()`: a root-named,
+    /// zero-TTL `Update0(NULL)` record in the `IN` class.
+    fn stub_record() -> Record {
+        Record::update0(hickory_proto::rr::Name::root(), 0, RecordType::NULL)
+    }
+
     #[test]
     fn test_emit_and_read_header() {
         let mut message = Message::new();
@@ -1101,10 +1109,9 @@ mod tests {
             .set_checking_disabled(true)
             .set_response_code(ResponseCode::ServFail);
 
-        //TODO: Re-enable this
-        // message.add_answer(Record::stub());
-        // message.add_name_server(Record::stub());
-        // message.add_additional(Record::stub());
+        message.add_answer(stub_record());
+        message.add_name_server(stub_record());
+        message.add_additional(stub_record());
         message.update_counts();
 
         test_emit_and_read(message);
@@ -1140,18 +1147,17 @@ mod tests {
             .set_checking_disabled(true)
             .set_response_code(ResponseCode::ServFail);
 
-        //TODO: Re-enable this
-        // message.add_answer(Record::stub());
-        // message.add_name_server(Record::stub());
-        // message.add_additional(Record::stub());
+        message.add_answer(stub_record());
+        message.add_name_server(stub_record());
+        message.add_additional(stub_record());
 
-        // at here, we don't call update_counts and we even set wrong count,
-        // because we are trying to test whether the counts in the header
-        // are correct after the message is emitted and read.
+        // here we deliberately do not call update_counts, and we even set the wrong counts,
+        // because we are testing whether the counts in the header are corrected after the
+        // message is emitted and read back.
         message.set_query_count(1);
         message.set_answer_count(5);
         message.set_name_server_count(5);
-        // message.set_additional_count(1);
+        message.set_additional_count(1);
 
         let got = get_message_after_emitting_and_reading(message);
 
