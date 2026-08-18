@@ -141,7 +141,7 @@ impl NameServerConnection {
         let protocol = FramedProtocol::new(codec);
 
         let mut manager_cfg = ConnectionManagerConfig::default();
-        manager_cfg.idle_timeout = config.timeout.map(|timeout| Duration::from_secs(timeout));
+        manager_cfg.idle_timeout = config.timeout.map(Duration::from_secs);
         manager_cfg.max_idle_per_host = 1;
         manager_cfg.continue_after_preemption = true;
 
@@ -192,7 +192,7 @@ impl NameServerConnection {
         );
 
         let mut manager_cfg = ConnectionManagerConfig::default();
-        manager_cfg.idle_timeout = timeout.map(|timeout| Duration::from_secs(timeout));
+        manager_cfg.idle_timeout = timeout.map(Duration::from_secs);
         manager_cfg.max_idle_per_host = 1;
         manager_cfg.continue_after_preemption = true;
 
@@ -253,7 +253,7 @@ impl NameServerConnection {
         let protocol = FramedProtocol::new(codec);
 
         let mut manager_cfg = ConnectionManagerConfig::default();
-        manager_cfg.idle_timeout = config.timeout.map(|timeout| Duration::from_secs(timeout));
+        manager_cfg.idle_timeout = config.timeout.map(Duration::from_secs);
         manager_cfg.max_idle_per_host = 1;
         manager_cfg.continue_after_preemption = true;
 
@@ -299,7 +299,7 @@ impl NameServerConnection {
         let uri = format!("https://dns/{endpoint}").parse().unwrap();
 
         let mut manager_cfg = ConnectionManagerConfig::default();
-        manager_cfg.idle_timeout = timeout.map(|timeout| Duration::from_secs(timeout));
+        manager_cfg.idle_timeout = timeout.map(Duration::from_secs);
         manager_cfg.max_idle_per_host = 1;
         manager_cfg.continue_after_preemption = true;
 
@@ -364,7 +364,7 @@ impl NameServerConnection {
         let uri = format!("https://dns/{endpoint}").parse().unwrap();
 
         let mut manager_cfg = ConnectionManagerConfig::default();
-        manager_cfg.idle_timeout = config.timeout.map(|timeout| Duration::from_secs(timeout));
+        manager_cfg.idle_timeout = config.timeout.map(Duration::from_secs);
         manager_cfg.max_idle_per_host = 1;
         manager_cfg.continue_after_preemption = true;
 

@@ -134,11 +134,11 @@ impl InnerPool {
 
         for conn in nameservers {
             let span = tracing::info_span!("nameserver", conn.addr=%conn.address());
-            eyeballs.push(conn.oneshot(request.clone().into()).instrument(span));
+            eyeballs.push(conn.oneshot(request.clone()).instrument(span));
         }
 
         match eyeballs.await {
-            Ok(outcome) => Ok(outcome.into()),
+            Ok(outcome) => Ok(outcome),
             Err(HappyEyeballsError::Error(client_error)) => Err(client_error),
             Err(HappyEyeballsError::NoProgress) => Err(DnsClientError::Closed),
             Err(HappyEyeballsError::Timeout(_)) => Err(DnsClientError::Closed),

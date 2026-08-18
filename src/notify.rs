@@ -119,7 +119,7 @@ impl NotifyManager {
 
         // add the notify message, see https://tools.ietf.org/html/rfc1996, section 3.7
         if let Some(rrset) = rrset {
-            message.add_answers(rrset.into_hickory_iter());
+            message.add_answers(rrset.into_iter());
         }
 
         let request = DnsRequest::new(message, options);
@@ -237,10 +237,7 @@ where
                     tracing::error!(code=%response.response_code(), "Recieved error response to NOTIFY");
                     Poll::Ready(Err((
                         *this.addr,
-                        DnsClientError::Response(
-                            response.header().clone(),
-                            response.response_code(),
-                        ),
+                        DnsClientError::Response(*response.header(), response.response_code()),
                     )))
                 }
             }

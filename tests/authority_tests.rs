@@ -3,20 +3,22 @@ use std::str::FromStr;
 use hickory_proto::op::{LowerQuery, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::Name;
 use hickory_proto::rr::rdata::{A, AAAA, NS, TXT};
-use hickory_proto::rr::{DNSClass, RData, Record, RecordType};
+use hickory_proto::rr::{DNSClass, RData, RecordType};
 
-use hickory_server::authority::LookupOptions;
 use hickory_server::dnssec::NxProofKind;
 
+use tracing::Instrument as _;
 use walnut_dns::Lookup as _;
 use walnut_dns::SqliteStore;
 use walnut_dns::ZoneInfo as _;
 use walnut_dns::authority::DnsSecZone;
+use walnut_dns::authority::LookupOptions;
 use walnut_dns::authority::Records as _;
 use walnut_dns::authority::Search as _;
 use walnut_dns::authority::Update as _;
 use walnut_dns::catalog::CatalogStore;
 use walnut_dns::database::DnsSecStore;
+use walnut_dns::rr::{Record, TimeToLive};
 
 mod support;
 use support::examples::{create_example, create_secure_example};
@@ -29,7 +31,7 @@ async fn test_search() {
     let origin = example.origin().clone();
 
     let mut query: Query = Query::new();
-    query.set_name(origin.into());
+    query.set_name(origin);
     let query = LowerQuery::from(query);
 
     let result = example
@@ -94,7 +96,7 @@ async fn test_authority() {
             .lookup(authority.origin(), RecordType::NS, LookupOptions::default())
             .await
             .unwrap()
-            .was_empty()
+            .is_empty()
     );
 
     let mut lookup: Vec<_> = authority
@@ -109,8 +111,8 @@ async fn test_authority() {
     assert_eq!(
         *lookup.first().unwrap(),
         Record::from_rdata(
-            authority.origin().clone().into(),
-            86400,
+            authority.origin().clone(),
+            86400.into(),
             RData::NS(NS(Name::parse("a.iana-servers.net.", None).unwrap())),
         )
         .set_dns_class(DNSClass::IN)
@@ -119,8 +121,8 @@ async fn test_authority() {
     assert_eq!(
         *lookup.last().unwrap(),
         Record::from_rdata(
-            authority.origin().clone().into(),
-            86400,
+            authority.origin().clone(),
+            86400.into(),
             RData::NS(NS(Name::parse("b.iana-servers.net.", None).unwrap())),
         )
         .set_dns_class(DNSClass::IN)
@@ -136,7 +138,7 @@ async fn test_authority() {
             )
             .await
             .unwrap()
-            .was_empty()
+            .is_empty()
     );
 
     let mut lookup: Vec<_> = authority
@@ -155,8 +157,8 @@ async fn test_authority() {
     assert_eq!(
         *lookup.first().unwrap(),
         Record::from_rdata(
-            authority.origin().clone().into(),
-            60,
+            authority.origin().clone(),
+            60.into(),
             RData::TXT(TXT::new(vec![
                 "$Id: example.com 4415 2015-08-24 \
                  20:12:23Z davids $"
@@ -176,8 +178,8 @@ async fn test_authority() {
             .next()
             .unwrap(),
         Record::from_rdata(
-            authority.origin().clone().into(),
-            86400,
+            authority.origin().clone(),
+            86400.into(),
             RData::A(A::new(93, 184, 215, 14)),
         )
         .set_dns_class(DNSClass::IN)
@@ -226,17 +228,23 @@ async fn test_prerequisites() {
     // first check the initial negatives, ttl = 0, and the zone is the same
     assert_eq!(
         authority
-            .verify_prerequisites(&[Record::update0(not_in_zone.clone(), 86400, RecordType::A)
-                .set_dns_class(DNSClass::IN)
-                .clone()],)
+            .verify_prerequisites(&[Record::update0(
+                not_in_zone.clone(),
+                86400.into(),
+                RecordType::A
+            )
+            .set_dns_class(DNSClass::IN)
+            .clone()],)
+            .instrument(tracing::debug_span!("bad ttl"))
             .await,
         Err(ResponseCode::FormErr)
     );
     assert_eq!(
         authority
-            .verify_prerequisites(&[Record::update0(not_zone, 0, RecordType::A)
+            .verify_prerequisites(&[Record::update0(not_zone, TimeToLive::ZERO, RecordType::A)
                 .set_dns_class(DNSClass::IN)
                 .clone()],)
+            .instrument(tracing::debug_span!("not zone"))
             .await,
         Err(ResponseCode::NotZone)
     );
@@ -245,12 +253,13 @@ async fn test_prerequisites() {
     assert!(
         authority
             .verify_prerequisites(&[Record::update0(
-                authority.origin().clone().into(),
-                0,
+                authority.origin().clone(),
+                TimeToLive::ZERO,
                 RecordType::ANY,
             )
             .set_dns_class(DNSClass::ANY)
             .clone()])
+            .instrument(tracing::debug_span!("any in-use"))
             .await
             .is_ok()
     );
@@ -258,33 +267,41 @@ async fn test_prerequisites() {
         authority
             .verify_prerequisites(&[Record::from_rdata(
                 not_in_zone.clone(),
-                0,
+                TimeToLive::ZERO,
                 RData::Update0(RecordType::ANY)
             )
             .set_dns_class(DNSClass::ANY)
             .clone()],)
+            .instrument(tracing::debug_span!("nxdomain"))
             .await,
-        Err(ResponseCode::NXDomain)
+        Err(ResponseCode::NXDomain),
+        "Domain {not_in_zone:?} should not exist in {authority:?}"
     );
 
     // *   ANY      rrset    empty    RRset exists (value independent)
     assert!(
         authority
             .verify_prerequisites(&[Record::update0(
-                authority.origin().clone().into(),
-                0,
+                authority.origin().clone(),
+                TimeToLive::ZERO,
                 RecordType::A,
             )
             .set_dns_class(DNSClass::ANY)
             .clone()])
+            .instrument(tracing::debug_span!("any rrset exists"))
             .await
             .is_ok()
     );
     assert_eq!(
         authority
-            .verify_prerequisites(&[Record::update0(not_in_zone.clone(), 0, RecordType::A,)
-                .set_dns_class(DNSClass::ANY)
-                .clone()],)
+            .verify_prerequisites(&[Record::update0(
+                not_in_zone.clone(),
+                TimeToLive::ZERO,
+                RecordType::A,
+            )
+            .set_dns_class(DNSClass::ANY)
+            .clone()],)
+            .instrument(tracing::debug_span!("any missing rrset"))
             .await,
         Err(ResponseCode::NXRRSet)
     );
@@ -292,17 +309,21 @@ async fn test_prerequisites() {
     // *   NONE     ANY      empty    Name is not in use
     assert!(
         authority
-            .verify_prerequisites(&[Record::update0(not_in_zone.clone(), 0, RecordType::ANY,)
-                .set_dns_class(DNSClass::NONE)
-                .clone()])
+            .verify_prerequisites(&[Record::update0(
+                not_in_zone.clone(),
+                TimeToLive::ZERO,
+                RecordType::ANY,
+            )
+            .set_dns_class(DNSClass::NONE)
+            .clone()])
             .await
             .is_ok()
     );
     assert_eq!(
         authority
             .verify_prerequisites(&[Record::update0(
-                authority.origin().clone().into(),
-                0,
+                authority.origin().clone(),
+                TimeToLive::ZERO,
                 RecordType::ANY,
             )
             .set_dns_class(DNSClass::NONE)
@@ -314,17 +335,21 @@ async fn test_prerequisites() {
     // *   NONE     rrset    empty    RRset does not exist
     assert!(
         authority
-            .verify_prerequisites(&[Record::update0(not_in_zone.clone(), 0, RecordType::A,)
-                .set_dns_class(DNSClass::NONE)
-                .clone()])
+            .verify_prerequisites(&[Record::update0(
+                not_in_zone.clone(),
+                TimeToLive::ZERO,
+                RecordType::A,
+            )
+            .set_dns_class(DNSClass::NONE)
+            .clone()])
             .await
             .is_ok()
     );
     assert_eq!(
         authority
             .verify_prerequisites(&[Record::update0(
-                authority.origin().clone().into(),
-                0,
+                authority.origin().clone(),
+                TimeToLive::ZERO,
                 RecordType::A,
             )
             .set_dns_class(DNSClass::NONE)
@@ -337,8 +362,8 @@ async fn test_prerequisites() {
     assert!(
         authority
             .verify_prerequisites(&[Record::from_rdata(
-                authority.origin().clone().into(),
-                0,
+                authority.origin().clone(),
+                TimeToLive::ZERO,
                 RData::A(A::new(93, 184, 215, 14)),
             )
             .set_dns_class(DNSClass::IN)
@@ -350,8 +375,8 @@ async fn test_prerequisites() {
     assert_eq!(
         authority
             .verify_prerequisites(&[Record::from_rdata(
-                authority.origin().clone().into(),
-                0,
+                authority.origin().clone(),
+                TimeToLive::ZERO,
                 RData::A(A::new(93, 184, 215, 14)),
             )
             .set_dns_class(DNSClass::CH)
@@ -364,7 +389,7 @@ async fn test_prerequisites() {
         authority
             .verify_prerequisites(&[Record::from_rdata(
                 not_in_zone,
-                0,
+                TimeToLive::ZERO,
                 RData::A(A::new(93, 184, 216, 24)),
             )
             .set_dns_class(DNSClass::IN)
@@ -376,8 +401,8 @@ async fn test_prerequisites() {
     assert_eq!(
         authority
             .verify_prerequisites(&[Record::from_rdata(
-                authority.origin().clone().into(),
-                0,
+                authority.origin().clone(),
+                TimeToLive::ZERO,
                 RData::A(A::new(93, 184, 216, 24)),
             )
             .set_dns_class(DNSClass::IN)
@@ -398,36 +423,44 @@ async fn test_pre_scan() {
 
     assert_eq!(
         authority
-            .pre_scan(&[
-                Record::from_rdata(not_zone, 86400, RData::A(A::new(93, 184, 216, 24)),)
-                    .set_dns_class(DNSClass::IN)
-                    .clone()
-            ],)
+            .pre_scan(&[Record::from_rdata(
+                not_zone,
+                86400.into(),
+                RData::A(A::new(93, 184, 216, 24)),
+            )
+            .set_dns_class(DNSClass::IN)
+            .clone()],)
             .await,
         Err(ResponseCode::NotZone)
     );
 
     assert_eq!(
         authority
-            .pre_scan(&[Record::update0(up_name.clone(), 86400, RecordType::ANY,)
-                .set_dns_class(DNSClass::IN)
-                .clone()],)
+            .pre_scan(&[
+                Record::update0(up_name.clone(), 86400.into(), RecordType::ANY,)
+                    .set_dns_class(DNSClass::IN)
+                    .clone()
+            ],)
             .await,
         Err(ResponseCode::FormErr)
     );
     assert_eq!(
         authority
-            .pre_scan(&[Record::update0(up_name.clone(), 86400, RecordType::AXFR,)
-                .set_dns_class(DNSClass::IN)
-                .clone()],)
+            .pre_scan(&[
+                Record::update0(up_name.clone(), 86400.into(), RecordType::AXFR,)
+                    .set_dns_class(DNSClass::IN)
+                    .clone()
+            ],)
             .await,
         Err(ResponseCode::FormErr)
     );
     assert_eq!(
         authority
-            .pre_scan(&[Record::update0(up_name.clone(), 86400, RecordType::IXFR,)
-                .set_dns_class(DNSClass::IN)
-                .clone()],)
+            .pre_scan(&[
+                Record::update0(up_name.clone(), 86400.into(), RecordType::IXFR,)
+                    .set_dns_class(DNSClass::IN)
+                    .clone()
+            ],)
             .await,
         Err(ResponseCode::FormErr)
     );
@@ -435,7 +468,7 @@ async fn test_pre_scan() {
         authority
             .pre_scan(&[Record::from_rdata(
                 up_name.clone(),
-                86400,
+                86400.into(),
                 RData::A(A::new(93, 184, 216, 24)),
             )
             .set_dns_class(DNSClass::IN)
@@ -445,9 +478,11 @@ async fn test_pre_scan() {
     );
     assert!(
         authority
-            .pre_scan(&[Record::update0(up_name.clone(), 86400, RecordType::A,)
-                .set_dns_class(DNSClass::IN)
-                .clone()])
+            .pre_scan(&[
+                Record::update0(up_name.clone(), 86400.into(), RecordType::A,)
+                    .set_dns_class(DNSClass::IN)
+                    .clone()
+            ])
             .await
             .is_ok()
     );
@@ -456,7 +491,19 @@ async fn test_pre_scan() {
         authority
             .pre_scan(&[Record::from_rdata(
                 up_name.clone(),
-                86400,
+                86400.into(),
+                RData::A(A::new(93, 184, 216, 24)),
+            )
+            .set_dns_class(DNSClass::ANY)
+            .clone()],)
+            .await,
+        Err(ResponseCode::FormErr)
+    );
+    assert_eq!(
+        authority
+            .pre_scan(&[Record::from_rdata(
+                up_name.clone(),
+                TimeToLive::ZERO,
                 RData::A(A::new(93, 184, 216, 24)),
             )
             .set_dns_class(DNSClass::ANY)
@@ -467,7 +514,7 @@ async fn test_pre_scan() {
     assert_eq!(
         authority
             .pre_scan(&[
-                Record::from_rdata(up_name.clone(), 0, RData::A(A::new(93, 184, 216, 24)),)
+                Record::update0(up_name.clone(), TimeToLive::ZERO, RecordType::AXFR,)
                     .set_dns_class(DNSClass::ANY)
                     .clone()
             ],)
@@ -476,82 +523,29 @@ async fn test_pre_scan() {
     );
     assert_eq!(
         authority
-            .pre_scan(&[Record::update0(up_name.clone(), 0, RecordType::AXFR,)
-                .set_dns_class(DNSClass::ANY)
-                .clone()],)
-            .await,
-        Err(ResponseCode::FormErr)
-    );
-    assert_eq!(
-        authority
-            .pre_scan(&[Record::update0(up_name.clone(), 0, RecordType::IXFR,)
-                .set_dns_class(DNSClass::ANY)
-                .clone()],)
+            .pre_scan(&[
+                Record::update0(up_name.clone(), TimeToLive::ZERO, RecordType::IXFR,)
+                    .set_dns_class(DNSClass::ANY)
+                    .clone()
+            ],)
             .await,
         Err(ResponseCode::FormErr)
     );
     assert!(
         authority
-            .pre_scan(&[Record::update0(up_name.clone(), 0, RecordType::ANY,)
-                .set_dns_class(DNSClass::ANY)
-                .clone()])
-            .await
-            .is_ok()
-    );
-    assert!(
-        authority
-            .pre_scan(&[Record::update0(up_name.clone(), 0, RecordType::A,)
-                .set_dns_class(DNSClass::ANY)
-                .clone()])
-            .await
-            .is_ok()
-    );
-
-    assert_eq!(
-        authority
-            .pre_scan(&[Record::update0(up_name.clone(), 86400, RecordType::A,)
-                .set_dns_class(DNSClass::NONE)
-                .clone()],)
-            .await,
-        Err(ResponseCode::FormErr)
-    );
-    assert_eq!(
-        authority
-            .pre_scan(&[Record::update0(up_name.clone(), 0, RecordType::ANY,)
-                .set_dns_class(DNSClass::NONE)
-                .clone()],)
-            .await,
-        Err(ResponseCode::FormErr)
-    );
-    assert_eq!(
-        authority
-            .pre_scan(&[Record::update0(up_name.clone(), 0, RecordType::AXFR,)
-                .set_dns_class(DNSClass::NONE)
-                .clone()],)
-            .await,
-        Err(ResponseCode::FormErr)
-    );
-    assert_eq!(
-        authority
-            .pre_scan(&[Record::update0(up_name.clone(), 0, RecordType::IXFR,)
-                .set_dns_class(DNSClass::NONE)
-                .clone()],)
-            .await,
-        Err(ResponseCode::FormErr)
-    );
-    assert!(
-        authority
-            .pre_scan(&[Record::update0(up_name.clone(), 0, RecordType::A,)
-                .set_dns_class(DNSClass::NONE)
-                .clone()])
+            .pre_scan(&[
+                Record::update0(up_name.clone(), TimeToLive::ZERO, RecordType::ANY,)
+                    .set_dns_class(DNSClass::ANY)
+                    .clone()
+            ])
             .await
             .is_ok()
     );
     assert!(
         authority
             .pre_scan(&[
-                Record::from_rdata(up_name.clone(), 0, RData::A(A::new(93, 184, 216, 24)),)
-                    .set_dns_class(DNSClass::NONE)
+                Record::update0(up_name.clone(), TimeToLive::ZERO, RecordType::A,)
+                    .set_dns_class(DNSClass::ANY)
                     .clone()
             ])
             .await
@@ -560,7 +554,70 @@ async fn test_pre_scan() {
 
     assert_eq!(
         authority
-            .pre_scan(&[Record::update0(up_name, 86400, RecordType::A,)
+            .pre_scan(&[
+                Record::update0(up_name.clone(), 86400.into(), RecordType::A,)
+                    .set_dns_class(DNSClass::NONE)
+                    .clone()
+            ],)
+            .await,
+        Err(ResponseCode::FormErr)
+    );
+    assert_eq!(
+        authority
+            .pre_scan(&[
+                Record::update0(up_name.clone(), TimeToLive::ZERO, RecordType::ANY,)
+                    .set_dns_class(DNSClass::NONE)
+                    .clone()
+            ],)
+            .await,
+        Err(ResponseCode::FormErr)
+    );
+    assert_eq!(
+        authority
+            .pre_scan(&[
+                Record::update0(up_name.clone(), TimeToLive::ZERO, RecordType::AXFR,)
+                    .set_dns_class(DNSClass::NONE)
+                    .clone()
+            ],)
+            .await,
+        Err(ResponseCode::FormErr)
+    );
+    assert_eq!(
+        authority
+            .pre_scan(&[
+                Record::update0(up_name.clone(), TimeToLive::ZERO, RecordType::IXFR,)
+                    .set_dns_class(DNSClass::NONE)
+                    .clone()
+            ],)
+            .await,
+        Err(ResponseCode::FormErr)
+    );
+    assert!(
+        authority
+            .pre_scan(&[
+                Record::update0(up_name.clone(), TimeToLive::ZERO, RecordType::A,)
+                    .set_dns_class(DNSClass::NONE)
+                    .clone()
+            ])
+            .await
+            .is_ok()
+    );
+    assert!(
+        authority
+            .pre_scan(&[Record::from_rdata(
+                up_name.clone(),
+                TimeToLive::ZERO,
+                RData::A(A::new(93, 184, 216, 24)),
+            )
+            .set_dns_class(DNSClass::NONE)
+            .clone()])
+            .await
+            .is_ok()
+    );
+
+    assert_eq!(
+        authority
+            .pre_scan(&[Record::update0(up_name, 86400.into(), RecordType::A,)
                 .set_dns_class(DNSClass::CH)
                 .clone()],)
             .await,
@@ -581,17 +638,21 @@ async fn test_update() {
     let mut original_vec: Vec<Record> = vec![
         Record::from_rdata(
             www_name.clone(),
-            86400,
+            86400.into(),
             RData::TXT(TXT::new(vec!["v=spf1 -all".to_string()])),
         )
         .set_dns_class(DNSClass::IN)
         .clone(),
-        Record::from_rdata(www_name.clone(), 86400, RData::A(A::new(93, 184, 215, 14)))
-            .set_dns_class(DNSClass::IN)
-            .clone(),
         Record::from_rdata(
             www_name.clone(),
-            86400,
+            86400.into(),
+            RData::A(A::new(93, 184, 215, 14)),
+        )
+        .set_dns_class(DNSClass::IN)
+        .clone(),
+        Record::from_rdata(
+            www_name.clone(),
+            86400.into(),
             RData::AAAA(AAAA::new(
                 0x2606, 0x2800, 0x21f, 0xcb07, 0x6820, 0x80da, 0xaf6b, 0x8b2c,
             )),
@@ -606,7 +667,7 @@ async fn test_update() {
         // assert that the correct set of records is there.
         let mut www_rrset: Vec<Record> = authority
             .lookup(
-                &www_name.clone().into(),
+                &www_name.clone(),
                 RecordType::ANY,
                 LookupOptions::default(),
             )
@@ -623,24 +684,25 @@ async fn test_update() {
         assert!(
             authority
                 .lookup(
-                    &new_name.clone().into(),
+                    &new_name.clone(),
                     RecordType::ANY,
                     LookupOptions::default()
                 )
                 .await
                 .unwrap()
-                .was_empty()
+                .is_empty()
         );
     }
 
     //
     //  zone     rrset    rr       Add to an RRset
-    let add_record =
-        &[
-            Record::from_rdata(new_name.clone(), 86400, RData::A(A::new(93, 184, 216, 24)))
-                .set_dns_class(DNSClass::IN)
-                .clone(),
-        ];
+    let add_record = &[Record::from_rdata(
+        new_name.clone(),
+        86400.into(),
+        RData::A(A::new(93, 184, 216, 24)),
+    )
+    .set_dns_class(DNSClass::IN)
+    .clone()];
     assert!(
         authority
             .update_records(add_record, true,)
@@ -650,7 +712,7 @@ async fn test_update() {
     assert_eq!(
         authority
             .lookup(
-                &new_name.clone().into(),
+                &new_name.clone(),
                 RecordType::ANY,
                 LookupOptions::default()
             )
@@ -662,12 +724,13 @@ async fn test_update() {
     );
     assert_eq!(serial + 1, authority.serial());
 
-    let add_www_record =
-        &[
-            Record::from_rdata(www_name.clone(), 86400, RData::A(A::new(10, 0, 0, 1)))
-                .set_dns_class(DNSClass::IN)
-                .clone(),
-        ];
+    let add_www_record = &[Record::from_rdata(
+        www_name.clone(),
+        86400.into(),
+        RData::A(A::new(10, 0, 0, 1)),
+    )
+    .set_dns_class(DNSClass::IN)
+    .clone()];
     assert!(
         authority
             .update_records(add_www_record, true,)
@@ -679,7 +742,7 @@ async fn test_update() {
     {
         let mut www_rrset: Vec<_> = authority
             .lookup(
-                &www_name.clone().into(),
+                &www_name.clone(),
                 RecordType::ANY,
                 LookupOptions::default(),
             )
@@ -698,12 +761,13 @@ async fn test_update() {
 
     //
     //  NONE     rrset    rr       Delete an RR from an RRset
-    let del_record =
-        &[
-            Record::from_rdata(new_name.clone(), 86400, RData::A(A::new(93, 184, 216, 24)))
-                .set_dns_class(DNSClass::NONE)
-                .clone(),
-        ];
+    let del_record = &[Record::from_rdata(
+        new_name.clone(),
+        86400.into(),
+        RData::A(A::new(93, 184, 216, 24)),
+    )
+    .set_dns_class(DNSClass::NONE)
+    .clone()];
     assert!(
         authority
             .update_records(del_record, true,)
@@ -713,20 +777,22 @@ async fn test_update() {
     assert_eq!(serial + 3, authority.serial());
     {
         let lookup = authority
-            .lookup(&new_name.into(), RecordType::ANY, LookupOptions::default())
+            .lookup(&new_name, RecordType::ANY, LookupOptions::default())
             .await
             .unwrap();
 
         println!("after delete of specific record: {lookup:?}");
-        assert!(lookup.was_empty());
+        assert!(lookup.is_empty());
     }
 
     // remove one from www
-    let del_record = &[
-        Record::from_rdata(www_name.clone(), 86400, RData::A(A::new(10, 0, 0, 1)))
-            .set_dns_class(DNSClass::NONE)
-            .clone(),
-    ];
+    let del_record = &[Record::from_rdata(
+        www_name.clone(),
+        86400.into(),
+        RData::A(A::new(10, 0, 0, 1)),
+    )
+    .set_dns_class(DNSClass::NONE)
+    .clone()];
     assert!(
         authority
             .update_records(del_record, true,)
@@ -737,7 +803,7 @@ async fn test_update() {
     {
         let mut www_rrset: Vec<_> = authority
             .lookup(
-                &www_name.clone().into(),
+                &www_name.clone(),
                 RecordType::ANY,
                 LookupOptions::default(),
             )
@@ -753,9 +819,11 @@ async fn test_update() {
 
     //
     //  ANY      rrset    empty    Delete an RRset
-    let del_record = &[Record::update0(www_name.clone(), 86400, RecordType::A)
-        .set_dns_class(DNSClass::ANY)
-        .clone()];
+    let del_record = &[
+        Record::update0(www_name.clone(), 86400.into(), RecordType::A)
+            .set_dns_class(DNSClass::ANY)
+            .clone(),
+    ];
     assert!(
         authority
             .update_records(del_record, true,)
@@ -766,14 +834,14 @@ async fn test_update() {
     let mut removed_a_vec: Vec<_> = vec![
         Record::from_rdata(
             www_name.clone(),
-            86400,
+            86400.into(),
             RData::TXT(TXT::new(vec!["v=spf1 -all".to_string()])),
         )
         .set_dns_class(DNSClass::IN)
         .clone(),
         Record::from_rdata(
             www_name.clone(),
-            86400,
+            86400.into(),
             RData::AAAA(AAAA::new(
                 0x2606, 0x2800, 0x21f, 0xcb07, 0x6820, 0x80da, 0xaf6b, 0x8b2c,
             )),
@@ -786,7 +854,7 @@ async fn test_update() {
     {
         let mut www_rrset: Vec<Record> = authority
             .lookup(
-                &www_name.clone().into(),
+                &www_name.clone(),
                 RecordType::ANY,
                 LookupOptions::default(),
             )
@@ -803,9 +871,11 @@ async fn test_update() {
     //
     //  ANY      ANY      empty    Delete all RRsets from a name
     println!("deleting all records");
-    let del_record = &[Record::update0(www_name.clone(), 86400, RecordType::ANY)
-        .set_dns_class(DNSClass::ANY)
-        .clone()];
+    let del_record = &[
+        Record::update0(www_name.clone(), 86400.into(), RecordType::ANY)
+            .set_dns_class(DNSClass::ANY)
+            .clone(),
+    ];
 
     assert!(
         authority
@@ -816,10 +886,10 @@ async fn test_update() {
 
     assert!(
         authority
-            .lookup(&www_name.into(), RecordType::ANY, LookupOptions::default())
+            .lookup(&www_name, RecordType::ANY, LookupOptions::default())
             .await
             .unwrap()
-            .was_empty()
+            .is_empty()
     );
 
     assert_eq!(serial + 6, authority.serial());
@@ -906,7 +976,7 @@ async fn test_get_nsec() {
     subscribe();
     let name = Name::from_str("zzz.example.com.").unwrap();
     let authority = create_secure_example();
-    let lower_name = Name::from(name.clone());
+    let lower_name = name.clone();
 
     let results = authority
         .get_nsec_records(&lower_name, LookupOptions::for_dnssec(true))
@@ -934,12 +1004,19 @@ async fn test_journal() {
 
     let new_name = Name::from_str("new.example.com.").unwrap();
     let delete_name = Name::from_str("www.example.com.").unwrap();
-    let new_record =
-        Record::from_rdata(new_name.clone(), 0, RData::A(A::new(10, 11, 12, 13))).clone();
-    let delete_record =
-        Record::from_rdata(delete_name.clone(), 0, RData::A(A::new(93, 184, 215, 14)))
-            .set_dns_class(DNSClass::NONE)
-            .clone();
+    let new_record = Record::from_rdata(
+        new_name.clone(),
+        TimeToLive::ZERO,
+        RData::A(A::new(10, 11, 12, 13)),
+    )
+    .clone();
+    let delete_record = Record::from_rdata(
+        delete_name.clone(),
+        TimeToLive::ZERO,
+        RData::A(A::new(93, 184, 215, 14)),
+    )
+    .set_dns_class(DNSClass::NONE)
+    .clone();
     authority
         .update_records(&[new_record.clone(), delete_record], true)
         .await
@@ -948,7 +1025,7 @@ async fn test_journal() {
     // assert that the correct set of records is there.
     let new_rrset: Vec<Record> = authority
         .lookup(
-            &new_name.clone().into(),
+            &new_name.clone(),
             RecordType::A,
             LookupOptions::default(),
         )
@@ -958,13 +1035,13 @@ async fn test_journal() {
         .cloned()
         .collect();
     assert!(new_rrset.iter().all(|r| *r == new_record));
-    let lower_delete_name = Name::from(delete_name);
+    let lower_delete_name = delete_name;
 
     let delete_rrset = authority
         .lookup(&lower_delete_name, RecordType::A, LookupOptions::default())
         .await
         .unwrap();
-    assert!(delete_rrset.was_empty());
+    assert!(delete_rrset.is_empty());
 
     let mut recovered_authority = catalog
         .find(authority.origin())
@@ -980,7 +1057,7 @@ async fn test_journal() {
 
     // assert that the correct set of records is there.
     let new_rrset: Vec<Record> = recovered_authority
-        .lookup(&new_name.into(), RecordType::A, LookupOptions::default())
+        .lookup(&new_name, RecordType::A, LookupOptions::default())
         .await
         .unwrap()
         .iter()
@@ -992,7 +1069,7 @@ async fn test_journal() {
         .lookup(&lower_delete_name, RecordType::A, LookupOptions::default())
         .await
         .unwrap();
-    assert!(delete_rrset.was_empty());
+    assert!(delete_rrset.is_empty());
 }
 
 #[tokio::test]
@@ -1052,8 +1129,8 @@ async fn test_recovery() {
             .get(rr_key)
             .unwrap_or_else(|| panic!("key doesn't exist: {rr_key:?}"));
         rr_set
-            .records()
-            .zip(other_rr_set.records())
+            .records(false)
+            .zip(other_rr_set.records(false))
             .all(|(record, other_record)| {
                 record.ttl() == other_record.ttl() && record.data() == other_record.data()
             })
@@ -1064,8 +1141,8 @@ async fn test_recovery() {
             .get(rr_key)
             .unwrap_or_else(|| panic!("key doesn't exist: {rr_key:?}"));
         rr_set
-            .records()
-            .zip(other_rr_set.records())
+            .records(false)
+            .zip(other_rr_set.records(false))
             .all(|(record, other_record)| {
                 record.ttl() == other_record.ttl() && record.data() == other_record.data()
             })

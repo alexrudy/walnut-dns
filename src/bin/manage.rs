@@ -349,6 +349,7 @@ fn parse_protocol_matches(matches: &clap::ArgMatches) -> Vec<ConnectionConfig> {
     connections
 }
 
+#[allow(clippy::too_many_arguments)]
 fn notify_servers(
     db: &Path,
     origin: &Name,
@@ -368,7 +369,7 @@ fn notify_servers(
         let connection = rusqlite::Connection::open(db)?;
         let catalog = SqliteStore::new(connection.into()).await?;
 
-        let zones = catalog.find(&origin.clone().into()).await?;
+        let zones = catalog.find(&origin.clone()).await?;
 
         let Some(zone) = zones.and_then(|zones| zones.into_iter().find(|z| *z.name() == *origin))
         else {
@@ -436,7 +437,7 @@ fn show_zone_from_db(db: &Path, zone: &Name) -> Result<(), Box<dyn std::error::E
         let connection = rusqlite::Connection::open(db)?;
         let catalog = SqliteStore::new(connection.into()).await?;
 
-        let zones = catalog.find(&zone.clone().into()).await?;
+        let zones = catalog.find(&zone.clone()).await?;
 
         let Some(zone) = zones.and_then(|zones| zones.into_iter().find(|z| *z.name() == *zone))
         else {
@@ -445,7 +446,7 @@ fn show_zone_from_db(db: &Path, zone: &Name) -> Result<(), Box<dyn std::error::E
 
         println!("Zone: {}", zone.origin());
         for rrset in Records::records(&zone) {
-            for record in rrset.records() {
+            for record in rrset.records(false) {
                 println!(
                     "{} {} {}: {}",
                     record.record_type(),

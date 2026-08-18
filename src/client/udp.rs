@@ -12,7 +12,10 @@ use chateau::{
     client::{
         conn::{
             Connection,
-            protocol::framed::{FramedConnection, ResponseFuture},
+            protocol::{
+                Multiplexed,
+                framed::{FramedConnection, ResponseFuture},
+            },
         },
         pool::{PoolableConnection, PoolableStream},
     },
@@ -61,7 +64,7 @@ impl tower::Service<&Message> for DnsUdpTransport {
 
     fn call(&mut self, _: &Message) -> Self::Future {
         let bind = self.bind.clone();
-        let addr = self.address.clone();
+        let addr = self.address;
         Box::pin(async move {
             let mut inner = bind.lock().await;
             let socket = match &*inner {
@@ -137,6 +140,16 @@ impl tower::Service<DnsUdpAddressed> for DnsUdpProtocol {
             connection,
             destination: req.destination,
         }))
+    }
+}
+
+impl<IO> Multiplexed<IO> for DnsUdpProtocol {
+    fn multiplex(&self) -> bool {
+        true
+    }
+
+    fn multiplex_ready(&self, _: &IO) -> bool {
+        true
     }
 }
 

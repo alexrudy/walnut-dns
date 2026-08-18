@@ -343,7 +343,7 @@ impl ZoneInfo for Zone {
             .records
             .get(&RrKey::new(self.name().into(), RecordType::SOA))?;
 
-        rrset.records().next()
+        rrset.records(false).next()
     }
 
     /// The serial number of this zone, from the SOA record.

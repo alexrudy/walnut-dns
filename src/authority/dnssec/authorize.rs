@@ -3,10 +3,15 @@ use hickory_proto::{
     op::ResponseCode,
     rr::RecordType,
 };
-use hickory_server::authority::{LookupControlFlow, LookupOptions, UpdateResult};
+use hickory_server::authority::UpdateResult;
 use tracing::{info, warn};
 
-use crate::{Lookup, messages::Message};
+use crate::{
+    Lookup,
+    authority::lookup::{LookupControlFlow, LookupOptions},
+    messages::Message,
+    rr::Record,
+};
 
 use super::DnsSecZone;
 
@@ -86,7 +91,7 @@ where
         }
 
         // verify sig0, currently the only authorization that is accepted.
-        let sig0s: &[hickory_proto::rr::Record] = update_message.sig0();
+        let sig0s: &[Record] = update_message.sig0();
         debug!("authorizing with: {:?}", sig0s);
         if !sig0s.is_empty() {
             let mut found_key = false;

@@ -8,6 +8,7 @@ use walnut_dns::SqliteStore;
 use walnut_dns::authority::Records as _;
 use walnut_dns::messages::server::Incoming;
 use walnut_dns::messages::{Message, Protocol};
+use walnut_dns::rr::Record;
 use walnut_dns::{Catalog, rr::ZoneType};
 use walnut_dns::{ZoneInfo as _, rr::Zone};
 
@@ -123,13 +124,13 @@ async fn test_catalog_lookup() {
     let test_origin = test.origin().clone();
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
-    catalog.insert(example.into()).await.unwrap();
-    catalog.insert(test.into()).await.unwrap();
+    catalog.insert(example).await.unwrap();
+    catalog.insert(test).await.unwrap();
 
     let mut question: Message = Message::new();
 
     let mut query: Query = Query::new();
-    query.set_name(origin.into());
+    query.set_name(origin);
 
     question.add_query(query);
 
@@ -159,7 +160,7 @@ async fn test_catalog_lookup() {
     // other zone
     let mut question: Message = Message::new();
     let mut query: Query = Query::new();
-    query.set_name(test_origin.into());
+    query.set_name(test_origin);
 
     question.add_query(query);
 
@@ -193,13 +194,13 @@ async fn test_catalog_lookup_soa() {
     let origin = example.origin().clone();
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
-    catalog.insert(example.into()).await.unwrap();
-    catalog.insert(test.into()).await.unwrap();
+    catalog.insert(example).await.unwrap();
+    catalog.insert(test).await.unwrap();
 
     let mut question: Message = Message::new();
 
     let mut query: Query = Query::new();
-    query.set_name(origin.into());
+    query.set_name(origin);
     query.set_query_type(RecordType::SOA);
 
     question.add_query(query);
@@ -257,7 +258,7 @@ async fn test_catalog_nx_soa() {
     let example = create_example();
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
-    catalog.insert(example.into()).await.unwrap();
+    catalog.insert(example).await.unwrap();
 
     let mut question: Message = Message::new();
 
@@ -302,7 +303,7 @@ async fn test_non_authoritive_nx_refused() {
     let example = create_example();
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
-    catalog.insert(example.into()).await.unwrap();
+    catalog.insert(example).await.unwrap();
 
     let mut question: Message = Message::new();
 
@@ -338,8 +339,8 @@ async fn test_axfr() {
 
     let origin = test.origin().clone();
     let soa = Record::from_rdata(
-        origin.clone().into(),
-        3600,
+        origin.clone(),
+        3600.into(),
         RData::SOA(SOA::new(
             Name::parse("sns.dns.icann.org.", None).unwrap(),
             Name::parse("noc.dns.icann.org.", None).unwrap(),
@@ -354,10 +355,10 @@ async fn test_axfr() {
     .clone();
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
-    catalog.insert(test.into()).await.unwrap();
+    catalog.insert(test).await.unwrap();
 
     let mut query: Query = Query::new();
-    query.set_name(origin.clone().into());
+    query.set_name(origin.clone());
     query.set_query_type(RecordType::AXFR);
 
     let mut question: Message = Message::new();
@@ -380,8 +381,8 @@ async fn test_axfr() {
     let www_name: Name = Name::parse("www.test.com.", None).unwrap();
     let mut expected_set = vec![
         Record::from_rdata(
-            origin.clone().into(),
-            3600,
+            origin.clone(),
+            3600.into(),
             RData::SOA(SOA::new(
                 Name::parse("sns.dns.icann.org.", None).unwrap(),
                 Name::parse("noc.dns.icann.org.", None).unwrap(),
@@ -395,41 +396,45 @@ async fn test_axfr() {
         .set_dns_class(DNSClass::IN)
         .clone(),
         Record::from_rdata(
-            origin.clone().into(),
-            86400,
+            origin.clone(),
+            86400.into(),
             RData::NS(NS(Name::parse("a.iana-servers.net.", None).unwrap())),
         )
         .set_dns_class(DNSClass::IN)
         .clone(),
         Record::from_rdata(
-            origin.clone().into(),
-            86400,
+            origin.clone(),
+            86400.into(),
             RData::NS(NS(Name::parse("b.iana-servers.net.", None).unwrap())),
         )
         .set_dns_class(DNSClass::IN)
         .clone(),
         Record::from_rdata(
-            origin.clone().into(),
-            86400,
+            origin.clone(),
+            86400.into(),
             RData::A(A::new(94, 184, 216, 34)),
         )
         .set_dns_class(DNSClass::IN)
         .clone(),
         Record::from_rdata(
-            origin.clone().into(),
-            86400,
+            origin.clone(),
+            86400.into(),
             RData::AAAA(AAAA::new(
                 0x2606, 0x2800, 0x21f, 0xcb07, 0x6820, 0x80da, 0xaf6b, 0x8b2c,
             )),
         )
         .set_dns_class(DNSClass::IN)
         .clone(),
-        Record::from_rdata(www_name.clone(), 86400, RData::A(A::new(94, 184, 216, 34)))
-            .set_dns_class(DNSClass::IN)
-            .clone(),
+        Record::from_rdata(
+            www_name.clone(),
+            86400.into(),
+            RData::A(A::new(94, 184, 216, 34)),
+        )
+        .set_dns_class(DNSClass::IN)
+        .clone(),
         Record::from_rdata(
             www_name,
-            86400,
+            86400.into(),
             RData::AAAA(AAAA::new(
                 0x2606, 0x2800, 0x21f, 0xcb07, 0x6820, 0x80da, 0xaf6b, 0x8b2c,
             )),
@@ -437,8 +442,8 @@ async fn test_axfr() {
         .set_dns_class(DNSClass::IN)
         .clone(),
         Record::from_rdata(
-            origin.into(),
-            3600,
+            origin,
+            3600.into(),
             RData::SOA(SOA::new(
                 Name::parse("sns.dns.icann.org.", None).unwrap(),
                 Name::parse("noc.dns.icann.org.", None).unwrap(),
@@ -468,10 +473,10 @@ async fn test_axfr_refused() {
     let origin = test.origin().clone();
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
-    catalog.insert(test.into()).await.unwrap();
+    catalog.insert(test).await.unwrap();
 
     let mut query: Query = Query::new();
-    query.set_name(origin.into());
+    query.set_name(origin);
     query.set_query_type(RecordType::AXFR);
 
     let mut question: Message = Message::new();
@@ -504,7 +509,7 @@ async fn test_cname_additionals() {
     let example = create_example();
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
-    catalog.insert(example.into()).await.unwrap();
+    catalog.insert(example).await.unwrap();
 
     let mut question: Message = Message::new();
 
@@ -548,7 +553,7 @@ async fn test_multiple_cname_additionals() {
     let example = create_example();
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
-    catalog.insert(example.into()).await.unwrap();
+    catalog.insert(example).await.unwrap();
 
     let mut question: Message = Message::new();
 

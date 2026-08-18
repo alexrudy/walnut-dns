@@ -201,7 +201,7 @@ impl Client {
 
         // add the notify message, see https://tools.ietf.org/html/rfc1996, section 3.7
         if let Some(rrset) = rrset {
-            message.add_answers(rrset.into().into_hickory_iter());
+            message.add_answers(rrset.into());
         }
 
         let request = DnsRequest::new(message, options);

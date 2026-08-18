@@ -85,20 +85,24 @@ where
             .header(http::header::CONTENT_TYPE, MIME_APPLICATION_DNS)
             .header(http::header::ACCEPT, MIME_APPLICATION_DNS)
             .uri(self.uri.clone())
-            .version(self.version);
+            .version(self.version)
+            .method(self.method.clone());
 
         DnsOverHttpsFuture(Box::pin(async move {
             let mut buf = BytesMut::with_capacity(512);
 
-            let mut msg: Message = req.into();
+            let mut msg: Message = req;
             msg.set_id(0);
 
             codec.encode(msg, &mut buf)?;
 
             let req = match method {
-                http::Method::POST => builder
-                    .body(DnsBody::new(buf.freeze()))
-                    .expect("Failed to build http request"),
+                http::Method::POST => {
+                    tracing::debug!(len = buf.len(), "Sending DNS request via POST body");
+                    builder
+                        .body(DnsBody::new(buf.freeze()))
+                        .expect("Failed to build http request")
+                }
                 http::Method::GET => {
                     let mut request = builder
                         .body(DnsBody::empty())
@@ -138,7 +142,7 @@ where
             let msg = codec
                 .decode(&mut body)?
                 .expect("Entire frame is availalbe to codec");
-            Ok(Message::from(msg))
+            Ok(msg)
         }))
     }
 }

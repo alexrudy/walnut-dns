@@ -35,7 +35,7 @@ async fn upsert_one() {
     let example = example_zone("example.com.");
 
     catalog
-        .upsert(example.origin().clone(), &vec![example.into()])
+        .upsert(example.origin().clone(), &[example])
         .await
         .unwrap();
 
@@ -61,7 +61,7 @@ async fn upsert_multiple() {
     catalog
         .upsert(
             example1.origin().clone(),
-            &vec![example1.into(), example2.into()],
+            &[example1, example2],
         )
         .await
         .unwrap();
@@ -75,7 +75,7 @@ async fn upsert_multiple() {
     assert_eq!(zones.len(), 2, "Two initial zones");
 
     catalog
-        .upsert(example3.origin().clone(), &vec![example3.into()])
+        .upsert(example3.origin().clone(), &[example3])
         .await
         .unwrap();
 
@@ -99,7 +99,7 @@ async fn find_heirarchical_name() {
     catalog
         .upsert(
             example1.origin().clone(),
-            &vec![example1.into(), example2.into()],
+            &[example1, example2],
         )
         .await
         .unwrap();
@@ -124,7 +124,7 @@ async fn remove_name() {
     catalog
         .upsert(
             example1.origin().clone(),
-            &vec![example1.into(), example2.into()],
+            &[example1, example2],
         )
         .await
         .unwrap();
@@ -162,7 +162,7 @@ async fn get_insert_delete() {
     catalog
         .upsert(
             example1.origin().clone(),
-            &vec![example1.into(), example2.into()],
+            &[example1, example2],
         )
         .await
         .unwrap();

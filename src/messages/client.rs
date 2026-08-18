@@ -4,8 +4,10 @@ use std::ops::{Deref, DerefMut};
 use hickory_proto::{
     ProtoError,
     op::{Query, ResponseCode},
-    rr::{RecordType, rdata::SOA, resource::RecordRef},
+    rr::{RecordType, rdata::SOA},
 };
+
+use crate::rr::{RecordRef, TimeToLive};
 
 use super::raw::Message;
 
@@ -180,13 +182,13 @@ impl DnsResponse {
     ///   and would make sensible a default.  Values exceeding one day have
     ///   been found to be problematic.
     /// ```
-    pub fn negative_ttl(&self) -> Option<u32> {
+    pub fn negative_ttl(&self) -> Option<TimeToLive> {
         // TODO: should this ensure that the SOA zone matches the Queried Zone?
         self.name_servers()
             .iter()
             .filter_map(|record| record.data().as_soa().map(|soa| (record.ttl(), soa)))
             .next()
-            .map(|(ttl, soa)| (ttl).min(soa.minimum()))
+            .map(|(ttl, soa)| (ttl).min(soa.minimum().into()))
     }
 
     /// Does the response contain any records matching the query name and type?
@@ -615,10 +617,11 @@ impl NegativeType {
 #[cfg(test)]
 mod tests {
     use crate::messages::Message;
+    use crate::rr::Record;
     use hickory_proto::op::{Query, ResponseCode};
     use hickory_proto::rr::RData;
     use hickory_proto::rr::rdata::{A, CNAME, NS, SOA};
-    use hickory_proto::rr::{Name, Record, RecordType};
+    use hickory_proto::rr::{Name, RecordType};
 
     use super::*;
 
@@ -655,29 +658,33 @@ mod tests {
     }
 
     fn an_cname_record() -> Record {
-        Record::from_rdata(an_example(), 88640, RData::CNAME(CNAME(tripple_xx())))
+        Record::from_rdata(
+            an_example(),
+            88640.into(),
+            RData::CNAME(CNAME(tripple_xx())),
+        )
     }
 
     fn ns1_record() -> Record {
-        Record::from_rdata(xx(), 88640, RData::NS(NS(ns1())))
+        Record::from_rdata(xx(), 88640.into(), RData::NS(NS(ns1())))
     }
 
     fn ns2_record() -> Record {
-        Record::from_rdata(xx(), 88640, RData::NS(NS(ns2())))
+        Record::from_rdata(xx(), 88640.into(), RData::NS(NS(ns2())))
     }
 
     fn ns1_a() -> Record {
-        Record::from_rdata(xx(), 88640, RData::A(A::new(127, 0, 0, 2)))
+        Record::from_rdata(xx(), 88640.into(), RData::A(A::new(127, 0, 0, 2)))
     }
 
     fn ns2_a() -> Record {
-        Record::from_rdata(xx(), 88640, RData::A(A::new(127, 0, 0, 3)))
+        Record::from_rdata(xx(), 88640.into(), RData::A(A::new(127, 0, 0, 3)))
     }
 
     fn soa() -> Record {
         Record::from_rdata(
             example(),
-            88640,
+            88640.into(),
             RData::SOA(SOA::new(ns1(), hostmaster(), 1, 2, 3, 4, 5)),
         )
     }
@@ -697,7 +704,7 @@ mod tests {
         message.add_query(Query::query(Name::root(), RecordType::A));
         message.add_answer(Record::from_rdata(
             Name::root(),
-            88640,
+            88640.into(),
             RData::A(A::new(127, 0, 0, 2)),
         ));
 

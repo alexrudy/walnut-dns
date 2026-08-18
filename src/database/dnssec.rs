@@ -204,7 +204,7 @@ impl DnsSecStore {
             .set_dnssec_enabled(self.dnssec_enabled)
             .set_journal(self.catalog.journal());
         for key in &self.keys {
-            dnsseczone.add_zone_signing_key(key.build(dnsseczone.origin().clone().into())?)?;
+            dnsseczone.add_zone_signing_key(key.build(dnsseczone.origin().clone())?)?;
         }
         Ok(dnsseczone)
     }
@@ -254,6 +254,6 @@ impl CatalogStore<DnsSecZone<Zone>> for DnsSecStore {
         self.catalog
             .remove(name)
             .await
-            .map(|dz| dz.map(|zs| zs.into_iter().map(|z| DnsSecZone::new(z)).collect()))
+            .map(|dz| dz.map(|zs| zs.into_iter().map(DnsSecZone::new).collect()))
     }
 }

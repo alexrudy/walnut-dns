@@ -15,7 +15,7 @@ use chateau::server::conn::tls::TlsAcceptor;
 use chateau::services::SharedService;
 use hickory_proto::op::{MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::rdata::{A, OPT};
-use hickory_proto::rr::{DNSClass, Name, RData, Record, RecordType};
+use hickory_proto::rr::{DNSClass, Name, RData, RecordType};
 #[cfg(feature = "tls")]
 use hickory_proto::rustls::default_provider;
 
@@ -39,7 +39,7 @@ use walnut_dns::client::nameserver::{ConnectionConfig, NameserverConfig};
 use walnut_dns::client::nameserver::{NameServerConnection, Nameserver};
 use walnut_dns::client::{Client, ClientConfiguration};
 use walnut_dns::messages::Message;
-use walnut_dns::rr::Zone;
+use walnut_dns::rr::{Record, Zone};
 use walnut_dns::server::stream::DnsOverStream;
 use walnut_dns::server::udp::{DnsOverUdp, UdpListener};
 use walnut_dns::{Catalog, SqliteStore};
@@ -333,8 +333,8 @@ async fn lazy_udp_client(addr: SocketAddr) -> Client {
     let ns = NameserverConfig::single(addr.ip(), conn_config);
     let cfg = ClientConfiguration::from(ns);
 
-    let client = Client::new(cfg);
-    client
+    
+    Client::new(cfg)
 }
 
 async fn lazy_tcp_client(addr: SocketAddr) -> Client {
@@ -342,8 +342,8 @@ async fn lazy_tcp_client(addr: SocketAddr) -> Client {
     conn_config.port = addr.port();
     let ns = NameserverConfig::single(addr.ip(), conn_config);
     let cfg = ClientConfiguration::from(ns);
-    let client = Client::new(cfg);
-    client
+    
+    Client::new(cfg)
 }
 
 #[cfg(feature = "tls")]
@@ -533,7 +533,7 @@ async fn server_thread_https(
         .with_no_client_auth()
         .with_cert_resolver(cert_chain);
     tls_config.alpn_protocols = vec![b"h2".to_vec()];
-
+    tracing::info!("Starting server thread");
     hyperdriver::Server::builder::<http::Request<hyperdriver::Body>>()
         .with_acceptor(
             hyperdriver::server::conn::Acceptor::new(listener).with_tls(tls_config.into()),
@@ -542,14 +542,17 @@ async fn server_thread_https(
         .with_tokio()
         .with_shared_service(
             tower::ServiceBuilder::new()
+                .layer(tower_http::trace::TraceLayer::new_for_http())
                 .layer(DnsOverHttpLayer::new(http::Version::HTTP_2))
                 .service(catalog),
         )
         .with_graceful_shutdown(async move {
             shutdown.await.ok();
+            tracing::info!("Shutdown server started")
         })
         .await
-        .unwrap()
+        .unwrap();
+    tracing::info!("Server thread done");
 }
 
 /// This test checks the behavior of the server when it receives a query with too many OPT RRs.
@@ -569,12 +572,12 @@ async fn edns_multiple_opt_rr() {
     message.add_query(Query::query(Name::root(), RecordType::NS));
     message.add_additional(Record::from_rdata(
         Name::root(),
-        0,
+        0.into(),
         RData::OPT(OPT::new(vec![])),
     ));
     message.add_additional(Record::from_rdata(
         Name::root(),
-        0,
+        0.into(),
         RData::OPT(OPT::new(vec![])),
     ));
     let message_bytes = message.to_vec().unwrap();
@@ -596,7 +599,6 @@ async fn edns_multiple_opt_rr() {
     .unwrap();
     let response = Message::from_vec(&response_buf).unwrap();
 
-    dbg!(&response);
     assert_eq!(message.header().id(), response.header().id());
     assert_eq!(response.response_code(), ResponseCode::FormErr);
 

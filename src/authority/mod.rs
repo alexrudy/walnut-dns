@@ -27,24 +27,23 @@ use std::sync::Arc;
 
 use hickory_proto::op::{Query, ResponseCode};
 use hickory_proto::rr::{DNSClass, LowerName, Name, RecordType, RrKey};
-use hickory_server::authority::{AnyRecords, AuthLookup};
-use hickory_server::authority::{LookupControlFlow, LookupError};
-use hickory_server::authority::{LookupOptions, LookupRecords};
+use hickory_server::authority::LookupError;
 use hickory_server::authority::{Nsec3QueryInfo, UpdateResult};
 use hickory_server::dnssec::NxProofKind;
 
 use crate::messages::Message;
 use crate::messages::server::Incoming;
-use crate::rr::{
-    AsHickory as _, Mismatch, Record, RecordSet, SerialNumber, TimeToLive, Zone, ZoneType,
-};
+use crate::rr::{Mismatch, Record, RecordSet, SerialNumber, TimeToLive, Zone, ZoneType};
 
 pub(crate) mod dnssec;
 pub(crate) mod edns;
+pub(crate) mod lookup;
 
 pub use self::dnssec::{DnsSecZone, DnsSecZoneError, Journal};
+pub use self::lookup::{LookupControlFlow, LookupOptions, LookupRecords};
 
-pub(crate) type LookupChain<L, E = LookupError> = (LookupControlFlow<L, E>, Option<LookupRecords>);
+pub(crate) type LookupChain<L, E = LookupError> =
+    (LookupControlFlow<L, E>, Option<Vec<Arc<RecordSet>>>);
 
 /// Provides basic information about a DNS Zone that can be used for lookups
 ///
@@ -364,16 +363,16 @@ pub trait Lookup: ZoneInfo {
         name: &Name,
         query_type: RecordType,
         lookup_options: LookupOptions,
-    ) -> LookupControlFlow<AuthLookup>;
+    ) -> LookupControlFlow<LookupRecords>;
 
     /// Returns the SOA record for the zone
-    async fn soa_secure(&self, lookup_options: LookupOptions) -> LookupControlFlow<AuthLookup> {
+    async fn soa_secure(&self, lookup_options: LookupOptions) -> LookupControlFlow<LookupRecords> {
         self.lookup(self.origin(), RecordType::SOA, lookup_options)
             .await
     }
 
     /// Get the NS, NameServer, record for the zone
-    async fn ns(&self, lookup_options: LookupOptions) -> LookupControlFlow<AuthLookup> {
+    async fn ns(&self, lookup_options: LookupOptions) -> LookupControlFlow<LookupRecords> {
         self.lookup(self.origin(), RecordType::NS, lookup_options)
             .await
     }
@@ -389,9 +388,9 @@ where
         name: &Name,
         query_type: RecordType,
         lookup_options: LookupOptions,
-    ) -> LookupControlFlow<AuthLookup> {
+    ) -> LookupControlFlow<LookupRecords> {
         let lz = LookupZone(self);
-        lz.lookup(name, query_type, lookup_options)
+        lz.lookup(name, query_type, lookup_options).await
     }
 }
 
@@ -413,7 +412,7 @@ pub trait Search: Lookup + Sync {
         &self,
         query: &Query,
         lookup_options: LookupOptions,
-    ) -> LookupControlFlow<AuthLookup> {
+    ) -> LookupControlFlow<LookupRecords> {
         let lookup_name = query.name();
         let record_type: RecordType = query.query_type();
 
@@ -451,41 +450,32 @@ pub trait Search: Lookup + Sync {
             RecordType::AXFR => {
                 tracing::trace!("AXFR requested for zone {}", self.name());
                 use LookupControlFlow::Continue;
-                let start_soa =
-                    if let Continue(Ok(res)) = Lookup::soa_secure(self, lookup_options).await {
-                        res.unwrap_records()
-                    } else {
-                        LookupRecords::Empty
-                    };
-                let end_soa = if let Continue(Ok(res)) = Lookup::lookup(
-                    self,
-                    self.origin(),
-                    RecordType::SOA,
-                    LookupOptions::default(),
-                )
-                .await
+                let soa = if let Continue(Ok(res)) =
+                    Lookup::soa_secure(self, lookup_options.clone()).await
                 {
-                    res.unwrap_records()
+                    res.unwrap_record()
                 } else {
-                    LookupRecords::Empty
+                    None
                 };
 
                 let records = if let Continue(Ok(res)) =
-                    Lookup::lookup(self, lookup_name, record_type, lookup_options).await
+                    Lookup::lookup(self, lookup_name, record_type, lookup_options.clone()).await
                 {
                     res.unwrap_records()
                 } else {
-                    LookupRecords::Empty
+                    None
                 };
 
-                LookupControlFlow::Continue(Ok(AuthLookup::AXFR {
-                    start_soa,
-                    end_soa,
-                    records,
-                }))
+                LookupControlFlow::Continue(Ok(LookupRecords::axfr(
+                    soa.unwrap_or_else(|| {
+                        Arc::new(RecordSet::new(self.name().clone(), RecordType::SOA))
+                    }),
+                    records.unwrap_or_default(),
+                    lookup_options,
+                )))
             }
             _ => {
-                tracing::trace!("{record_type} requested for zone {}", self.name());
+                tracing::trace!(lookup=%lookup_name, "{record_type} requested for zone {}", self.name());
                 Lookup::lookup(self, lookup_name, record_type, lookup_options).await
             }
         }
@@ -561,13 +551,13 @@ pub trait Update: ZoneInfo {
         &self,
         name: &Name,
         lookup_options: LookupOptions,
-    ) -> LookupControlFlow<AuthLookup>;
+    ) -> LookupControlFlow<LookupRecords>;
 
     async fn get_nsec3_records(
         &self,
         info: Nsec3QueryInfo<'_>,
         lookup_options: LookupOptions,
-    ) -> LookupControlFlow<AuthLookup>;
+    ) -> LookupControlFlow<LookupRecords>;
 
     fn nx_proof_kind(&self) -> Option<&NxProofKind>;
 }
@@ -587,8 +577,8 @@ impl Update for Zone {
         &self,
         name: &Name,
         lookup_options: LookupOptions,
-    ) -> LookupControlFlow<AuthLookup> {
-        LookupControlFlow::Continue(Ok(AuthLookup::default()))
+    ) -> LookupControlFlow<LookupRecords> {
+        LookupControlFlow::Continue(Ok(LookupRecords::empty()))
     }
 
     #[expect(unused_variables)]
@@ -596,8 +586,8 @@ impl Update for Zone {
         &self,
         info: Nsec3QueryInfo<'_>,
         lookup_options: LookupOptions,
-    ) -> LookupControlFlow<AuthLookup> {
-        LookupControlFlow::Continue(Ok(AuthLookup::default()))
+    ) -> LookupControlFlow<LookupRecords> {
+        LookupControlFlow::Continue(Ok(LookupRecords::empty()))
     }
 
     fn nx_proof_kind(&self) -> Option<&NxProofKind> {
@@ -609,21 +599,21 @@ struct LookupZone<'z, Z: ?Sized>(&'z Z);
 
 impl<'z, Z> LookupZone<'z, Z>
 where
-    Z: Lookup + Records + ZoneInfo + ?Sized,
+    Z: Lookup + Records + ZoneInfo + Sync + ?Sized,
 {
     #[tracing::instrument(level = "trace", skip_all, fields(query=%query_type))]
-    fn lookup(
+    async fn lookup(
         &self,
         name: &Name,
         query_type: RecordType,
         lookup_options: LookupOptions,
-    ) -> LookupControlFlow<AuthLookup> {
+    ) -> LookupControlFlow<LookupRecords> {
         let (result, additionals) = if matches!(query_type, RecordType::AXFR | RecordType::ANY) {
-            self.lookup_any(name, query_type, lookup_options)
+            self.lookup_any(name, query_type, lookup_options).await
         } else {
-            let answer = self.lookup_records(name, query_type, lookup_options);
+            let answer = self.lookup_records(name, query_type, lookup_options.clone());
             if let Some(rrset) = &answer {
-                tracing::trace!("found {} records for {}", rrset.len(), rrset.record_type());
+                tracing::trace!(record=%rrset.record_type(), "Found {} records", rrset.len());
             }
 
             // evaluate any cnames for additional inclusion
@@ -636,7 +626,7 @@ where
                         query_type,
                         search_name,
                         search_type,
-                        lookup_options,
+                        lookup_options.clone(),
                     )
                     .map(|adds| (adds, search_type))
                 });
@@ -652,7 +642,7 @@ where
                         last_rrset.and_then(|rrset| match rrset.record_type() {
                             RecordType::A | RecordType::AAAA => Some(
                                 rrset
-                                    .records()
+                                    .records(false)
                                     .map(|record| record.rdata().clone())
                                     .collect(),
                             ),
@@ -669,7 +659,6 @@ where
 
                     //TODO: New-answer needs to be re-signed for DNSSEC to work.
                     tracing::warn!("New answer created, need to re-sign it if DNSSEC is enabled");
-
                     let additionals = std::iter::once(answer).chain(additionals).collect();
                     (Some(additionals), Some(new_answer))
                 }
@@ -680,21 +669,16 @@ where
             let answer = answer.map_or(
                 LookupControlFlow::Continue(Err(LookupError::from(ResponseCode::NXDomain))),
                 |rr_set| {
-                    LookupControlFlow::Continue(Ok(LookupRecords::new(
+                    LookupControlFlow::Continue(Ok(LookupRecords::records(
+                        vec![Arc::new(rr_set)],
                         lookup_options,
-                        Arc::new(rr_set.as_hickory()),
                     )))
                 },
             );
 
             let additionals = additionals.map(|a| {
                 tracing::trace!("Adding {} alternate lookup records", a.len());
-                LookupRecords::many(
-                    lookup_options,
-                    a.into_iter()
-                        .map(|rrset| Arc::new(rrset.as_hickory()))
-                        .collect(),
-                )
+                a.into_iter().map(Arc::new).collect()
             });
 
             (answer, additionals)
@@ -711,7 +695,7 @@ where
                 if self
                     .0
                     .keys()
-                    .any(|key| (&*key.name() as &Name) == name || name.zone_of(key.name()))
+                    .any(|key| (key.name() as &Name) == name || name.zone_of(key.name()))
                 {
                     tracing::trace!("Other types exist at the same name: NameExists");
                     return Continue(Err(LookupError::NameExists));
@@ -733,11 +717,15 @@ where
             o => o,
         };
 
-        result.map(|answers| AuthLookup::answers(answers, additionals))
+        result.map(|mut answers| {
+            tracing::trace!(%name, "found {} records ({} additionals)", answers.len(), additionals.as_ref().map_or(0, |addl| addl.len()));
+            answers.set_additionals(additionals.unwrap_or_default());
+            answers
+        })
     }
 
     /// Perform an AXFR or ANY record lookup, returning all available records for this zone.
-    fn lookup_any(
+    async fn lookup_any(
         &self,
         name: &Name,
         query_type: RecordType,
@@ -745,21 +733,38 @@ where
     ) -> LookupChain<LookupRecords> {
         debug_assert!(matches!(query_type, RecordType::AXFR | RecordType::ANY));
 
-        let records = AnyRecords::new(
-            lookup_options,
-            self.0
-                .records()
-                .map(|rset| Arc::new(rset.as_hickory()))
-                .collect(),
-            query_type,
-            LowerName::new(name),
-        );
+        let records: Vec<Arc<RecordSet>> = self
+            .0
+            .records()
+            .map(|rset| Arc::new(rset.clone()))
+            .collect();
+        tracing::trace!("Lookup AXFR|ANY {} records", records.len());
 
-        tracing::trace!("Lookup AXFR|ANY {} records", self.0.records().count());
-        (
-            LookupControlFlow::Continue(Ok(LookupRecords::AnyRecords(records))),
-            None,
-        )
+        let cf = match query_type {
+            RecordType::AXFR => {
+                let soa = if let LookupControlFlow::Continue(Ok(res)) =
+                    Lookup::soa_secure(self.0, lookup_options.clone()).await
+                {
+                    res.unwrap_record()
+                } else {
+                    None
+                };
+                //TODO: Proper error handling for missing SOA records
+
+                LookupControlFlow::Continue(Ok(LookupRecords::axfr(
+                    soa.expect("SOA Record available in zone"),
+                    records,
+                    lookup_options,
+                )))
+            }
+            RecordType::ANY => LookupControlFlow::Continue(Ok(LookupRecords::any(
+                records,
+                name.clone(),
+                lookup_options,
+            ))),
+            _ => panic!("Lookup {query_type} on lookup_any arm"),
+        };
+        (cf, None)
     }
 
     /// Perform a direct lookup for a set of records matching the query type
@@ -769,7 +774,7 @@ where
         query_type: RecordType,
         lookup_options: LookupOptions,
     ) -> Option<RecordSet> {
-        self.lookup_record(name, query_type, lookup_options)
+        self.lookup_record(name, query_type, lookup_options.clone())
             .cloned()
             .or_else(|| {
                 tracing::trace!("No direct record found");
@@ -777,6 +782,7 @@ where
             })
     }
 
+    #[tracing::instrument("lookup_record", skip_all, fields(name=%name, query=%query_type), level = "trace")]
     fn lookup_record(
         &self,
         name: &Name,
@@ -793,7 +799,8 @@ where
                 && key_type == RecordType::ANAME
         }
 
-        self.0
+        {
+            self.0
             .range(&start_range_key..&end_range_key)
             // remember CNAME can be the only record at a particular label
             .find(|(key, _)| {
@@ -802,7 +809,10 @@ where
                     || aname_covers_type(key.record_type, query_type)
             })
             .map(|(_key, rr_set)| rr_set)
-            .inspect(|rr_set| tracing::trace!("Found {} records", rr_set.len()))
+            .inspect(
+                |rr_set| tracing::trace!(record=%rr_set.record_type(), "Found {} records", rr_set.len()),
+            )
+        }
     }
 
     #[tracing::instrument("wildcard", skip_all, level = "trace")]
@@ -821,7 +831,8 @@ where
         let mut wildcard = name.clone().into_wildcard();
 
         loop {
-            let Some(rrset) = self.lookup_record(&wildcard, query_type, lookup_options) else {
+            let Some(rrset) = self.lookup_record(&wildcard, query_type, lookup_options.clone())
+            else {
                 let parent = wildcard.base_name();
                 if parent.is_root() {
                     tracing::trace!("No wildcard records found");
@@ -833,7 +844,7 @@ where
             };
 
             // we need to change the name to the query name in the result set since this was a wildcard
-            let new_answer = rrset.with_name(name.clone().into());
+            let new_answer = rrset.with_name(name.clone());
 
             //TODO This needs to be signed.
             tracing::warn!("New answer created, need to re-sign it if DNSSEC is enabled");
@@ -842,6 +853,7 @@ where
         }
     }
 
+    #[tracing::instrument("additional_search", skip_all, fields(name=%original_name, query=%original_query_type), level = "trace")]
     fn additional_search(
         &self,
         original_name: &Name,
@@ -878,12 +890,13 @@ where
                     break;
                 }
 
-                let additional = self.lookup_records(&search, *query_type, lookup_options);
+                let additional = self.lookup_records(&search, *query_type, lookup_options.clone());
                 names.insert(search);
 
                 if let Some(additional) = additional {
                     // assuming no crazy long chains...
                     if !additionals.contains(&additional) {
+                        tracing::trace!(record=%additional.record_type(), n=additional.len(), "Adding additional records");
                         additionals.push(additional.clone());
                     }
 

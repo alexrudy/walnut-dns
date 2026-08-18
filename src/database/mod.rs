@@ -693,8 +693,7 @@ mod tests {
 
         let catalog = SqliteStore::new_in_memory().await.unwrap();
         let zone = create_test_zone("test.example.com.");
-        let zone_name = Name::from(zone.name().clone());
-        let expected_name = zone.name().clone();
+        let zone_name = zone.name().clone();
 
         // Upsert zone
         catalog.insert(&zone).await.unwrap();
@@ -702,14 +701,14 @@ mod tests {
         // Find zone by name
         let found_zones = catalog.find(&zone_name).await.unwrap().unwrap();
         assert_eq!(found_zones.len(), 1);
-        assert_eq!(found_zones[0].name(), &expected_name);
+        assert_eq!(found_zones[0].name(), &zone_name);
     }
 
     #[tokio::test]
     async fn test_catalog_find_nonexistent_zone() {
         crate::subscribe();
         let catalog = SqliteStore::new_in_memory().await.unwrap();
-        let nonexistent_name = Name::from(Name::from_utf8("nonexistent.example.com.").unwrap());
+        let nonexistent_name = Name::from_utf8("nonexistent.example.com.").unwrap();
 
         // Find nonexistent zone
         let found_zones = catalog.find(&nonexistent_name).await.unwrap();
@@ -794,7 +793,7 @@ mod tests {
         assert!(zone_list.contains(&zone1_name));
         assert!(zone_list.contains(&zone2_name));
 
-        let zone_list = catalog.list(&zone1_name.clone().into()).await.unwrap();
+        let zone_list = catalog.list(&zone1_name).await.unwrap();
         assert_eq!(zone_list.len(), 1);
         assert!(zone_list.contains(&zone1_name));
         assert!(!zone_list.contains(&zone2_name));
@@ -809,16 +808,13 @@ mod tests {
         let zone1 = create_test_zone("test.example.com.");
         let zone2 = create_test_zone("test.example.org.");
         let name = zone1.origin().clone();
-        catalog
-            .upsert(name.clone(), &vec![zone1.into(), zone2.into()])
-            .await
-            .unwrap();
+        catalog.upsert(name.clone(), &[zone1, zone2]).await.unwrap();
 
         // List should contain both zones
         let root = Name::root();
         let zone_list = catalog.list(&root).await.unwrap();
         assert_eq!(zone_list.len(), 2);
-        assert!(zone_list.contains(&name.into()));
+        assert!(zone_list.contains(&name));
     }
 
     #[tokio::test]
@@ -855,7 +851,7 @@ mod tests {
 
         let catalog = SqliteStore::new_in_memory().await.unwrap();
         let zone = create_test_zone("test.example.com.");
-        let zone_name = Name::from(zone.name().clone());
+        let zone_name = zone.name().clone();
 
         // Test that the catalog can handle concurrent access via Arc<Mutex<Connection>>
         let catalog_clone = catalog.clone();
@@ -914,7 +910,7 @@ mod tests {
         catalog.insert(&zone).await.unwrap();
 
         // Search with different case
-        let upper_name = Name::from(Name::from_utf8("TEST.EXAMPLE.COM.").unwrap());
+        let upper_name = Name::from_utf8("TEST.EXAMPLE.COM.").unwrap();
         let found_zones = catalog.find(&upper_name).await.unwrap().unwrap();
         assert_eq!(found_zones.len(), 1);
         assert_eq!(found_zones[0].name(), &expected_name);
@@ -973,7 +969,7 @@ mod tests {
         let mut any_marker = Record::update0(mail.clone(), TimeToLive::from(0), RecordType::A);
         any_marker.set_dns_class(DNSClass::ANY);
 
-        let markers = vec![none_marker, any_marker];
+        let markers = [none_marker, any_marker];
         {
             let mut conn = store.connection().await.unwrap();
             crate::block_in_place(|| {
@@ -993,7 +989,7 @@ mod tests {
         let www_rrset = reloaded
             .get(&RrKey::new(LowerName::from(&www), RecordType::A))
             .expect("www A rrset should still exist");
-        let www_addrs: Vec<RData> = www_rrset.records().map(|r| r.data().clone()).collect();
+        let www_addrs: Vec<RData> = www_rrset.records(false).map(|r| r.data().clone()).collect();
         assert_eq!(www_addrs, vec![RData::A(rdata::A::new(192, 0, 2, 2))]);
 
         // The `mail A` RRset should be gone entirely.

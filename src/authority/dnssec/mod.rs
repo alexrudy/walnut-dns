@@ -8,12 +8,11 @@ use hickory_proto::ProtoError;
 use hickory_proto::dnssec::rdata::{DNSKEY, DNSSECRData, KEY, NSEC, NSEC3, NSEC3PARAM, RRSIG, SIG};
 use hickory_proto::dnssec::{DnsSecError, DnsSecResult, Nsec3HashAlgorithm, SigSigner, TBS};
 use hickory_proto::rr::{DNSClass, LowerName, RData, RecordType, RrKey};
-use hickory_server::authority::AuthLookup;
-use hickory_server::authority::{LookupControlFlow, LookupError};
-use hickory_server::authority::{LookupOptions, LookupRecords};
+use hickory_server::authority::LookupError;
 use hickory_server::authority::{Nsec3QueryInfo, UpdateResult};
 use hickory_server::dnssec::NxProofKind;
 
+use super::lookup::{LookupControlFlow, LookupOptions, LookupRecords};
 use super::{Lookup, Records, Update, ZoneInfo};
 use crate::catalog::CatalogError;
 use crate::messages::Message;
@@ -135,10 +134,10 @@ impl<Z> AsRef<Z> for DnsSecZone<Z> {
     }
 }
 
-impl<Z: ZoneInfo> fmt::Debug for DnsSecZone<Z> {
+impl<Z: ZoneInfo + fmt::Debug> fmt::Debug for DnsSecZone<Z> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DNSSecZone")
-            .field("zone", &self.zone.origin())
+            .field("zone", &self.zone)
             .field("secure_keys", &self.secure_keys.len())
             .field("nx_proof_kind", &self.nx_proof_kind)
             .finish()
@@ -467,7 +466,7 @@ where
             }
 
             // there should only be one record
-            let Some(record) = rr_set.records().next() else {
+            let Some(record) = rr_set.records(false).next() else {
                 continue;
             };
 
@@ -537,7 +536,7 @@ where
             // the last record
             if let Some((name, vec)) = nsec_info {
                 // names aren't equal, create the NSEC record
-                let rdata = NSEC::new_cover_self(self.origin().clone().into(), vec);
+                let rdata = NSEC::new_cover_self(self.origin().clone(), vec);
                 let record = Record::from_rdata(name.clone(), ttl, rdata);
                 records.push(record.into_record_rdata());
             }
@@ -682,7 +681,7 @@ where
 
         // Include the NSEC3PARAM record.
         let rdata = NSEC3PARAM::new(hash_alg, opt_out, iterations, salt.to_vec());
-        let record = Record::from_rdata(self.zone.origin().clone().into(), ttl, rdata);
+        let record = Record::from_rdata(self.zone.origin().clone(), ttl, rdata);
         records.push(record.into_record_rdata());
 
         // insert all the NSEC3 records.
@@ -738,7 +737,7 @@ where
             );
 
             let expiration = inception + signer.sig_duration();
-            let records: Vec<_> = rr_set.records().map(|rr| rr.as_hickory()).collect();
+            let records: Vec<_> = rr_set.records(false).map(|rr| rr.as_hickory()).collect();
             let tbs = TBS::from_sig(
                 rr_set.name(),
                 zone_class,
@@ -982,14 +981,14 @@ where
         &self,
         name: &Name,
         lookup_options: LookupOptions,
-    ) -> LookupControlFlow<AuthLookup> {
+    ) -> LookupControlFlow<LookupRecords> {
         let rr_key = RrKey::new(LowerName::new(name), RecordType::NSEC);
-        let no_data = self
-            .get(&rr_key)
-            .map(|rr_set| LookupRecords::new(lookup_options, rr_set.as_hickory().into()));
+        let no_data = self.get(&rr_key).map(|rr_set| {
+            LookupRecords::records(vec![rr_set.clone().into()], lookup_options.clone())
+        });
 
         if let Some(no_data) = no_data {
-            return LookupControlFlow::Continue(Ok(no_data.into()));
+            return LookupControlFlow::Continue(Ok(no_data));
         }
 
         let closest_proof = self.closest_nsec(name);
@@ -1023,14 +1022,10 @@ where
             (None, None) => vec![],
         };
 
-        LookupControlFlow::Continue(Ok(LookupRecords::many(
+        LookupControlFlow::Continue(Ok(LookupRecords::records(
+            proofs.into_iter().map(|rrset| rrset.into()).collect(),
             lookup_options,
-            proofs
-                .into_iter()
-                .map(|rrset| rrset.as_hickory().into())
-                .collect(),
-        )
-        .into()))
+        )))
     }
 
     /// Return the NSEC3 records based on the information available for a query.
@@ -1039,16 +1034,12 @@ where
         &self,
         info: Nsec3QueryInfo<'_>,
         lookup_options: LookupOptions,
-    ) -> LookupControlFlow<AuthLookup> {
+    ) -> LookupControlFlow<LookupRecords> {
         LookupControlFlow::Continue(self.proof(info).map(|proof| {
-            LookupRecords::many(
+            LookupRecords::records(
+                proof.into_iter().map(|rrset| rrset.into()).collect(),
                 lookup_options,
-                proof
-                    .into_iter()
-                    .map(|rrset| rrset.as_hickory().into())
-                    .collect(),
             )
-            .into()
         }))
     }
 

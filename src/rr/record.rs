@@ -2,10 +2,11 @@ use std::{cmp::Ordering, fmt};
 
 use chrono::{DateTime, Utc};
 use hickory_proto::{
-    ProtoError,
+    ProtoError, ProtoErrorKind,
     dnssec::Proof,
-    rr::{DNSClass, RData, RecordData, RecordType, RrKey},
-    serialize::binary::{BinDecoder, BinEncodable, Restrict},
+    op::{Edns, EdnsFlags},
+    rr::{DNSClass, RData, RecordData, RecordType, RrKey, rdata::OPT},
+    serialize::binary::{BinDecodable, BinDecoder, BinEncodable, Restrict},
 };
 
 use crate::database::FromRow;
@@ -499,6 +500,90 @@ impl PartialOrd for Record<RData> {
     }
 }
 
+pub struct RecordRef<'r, R> {
+    record: &'r Record,
+    rdata: &'r R,
+}
+
+impl<R: RecordData> Clone for RecordRef<'_, R> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<R: RecordData> Copy for RecordRef<'_, R> {}
+
+impl<R: RecordData> RecordRef<'_, R> {
+    /// Allocates space for a Record with the same fields
+    pub fn to_owned(&self) -> Record<R> {
+        Record {
+            id: self.record.id,
+            name_labels: self.record.name_labels.to_owned(),
+            dns_class: self.record.dns_class,
+            ttl: self.record.ttl,
+            rdata: self.rdata.clone(),
+            mdns_cache_flush: self.record.mdns_cache_flush,
+            proof: self.record.proof,
+            glue: self.record.glue,
+            expires: self.record.expires,
+        }
+    }
+
+    /// Returns the name of the record
+    #[inline]
+    pub fn name(&self) -> &Name {
+        &self.record.name_labels
+    }
+
+    /// Returns the type of the RecordData in the record
+    #[inline]
+    pub fn record_type(&self) -> RecordType {
+        self.rdata.record_type()
+    }
+
+    /// Returns the DNSClass of the Record, generally IN fro internet
+    #[inline]
+    pub fn dns_class(&self) -> DNSClass {
+        self.record.dns_class
+    }
+
+    /// Returns the time-to-live of the record, for caching purposes
+    #[inline]
+    pub fn ttl(&self) -> TimeToLive {
+        self.record.ttl
+    }
+
+    /// Returns the Record Data, i.e. the record information
+    #[inline]
+    pub fn data(&self) -> &R {
+        self.rdata
+    }
+
+    /// Returns if the mDNS cache-flush bit is set or not
+    /// See [RFC 6762](https://tools.ietf.org/html/rfc6762#section-10.2)
+    #[inline]
+    pub fn mdns_cache_flush(&self) -> bool {
+        self.record.mdns_cache_flush
+    }
+
+    /// The Proof of DNSSEC validation for this record, this is only valid if some form of validation has occurred
+    #[inline]
+    pub fn proof(&self) -> Proof {
+        self.record.proof
+    }
+}
+
+impl<'a, R: RecordData> TryFrom<&'a Record> for RecordRef<'a, R> {
+    type Error = &'a Record;
+
+    fn try_from(record: &'a Record) -> Result<Self, Self::Error> {
+        match R::try_borrow(&record.rdata) {
+            None => Err(record),
+            Some(rdata) => Ok(Self { record, rdata }),
+        }
+    }
+}
+
 impl FromRow for RData {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self>
     where
@@ -558,6 +643,90 @@ impl From<hickory_proto::rr::Record<RData>> for Record<RData> {
     }
 }
 
+impl<'r> BinDecodable<'r> for Record<RData> {
+    fn read(decoder: &mut BinDecoder<'r>) -> Result<Self, ProtoError> {
+        // NAME            an owner name, i.e., the name of the node to which this
+        //                 resource record pertains.
+        let name_labels: Name = Name::read(decoder)?;
+
+        // TYPE            two octets containing one of the RR TYPE codes.
+        let record_type: RecordType = RecordType::read(decoder)?;
+
+        let mut mdns_cache_flush = false;
+
+        // CLASS           two octets containing one of the RR CLASS codes.
+        let class: DNSClass = if record_type == RecordType::OPT {
+            // verify that the OPT record is Root
+            if !name_labels.is_root() {
+                return Err(ProtoErrorKind::EdnsNameNotRoot(name_labels).into());
+            }
+
+            //  DNS Class is overloaded for OPT records in EDNS - RFC 6891
+            DNSClass::for_opt(
+                decoder.read_u16()?.unverified(/*restricted to a min of 512 in for_opt*/),
+            )
+        } else {
+            let dns_class_value =
+                decoder.read_u16()?.unverified(/*DNSClass::from_u16 will verify the value*/);
+            if dns_class_value & MDNS_ENABLE_CACHE_FLUSH > 0 {
+                mdns_cache_flush = true;
+                DNSClass::from(dns_class_value & !MDNS_ENABLE_CACHE_FLUSH)
+            } else {
+                DNSClass::from(dns_class_value)
+            }
+        };
+
+        // TTL             a 32 bit signed integer that specifies the time interval
+        //                that the resource record may be cached before the source
+        //                of the information should again be consulted.  Zero
+        //                values are interpreted to mean that the RR can only be
+        //                used for the transaction in progress, and should not be
+        //                cached.  For example, SOA records are always distributed
+        //                with a zero TTL to prohibit caching.  Zero values can
+        //                also be used for extremely volatile data.
+        // note: u32 seems more accurate given that it can only be positive
+        let ttl = TimeToLive::from_secs(decoder.read_u32()?.unverified(/*any u32 is valid*/));
+
+        // RDLENGTH        an unsigned 16 bit integer that specifies the length in
+        //                octets of the RDATA field.
+        let rd_length = decoder
+            .read_u16()?
+            .verify_unwrap(|u| (*u as usize) <= decoder.len())
+            .map_err(|u| {
+                ProtoError::from(format!(
+                    "rdata length too large for remaining bytes, need: {} remain: {}",
+                    u,
+                    decoder.len()
+                ))
+            })?;
+
+        // this is to handle updates, RFC 2136, which uses 0 to indicate certain aspects of pre-requisites
+        //   Null represents any data.
+        let rdata = if rd_length == 0 {
+            RData::Update0(record_type)
+        } else {
+            // RDATA           a variable length string of octets that describes the
+            //                resource.  The format of this information varies
+            //                according to the TYPE and CLASS of the resource record.
+            // Adding restrict to the rdata length because it's used for many calculations later
+            //  and must be validated before hand
+            RData::read(decoder, record_type, Restrict::new(rd_length))?
+        };
+
+        Ok(Self {
+            id: RecordID::new(),
+            name_labels,
+            dns_class: class,
+            ttl,
+            rdata,
+            mdns_cache_flush,
+            proof: Proof::default(),
+            expires: None,
+            glue: false,
+        })
+    }
+}
+
 impl<R: RecordData> BinEncodable for Record<R> {
     fn emit(
         &self,
@@ -601,6 +770,67 @@ impl<R: RecordData> AsHickory for Record<R> {
             self.ttl().into(),
             self.rdata().clone(),
         )
+    }
+}
+
+// FIXME: this should be a TryFrom
+impl<'a> From<&'a Record> for Edns {
+    fn from(value: &'a Record) -> Self {
+        assert!(value.record_type() == RecordType::OPT);
+
+        let ttl: u32 = value.ttl().into();
+        let rcode_high = ((ttl & 0xFF00_0000u32) >> 24) as u8;
+        let version = ((ttl & 0x00FF_0000u32) >> 16) as u8;
+        let flags = EdnsFlags::from((ttl & 0x0000_FFFFu32) as u16);
+        let max_payload = u16::from(value.dns_class());
+
+        let options = match value.data() {
+            RData::Update0(..) | RData::NULL(..) => {
+                // NULL, there was no data in the OPT
+                OPT::default()
+            }
+            RData::OPT(option_data) => {
+                option_data.clone() // TODO: Edns should just refer to this, have the same lifetime as the Record
+            }
+            _ => {
+                // this should be a coding error, as opposed to a parsing error.
+                panic!("rr_type doesn't match the RData: {:?}", value.data()) // valid panic, never should happen
+            }
+        };
+
+        let mut edns = Self::new();
+        edns.set_rcode_high(rcode_high);
+        edns.set_version(version);
+        *edns.flags_mut() = flags;
+        edns.set_max_payload(max_payload);
+        *edns.options_mut() = options;
+
+        edns
+    }
+}
+
+impl<'a> From<&'a Edns> for Record {
+    /// This returns a Resource Record that is formatted for Edns(0).
+    /// Note: the rcode_high value is only part of the rcode, the rest is part of the base
+    fn from(value: &'a Edns) -> Self {
+        // rebuild the TTL field
+        let mut ttl: u32 = u32::from(value.rcode_high()) << 24;
+        ttl |= u32::from(value.version()) << 16;
+        ttl |= u32::from(u16::from(*value.flags()));
+
+        // now for each option, write out the option array
+        //  also, since this is a hash, there is no guarantee that ordering will be preserved from
+        //  the original binary format.
+        // maybe switch to: https://crates.io/crates/linked-hash-map/
+        let mut record = Self::from_rdata(
+            Name::root(),
+            TimeToLive::from_secs(ttl),
+            RData::OPT(value.options().clone()),
+        );
+
+        record.set_dns_class(DNSClass::for_opt(value.max_payload()));
+
+        record
     }
 }
 

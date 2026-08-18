@@ -58,17 +58,17 @@ impl<'c> ZonePersistence<'c> {
                 .collect::<Result<Vec<_>, _>>()?;
 
             if !zones.is_empty() {
-                tracing::trace!("found {} zones", zones.len());
+                tracing::trace!(%name, "found {} zones", zones.len());
                 let rx = RecordPersistence::new(self.connection);
                 rx.populate_zones(&name, zones.as_mut_slice())?;
                 return Ok(Some(zones));
             }
 
             if !name.is_root() {
-                tracing::trace!("name is not root, base_name={}", name.base_name());
+                tracing::trace!(%name, "name is not root, base_name={}", name.base_name());
                 name = name.base_name();
             } else {
-                tracing::trace!("name is root");
+                tracing::trace!(%name, "name is root");
                 return Ok(None);
             }
         }

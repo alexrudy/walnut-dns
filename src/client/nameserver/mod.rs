@@ -134,7 +134,7 @@ impl tower::Service<Message> for Nameserver {
             let span = tracing::info_span!("dns_request", dns.address=%addr, dns.protocol=%conn.protocol());
 
             let future = conn.call(req);
-            return NameserverFuture(Box::pin(
+            NameserverFuture(Box::pin(
                 async move {
                     let result = future.await;
                     if result.is_err() {
@@ -145,13 +145,13 @@ impl tower::Service<Message> for Nameserver {
                     result
                 }
                 .instrument(span),
-            ));
+            ))
         } else {
-            return NameserverFuture(Box::pin(async move {
+            NameserverFuture(Box::pin(async move {
                 Err(DnsClientError::Unavailable(format!(
                     "No connections available for nameserver {addr}"
                 )))
-            }));
+            }))
         }
     }
 }

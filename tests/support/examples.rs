@@ -198,7 +198,7 @@ pub fn create_secure_example() -> DnsSecZone<Zone> {
     let signer = SigSigner::dnssec(
         DNSKEY::from_key(&key.to_public_key().unwrap()),
         Box::new(key),
-        authority.origin().clone().into(),
+        authority.origin().clone(),
         Duration::from_secs(86400 * 7),
     );
 

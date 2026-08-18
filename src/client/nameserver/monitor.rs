@@ -308,7 +308,7 @@ impl AtomicPriorityTier {
     }
 
     pub fn response(self: &Arc<AtomicPriorityTier>, protocol: &Protocol) -> ResponsePriority {
-        ResponsePriority::new(self.clone(), protocol.clone())
+        ResponsePriority::new(self.clone(), *protocol)
     }
 }
 
@@ -447,7 +447,7 @@ impl<S> MonitoredConnection<S> {
         Self {
             service,
             monitor: ConnectionStats::new(protocol),
-            protocol: protocol.clone(),
+            protocol: *protocol,
         }
     }
 
@@ -519,7 +519,7 @@ where
         if result.is_ok() {
             this.speed.record(this.started.elapsed());
         }
-        this.priority.take().map(|p| p.set(&result));
+        if let Some(p) = this.priority.take() { p.set(&result) }
         this.activity.take();
         Poll::Ready(result)
     }

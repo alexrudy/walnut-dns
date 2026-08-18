@@ -1,10 +1,11 @@
 use hickory_proto::{
     op::ResponseCode,
-    rr::{DNSClass, LowerName, RData, Record, RecordType, RrKey},
+    rr::{DNSClass, LowerName, RData, RecordType, RrKey},
 };
 use hickory_server::authority::UpdateResult;
 use tracing::{error, info};
 
+use crate::rr::Record;
 use crate::{
     Lookup,
     authority::{Records, Update},
@@ -77,8 +78,7 @@ where
         // the persistence act as a write-ahead log. The WAL will also be used for recovery of a zone
         //  subsequent to a failure of the server.
         if let Some(journal) = self.journal.as_ref() {
-            let records = records.iter().cloned().map(Into::into).collect::<Vec<_>>();
-            if let Err(error) = journal.insert_records(self, &records).await {
+            if let Err(error) = journal.insert_records(self, records).await {
                 error!("could not persist update records: {}", error);
                 return Err(ResponseCode::ServFail);
             }
@@ -142,7 +142,7 @@ where
 
                     // zone     rrset    rr       Add to an RRset
                     info!("upserting record: {:?}", rr);
-                    let upserted = self.upsert(rr.clone().into(), serial).unwrap();
+                    let upserted = self.upsert(rr.clone(), serial).unwrap();
 
                     updated = upserted || updated
                 }
@@ -207,7 +207,7 @@ where
                     // NONE     rrset    rr       Delete an RR from an RRset
                     if let Some(rrset) = self.get_mut(&rr_key) {
                         // b/c this is an Arc, we need to clone, then remove, and replace the node.
-                        let rr = rr.clone().into();
+                        let rr = rr.clone();
                         let deleted = rrset.remove(&rr, serial).unwrap();
                         info!("deleted ({}) specific record: {:?}", deleted, rr);
                         updated = updated || deleted;

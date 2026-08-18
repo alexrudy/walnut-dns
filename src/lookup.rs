@@ -21,7 +21,7 @@ use thiserror::Error;
 use crate::{
     database::FromRow,
     messages::{DnsResponse, Message},
-    rr::{AsHickory as _, QueryID, Record, SqlName, TimeToLive},
+    rr::{QueryID, Record, SqlName, TimeToLive},
 };
 
 /// A unified DNS lookup result that can represent any type of DNS response.
@@ -313,13 +313,11 @@ impl From<Lookup> for Message {
 
         if lookup.is_success() {
             // Add answer records for successful responses
-            let answers: Vec<_> = lookup.answer_records().map(|r| r.as_hickory()).collect();
-            msg.add_answers(answers.iter().cloned());
+            msg.add_answers(lookup.answer_records().cloned());
         }
 
         // Add authority records for all response types
-        let authorities: Vec<_> = lookup.authority_records().map(|r| r.as_hickory()).collect();
-        msg.add_name_servers(authorities.iter().cloned());
+        msg.add_name_servers(lookup.authority_records().cloned());
 
         // Manually update header counts to match the actual records
         let mut header = *msg.header();
@@ -336,7 +334,7 @@ impl TryFrom<DnsResponse> for Lookup {
 
     fn try_from(response: DnsResponse) -> Result<Self, Self::Error> {
         let response_code = response.response_code();
-        let negative_ttl = response.negative_ttl().map(|ttl| ttl.into());
+        let negative_ttl = response.negative_ttl();
         let (message, _) = response.into_parts();
 
         let ttl = if matches!(response_code, ResponseCode::NoError) {
@@ -344,7 +342,7 @@ impl TryFrom<DnsResponse> for Lookup {
             message
                 .answers
                 .iter()
-                .map(|rr| rr.ttl().into())
+                .map(|rr| rr.ttl())
                 .min()
                 .unwrap_or(TimeToLive::MIN)
         } else {
@@ -366,7 +364,6 @@ impl TryFrom<DnsResponse> for Lookup {
                 .into_iter()
                 .chain(message.name_servers)
                 .chain(message.additionals)
-                .map(Record::from)
                 .collect(),
             response_code,
             valid_until: deadline.into(),

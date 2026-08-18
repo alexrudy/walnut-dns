@@ -207,8 +207,12 @@ impl RecordSet {
     /// # Returns
     ///
     /// An iterator over the records
-    pub fn records(&self) -> impl Iterator<Item = &Record> {
-        self.records.iter()
+    pub fn records(&self, and_rrsigs: bool) -> RecordSetIter<'_> {
+        if and_rrsigs {
+            RecordSetIter::signed(&self.records, &self.rrsigs)
+        } else {
+            RecordSetIter::plain(&self.records)
+        }
     }
 
     pub(crate) fn records_mut(&mut self) -> impl Iterator<Item = &mut Record> {
@@ -247,8 +251,8 @@ impl RecordSet {
     /// # Returns
     ///
     /// An iterator over all records and signatures
-    pub fn signed_records(&self) -> impl Iterator<Item = &Record> {
-        self.records.iter().chain(self.rrsigs.iter())
+    pub fn signed_records(&self) -> RecordSetIter<'_> {
+        RecordSetIter::signed(&self.records, &self.rrsigs)
     }
 
     /// Get an iterator over all records in this set
@@ -258,8 +262,8 @@ impl RecordSet {
     /// # Returns
     ///
     /// An iterator over all records
-    pub fn iter(&self) -> impl Iterator<Item = &Record> {
-        self.records.iter().chain(self.rrsigs.iter())
+    pub fn iter(&self) -> RecordSetIter<'_> {
+        RecordSetIter::signed(&self.records, &self.rrsigs)
     }
 
     /// Convert this record set into an iterator over all records and signatures
@@ -271,7 +275,7 @@ impl RecordSet {
     ///
     /// An iterator over all records and signatures
     pub fn into_hickory_iter(self) -> RecordSetIntoHickoryIter {
-        RecordSetIntoHickoryIter(self.records.into_iter().chain(self.rrsigs.into_iter()))
+        RecordSetIntoHickoryIter(self.records.into_iter().chain(self.rrsigs))
     }
 
     /// Convert this record set into an iterator over all records and signatures
@@ -562,7 +566,7 @@ impl RecordSet {
             (t @ RecordType::ANAME, RecordType::A)
             | (t @ RecordType::ANAME, RecordType::AAAA)
             | (t @ RecordType::ANAME, RecordType::ANAME) => {
-                self.records().next().and_then(|record| {
+                self.records(false).next().and_then(|record| {
                     record
                         .rdata()
                         .as_aname()
@@ -573,13 +577,13 @@ impl RecordSet {
                 })
             }
             (t @ RecordType::NS, RecordType::NS) => self
-                .records()
+                .records(false)
                 .next()
                 .and_then(|record| record.rdata().as_ns().map(|ns| (ns.0.clone(), t)))
                 .inspect(|(name, record_type)| {
                     tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
                 }),
-            (t @ RecordType::CNAME, _) => self.records().next().and_then(|record| {
+            (t @ RecordType::CNAME, _) => self.records(false).next().and_then(|record| {
                 record
                     .rdata()
                     .as_cname()
@@ -588,7 +592,7 @@ impl RecordSet {
                         tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
                     })
             }),
-            (t @ RecordType::MX, RecordType::MX) => self.records().next().and_then(|record| {
+            (t @ RecordType::MX, RecordType::MX) => self.records(false).next().and_then(|record| {
                 record
                     .rdata()
                     .as_mx()
@@ -597,15 +601,17 @@ impl RecordSet {
                         tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
                     })
             }),
-            (t @ RecordType::SRV, RecordType::SRV) => self.records().next().and_then(|record| {
-                record
-                    .rdata()
-                    .as_srv()
-                    .map(|srv| (srv.target().clone(), t))
-                    .inspect(|(name, record_type)| {
-                        tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
-                    })
-            }),
+            (t @ RecordType::SRV, RecordType::SRV) => {
+                self.records(false).next().and_then(|record| {
+                    record
+                        .rdata()
+                        .as_srv()
+                        .map(|srv| (srv.target().clone(), t))
+                        .inspect(|(name, record_type)| {
+                            tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
+                        })
+                })
+            }
             _ => None,
         }
     }
@@ -644,7 +650,7 @@ impl AsHickory for RecordSet {
             self.record_type(),
             self.serial().get(),
         );
-        for record in self.records() {
+        for record in self.records(false) {
             rset.insert(
                 record.as_hickory().into_record_of_rdata(),
                 self.serial().get(),
@@ -659,16 +665,34 @@ impl AsHickory for RecordSet {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct RecordSetIter<'r>(
-    std::iter::Chain<std::slice::Iter<'r, Record>, std::slice::Iter<'r, Record>>,
-);
+#[derive(Debug, Clone)]
+enum RecordSetIterInner<'r> {
+    Plain(std::slice::Iter<'r, Record>),
+    Signed(std::iter::Chain<std::slice::Iter<'r, Record>, std::slice::Iter<'r, Record>>),
+}
+
+#[derive(Debug, Clone)]
+pub struct RecordSetIter<'r>(RecordSetIterInner<'r>);
+
+impl<'r> RecordSetIter<'r> {
+    fn plain(records: &'r [Record]) -> Self {
+        Self(RecordSetIterInner::Plain(records.iter()))
+    }
+    fn signed(records: &'r [Record], rrsigs: &'r [Record]) -> Self {
+        Self(RecordSetIterInner::Signed(
+            records.iter().chain(rrsigs.iter()),
+        ))
+    }
+}
 
 impl<'r> Iterator for RecordSetIter<'r> {
     type Item = &'r Record;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next()
+        match &mut self.0 {
+            RecordSetIterInner::Plain(iter) => iter.next(),
+            RecordSetIterInner::Signed(chain) => chain.next(),
+        }
     }
 }
 
@@ -677,7 +701,7 @@ impl<'r> IntoIterator for &'r RecordSet {
     type IntoIter = RecordSetIter<'r>;
 
     fn into_iter(self) -> Self::IntoIter {
-        RecordSetIter(self.records.iter().chain(self.rrsigs.iter()))
+        RecordSetIter::signed(&self.records, &self.rrsigs)
     }
 }
 
@@ -712,7 +736,7 @@ impl IntoIterator for RecordSet {
     type IntoIter = RecordSetIntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        RecordSetIntoIter(self.records.into_iter().chain(self.rrsigs.into_iter()))
+        RecordSetIntoIter(self.records.into_iter().chain(self.rrsigs))
     }
 }
 
@@ -823,7 +847,7 @@ mod tests {
         rrset.set_ttl(new_ttl);
 
         assert_eq!(rrset.ttl(), new_ttl);
-        for record in rrset.records() {
+        for record in rrset.records(false) {
             assert_eq!(record.ttl(), new_ttl);
         }
     }
@@ -937,7 +961,7 @@ mod tests {
         let rrset = RecordSet::from_record(name, record);
 
         // Test records iterator
-        assert_eq!(rrset.records().count(), 1);
+        assert_eq!(rrset.records(false).count(), 1);
 
         // Test into_records
         let records: Vec<_> = rrset.clone().into_records().collect();
@@ -1057,7 +1081,7 @@ mod tests {
         assert_eq!(rrset.len(), 1); // Still only one SOA (replaced)
 
         // Verify the SOA has the newer serial
-        let soa_record = rrset.records().next().unwrap();
+        let soa_record = rrset.records(false).next().unwrap();
         if let RData::SOA(soa) = soa_record.rdata() {
             assert_eq!(soa.serial(), 200);
         } else {
@@ -1152,7 +1176,7 @@ mod tests {
         assert_eq!(rrset.len(), 1); // Still only one CNAME
 
         // Verify the CNAME points to the new target
-        let cname_record = rrset.records().next().unwrap();
+        let cname_record = rrset.records(false).next().unwrap();
         if let RData::CNAME(cname) = cname_record.rdata() {
             assert!(cname.0.to_utf8().starts_with("target2.example.com."));
         } else {
@@ -1181,7 +1205,7 @@ mod tests {
         assert_eq!(rrset.len(), 1); // Still only one ANAME
 
         // Verify the ANAME points to the new target
-        let aname_record = rrset.records().next().unwrap();
+        let aname_record = rrset.records(false).next().unwrap();
         if let RData::ANAME(aname) = aname_record.rdata() {
             assert!(aname.0.to_utf8().starts_with("target2.example.com."));
         } else {

@@ -16,17 +16,16 @@ use std::task::{Context, Poll};
 use std::{borrow::Borrow, sync::Arc};
 
 use hickory_proto::op::{Edns, Header, LowerQuery, MessageType, OpCode, ResponseCode};
-use hickory_proto::rr::{RecordSet, RecordType};
-use hickory_server::authority::{
-    AuthLookup, LookupControlFlow, LookupError, LookupOptions, LookupRecords,
-};
+use hickory_proto::rr::RecordType;
+use hickory_server::authority::LookupError;
 
 use crate::authority::edns::lookup_options_for_edns;
+use crate::authority::lookup::{LookupControlFlow, LookupOptions, LookupRecords};
 use crate::authority::{Search, Update};
 use crate::error::HickoryError;
 use crate::messages::Message;
 use crate::messages::server::Incoming;
-use crate::rr::Name;
+use crate::rr::{Name, Record, RecordSet};
 use crate::{Lookup, ZoneInfo};
 
 /// Error type for catalog operations
@@ -167,7 +166,7 @@ impl<A> Clone for Catalog<A> {
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument("send", skip_all, level = "trace")]
 async fn lookup_response(
-    response: LookupControlFlow<AuthLookup>,
+    response: LookupControlFlow<LookupRecords>,
     response_edns: Option<Edns>,
     request: &Incoming<Message>,
     authority: &(dyn Lookup + Sync + 'static),
@@ -178,7 +177,7 @@ async fn lookup_response(
     tracing::trace!("sending lookup response");
     // We no longer need the context from LookupControlFlow, so decompose into a standard Result
     // to clean up the rest of the match conditions
-    let Some(result) = response.map_result() else {
+    let Some(result) = response.into_result() else {
         unreachable!("impossible skip detected after final lookup result");
     };
 
@@ -187,7 +186,7 @@ async fn lookup_response(
 
     let mut message = Message::new();
     message.set_header(response_header);
-    message.add_queries(request.queries().iter().map(|q| q.clone()));
+    message.add_queries(request.queries().iter().cloned());
     message.add_answers(sections.answers.iter().cloned());
     message.add_name_servers(sections.ns.iter().cloned());
     message.add_name_servers(sections.soa.iter().cloned());
@@ -201,14 +200,14 @@ async fn lookup_response(
 }
 
 struct LookupSections {
-    answers: AuthLookup,
-    ns: AuthLookup,
-    soa: AuthLookup,
-    additionals: AuthLookup,
+    answers: LookupRecords,
+    ns: LookupRecords,
+    soa: LookupRecords,
+    additionals: LookupRecords,
 }
 
 async fn build_response(
-    result: Result<AuthLookup, LookupError>,
+    result: Result<LookupRecords, LookupError>,
     authority: &(dyn Lookup + Sync),
     _request_id: u16,
     request_header: &Header,
@@ -236,10 +235,10 @@ async fn build_response(
                 return (
                     response_header,
                     LookupSections {
-                        answers: AuthLookup::default(),
-                        ns: AuthLookup::default(),
-                        soa: AuthLookup::default(),
-                        additionals: AuthLookup::default(),
+                        answers: LookupRecords::default(),
+                        ns: LookupRecords::default(),
+                        soa: LookupRecords::default(),
+                        additionals: LookupRecords::default(),
                     },
                 );
             }
@@ -262,7 +261,7 @@ async fn build_response(
                 // This was a successful authoritative lookup for SOA:
                 //   get the NS records as well.
                 tracing::trace!("ns lookup");
-                match authority.ns(lookup_options).await.map_result() {
+                match authority.ns(lookup_options).await.into_result() {
                     Some(Ok(ns)) => (Some(ns), None),
                     Some(Err(e)) => {
                         tracing::warn!("ns_lookup errored: {e}");
@@ -281,7 +280,7 @@ async fn build_response(
         } else {
             tracing::trace!("no answers to process");
             let nsecs = None;
-            match authority.soa_secure(lookup_options).await.map_result() {
+            match authority.soa_secure(lookup_options).await.into_result() {
                 Some(Ok(soa)) => (nsecs, Some(soa)),
                 Some(Err(e)) => {
                     tracing::warn!("failed to lookup soa: {e}");
@@ -299,16 +298,16 @@ async fn build_response(
         let (answers, additionals) = match answers {
             Some(mut answers) => match answers.take_additionals() {
                 Some(additionals) => (answers, additionals),
-                None => (answers, LookupRecords::default()),
+                None => (answers, Vec::new()),
             },
-            None => (AuthLookup::default(), LookupRecords::default()),
+            None => (LookupRecords::default(), Vec::new()),
         };
 
         let sections = LookupSections {
             answers,
-            ns: ns.unwrap_or_else(|| AuthLookup::default()),
-            soa: soa.unwrap_or_else(|| AuthLookup::default()),
-            additionals: additionals.into(),
+            ns: ns.unwrap_or_else(LookupRecords::default),
+            soa: soa.unwrap_or_else(LookupRecords::default),
+            additionals: LookupRecords::records(additionals, Default::default()),
         };
         (response_header, sections)
     } else {
@@ -316,8 +315,8 @@ async fn build_response(
         response_header.set_recursion_available(true);
 
         enum Answer {
-            Normal(AuthLookup),
-            NoRecords(AuthLookup),
+            Normal(LookupRecords),
+            NoRecords(LookupRecords),
         }
 
         let (answers, authorities) = match result {
@@ -331,14 +330,14 @@ async fn build_response(
                 return (
                     response_header,
                     LookupSections {
-                        answers: AuthLookup::Empty,
-                        ns: AuthLookup::Empty,
-                        soa: AuthLookup::Empty,
-                        additionals: AuthLookup::Empty,
+                        answers: LookupRecords::empty(),
+                        ns: LookupRecords::empty(),
+                        soa: LookupRecords::empty(),
+                        additionals: LookupRecords::empty(),
                     },
                 );
             }
-            Ok(l) => (Answer::Normal(l.into()), AuthLookup::default()),
+            Ok(l) => (Answer::Normal(l), LookupRecords::default()),
             Err(e) if e.is_no_records_found() || e.is_nx_domain() => {
                 tracing::debug!(error = ?e, "error resolving");
 
@@ -365,33 +364,35 @@ async fn build_response(
 
                             match x.record_type() {
                                 RecordType::SOA => None,
-                                _ => Some(Arc::new(RecordSet::from(x.clone()))),
+                                _ => Some(Arc::new(RecordSet::from_record(query.name().into(), Record::from(x.clone())))),
                             }
                         })
                         .collect();
 
-                    AuthLookup::answers(
-                        LookupRecords::many(LookupOptions::default(), authorities),
-                        None,
-                    )
+                    LookupRecords::answers(authorities, Vec::new(), Default::default())
                 } else {
-                    AuthLookup::default()
+                    LookupRecords::default()
                 };
 
                 if let Some(soa) = e.into_soa() {
-                    let soa = soa.into_record_of_rdata();
-                    let record_set = Arc::new(RecordSet::from(soa));
-                    let records = LookupRecords::new(LookupOptions::default(), record_set);
+                    let soa = Record::from(soa.into_record_of_rdata());
+                    let record_set = Arc::new(RecordSet::from_record(query.name().into(), soa));
 
-                    (Answer::NoRecords(AuthLookup::SOA(records)), authorities)
+                    (
+                        Answer::NoRecords(LookupRecords::soa(record_set, LookupOptions::default())),
+                        authorities,
+                    )
                 } else {
-                    (Answer::Normal(AuthLookup::Empty), authorities)
+                    (Answer::Normal(LookupRecords::empty()), authorities)
                 }
             }
             Err(e) => {
                 response_header.set_response_code(ResponseCode::ServFail);
                 tracing::debug!(error = ?e, "error resolving");
-                (Answer::Normal(AuthLookup::Empty), AuthLookup::Empty)
+                (
+                    Answer::Normal(LookupRecords::empty()),
+                    LookupRecords::empty(),
+                )
             }
         };
 
@@ -411,7 +412,7 @@ async fn build_response(
                 })
                 .collect();
 
-            AuthLookup::answers(LookupRecords::many(LookupOptions::default(), auth), None)
+            LookupRecords::answers(auth, Default::default(), Default::default())
         } else {
             authorities
         };
@@ -420,14 +421,14 @@ async fn build_response(
             Answer::Normal(answers) => LookupSections {
                 answers,
                 ns: authorities,
-                soa: AuthLookup::default(),
-                additionals: AuthLookup::default(),
+                soa: LookupRecords::default(),
+                additionals: LookupRecords::default(),
             },
             Answer::NoRecords(soa) => LookupSections {
-                answers: AuthLookup::Empty,
+                answers: LookupRecords::empty(),
                 ns: authorities,
                 soa,
-                additionals: AuthLookup::Empty,
+                additionals: LookupRecords::empty(),
             },
         };
 
@@ -459,7 +460,7 @@ async fn lookup(
             "querying"
         );
 
-        let result = authority.search(query, lookup_options).await;
+        let result = authority.search(query, lookup_options.clone()).await;
 
         if let LookupControlFlow::Skip = result {
             tracing::trace!("authority {} skipped", authority.origin());
@@ -778,7 +779,7 @@ where
             }
 
             let mut response = Message::new();
-            response.add_queries(request.queries().iter().map(|lq| lq.clone()));
+            response.add_queries(request.queries().iter().cloned());
             response
                 .set_id(request.id())
                 .set_op_code(OpCode::Update)
@@ -806,7 +807,7 @@ where
     async fn handle_edns(&self, request: &Incoming<Message>) -> Result<Option<Edns>, Message> {
         if let Some(req_edns) = request.extensions().as_ref() {
             let mut response = Message::new();
-            response.add_queries(request.queries().iter().map(|lq| lq.clone()));
+            response.add_queries(request.queries().iter().cloned());
             let mut response_header = Header::response_from_request(request.header());
 
             let mut resp_edns: Edns = Edns::new();

@@ -18,20 +18,18 @@
 use std::sync::Arc;
 
 use hickory_proto::op::{MessageType, Query, ResponseCode};
-use hickory_proto::rr::{LowerName, Name, RData, Record, RecordSet, RecordType, rdata::A};
+use hickory_proto::rr::{LowerName, Name, RData, RecordType, rdata::A};
 use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 
-use hickory_server::authority::{
-    AuthLookup, LookupControlFlow, LookupError, LookupOptions, LookupRecords,
-};
+use hickory_server::authority::LookupError;
 
 mod support;
 use support::TestZoneStore;
 use support::subscribe;
 use walnut_dns::Catalog;
-use walnut_dns::authority::{Lookup, ZoneInfo};
+use walnut_dns::authority::{Lookup, LookupControlFlow, LookupOptions, LookupRecords, ZoneInfo};
 use walnut_dns::messages::{Message, Protocol, server::Incoming};
-use walnut_dns::rr::{SerialNumber, TimeToLive, ZoneType};
+use walnut_dns::rr::{Record, RecordSet, SerialNumber, TimeToLive, ZoneType};
 
 /// Tests the catalog's chained-authority resolution.
 #[tokio::test]
@@ -183,11 +181,11 @@ impl Lookup for TestAuthority {
         name: &Name,
         query_type: RecordType,
         lookup_options: LookupOptions,
-    ) -> LookupControlFlow<AuthLookup> {
+    ) -> LookupControlFlow<LookupRecords> {
         // SOA lookups are issued by the catalog while building negative responses (see
         // `soa_secure`). We don't model an SOA record here, so return an empty answer.
         if query_type == RecordType::SOA {
-            return LookupControlFlow::Continue(Ok(AuthLookup::default()));
+            return LookupControlFlow::Continue(Ok(LookupRecords::default()));
         }
 
         match inner_lookup(name, &self.records, lookup_options) {
@@ -219,20 +217,20 @@ fn inner_lookup(
     name: &Name,
     records: &TestRecords,
     lookup_options: LookupOptions,
-) -> Option<LookupControlFlow<AuthLookup>> {
+) -> Option<LookupControlFlow<LookupRecords>> {
     let ascii_name = LowerName::from(name).to_string();
     tracing::debug!("inner_lookup {ascii_name}");
     for (record_name, (response_type, response_record)) in records.iter() {
         tracing::trace!("inner_lookup check {record_name}");
         if *record_name == ascii_name {
-            let mut rset = RecordSet::new(name.clone(), RecordType::A, 1);
+            let mut rset = RecordSet::new(name.clone(), RecordType::A);
             rset.insert(
-                Record::from_rdata(name.clone(), 3600, RData::A(*response_record)),
-                1,
-            );
+                Record::from_rdata(name.clone(), 3600.into(), RData::A(*response_record)),
+                1.into(),
+            )
+            .unwrap();
 
-            let records = LookupRecords::new(lookup_options, Arc::new(rset));
-            let lookup = AuthLookup::answers(records, None);
+            let lookup = LookupRecords::answers(vec![Arc::new(rset)], Vec::new(), lookup_options);
 
             use LookupControlFlow::*;
             return Some(match response_type {

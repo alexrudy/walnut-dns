@@ -64,9 +64,7 @@ impl<Z: Clone + Send + Sync> CatalogStore<Z> for TestZoneStore<Z> {
         Ok(data
             .keys()
             .filter(|k| name.zone_of(k))
-            .cloned()
-            .map(Into::into)
-            .collect())
+            .cloned().collect())
     }
 
     async fn remove(&self, name: &walnut_dns::rr::Name) -> Result<Option<Vec<Z>>, CatalogError> {

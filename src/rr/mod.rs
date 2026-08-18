@@ -9,7 +9,8 @@ mod ttl;
 mod zone;
 
 pub use self::id::{QueryID, RecordID, ZoneID};
-pub use self::record::Record;
+pub use self::record::{Record, RecordRef};
+pub(crate) use self::rset::RecordSetIter;
 pub use self::rset::{Mismatch, RecordSet};
 pub use self::sequence::SerialNumber;
 pub use self::sql::{NameExt, SqlName};
@@ -20,10 +21,10 @@ pub use self::zone::{Zone, ZoneType};
 ///
 pub use hickory_proto::rr::Name;
 
-///
+/// DNS Class
 pub use hickory_proto::rr::DNSClass;
 
-///
+/// DNS Record Type
 pub use hickory_proto::rr::RecordType;
 
 /// Trait for converting walnut-dns types to their hickory-dns equivalents

@@ -2,10 +2,14 @@ use hickory_proto::{
     op::ResponseCode,
     rr::{DNSClass, LowerName, RData, RecordType},
 };
-use hickory_server::authority::{LookupOptions, UpdateResult};
+use hickory_server::authority::UpdateResult;
 use tracing::warn;
 
-use crate::Lookup;
+use crate::{
+    Lookup,
+    authority::lookup::LookupOptions,
+    rr::{Record, TimeToLive},
+};
 
 use super::DnsSecZone;
 
@@ -92,10 +96,7 @@ where
     ///   NONE     rrset    empty    RRset does not exist
     ///   zone     rrset    rr       RRset exists (value dependent)
     /// ```
-    pub async fn verify_prerequisites(
-        &self,
-        pre_requisites: &[hickory_proto::rr::Record],
-    ) -> UpdateResult<()> {
+    pub async fn verify_prerequisites(&self, pre_requisites: &[Record]) -> UpdateResult<()> {
         //   3.2.5 - Pseudocode for Prerequisite Section Processing
         //
         //      for rr in prerequisites
@@ -132,13 +133,13 @@ where
         for require in pre_requisites {
             let required_name = LowerName::from(require.name());
 
-            if require.ttl() != 0 {
-                warn!("ttl must be 0 for: {:?}", require);
+            if require.ttl() != TimeToLive::ZERO {
+                warn!("ttl must be 0 for: {}", require);
                 return Err(ResponseCode::FormErr);
             }
 
             let origin = self.origin();
-            if !origin.zone_of(&require.name()) {
+            if !origin.zone_of(require.name()) {
                 warn!("{} is not a zone_of {}", require.name(), origin);
                 return Err(ResponseCode::NotZone);
             }
@@ -157,7 +158,7 @@ where
                                     )
                                     .await
                                     .unwrap_or_default()
-                                    .was_empty()
+                                    .is_empty()
                                 {
                                     return Err(ResponseCode::NXDomain);
                                 } else {
@@ -166,11 +167,12 @@ where
                             }
                             // ANY      rrset    empty    RRset exists (value independent)
                             rrset => {
+                                tracing::debug!("Lookup {required_name:?} {rrset}");
                                 if self
                                     .lookup(&required_name, rrset, LookupOptions::default())
                                     .await
                                     .unwrap_or_default()
-                                    .was_empty()
+                                    .is_empty()
                                 {
                                     return Err(ResponseCode::NXRRSet);
                                 } else {
@@ -195,7 +197,7 @@ where
                                     )
                                     .await
                                     .unwrap_or_default()
-                                    .was_empty()
+                                    .is_empty()
                                 {
                                     return Err(ResponseCode::YXDomain);
                                 } else {
@@ -208,7 +210,7 @@ where
                                     .lookup(&required_name, rrset, LookupOptions::default())
                                     .await
                                     .unwrap_or_default()
-                                    .was_empty()
+                                    .is_empty()
                                 {
                                     return Err(ResponseCode::YXRRSet);
                                 } else {
@@ -300,7 +302,7 @@ where
     ///   type, else signal FORMERR to the requestor.
     /// ```
     #[allow(clippy::unused_unit)]
-    pub async fn pre_scan(&self, records: &[hickory_proto::rr::Record]) -> UpdateResult<()> {
+    pub async fn pre_scan(&self, records: &[Record]) -> UpdateResult<()> {
         // 3.4.1.3 - Pseudocode For Update Section Prescan
         //
         //      [rr] for rr in updates
@@ -319,7 +321,7 @@ where
         //           else
         //                return (FORMERR)
         for rr in records {
-            if !self.origin().zone_of(&rr.name()) {
+            if !self.origin().zone_of(rr.name()) {
                 return Err(ResponseCode::NotZone);
             }
 
@@ -334,7 +336,7 @@ where
             } else {
                 match class {
                     DNSClass::ANY => {
-                        if rr.ttl() != 0 {
+                        if rr.ttl() != TimeToLive::ZERO {
                             return Err(ResponseCode::FormErr);
                         }
                         if let RData::Update0(_) | RData::NULL(..) = rr.data() {
@@ -350,7 +352,7 @@ where
                         }
                     }
                     DNSClass::NONE => {
-                        if rr.ttl() != 0 {
+                        if rr.ttl() != TimeToLive::ZERO {
                             return Err(ResponseCode::FormErr);
                         }
                         match rr.record_type() {

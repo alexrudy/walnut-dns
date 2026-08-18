@@ -9,10 +9,11 @@ use hickory_proto::xfer::DnsResponse;
 use hickory_proto::{
     ProtoError,
     op::{Edns, Header, MessageType, OpCode, Query, ResponseCode},
-    rr::{Record, RecordType},
+    rr::RecordType,
     serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder},
 };
 
+use crate::rr::Record;
 use tracing::{debug, warn};
 
 /// An alias for results returned by functions of this crate
@@ -1050,6 +1051,8 @@ impl fmt::Display for Message {
 
 #[cfg(test)]
 mod tests {
+    use crate::rr::TimeToLive;
+
     use super::*;
 
     /// A minimal placeholder record used to populate message sections in the round-trip tests.
@@ -1057,7 +1060,11 @@ mod tests {
     /// This is equivalent to hickory-proto's crate-private `Record::stub()`: a root-named,
     /// zero-TTL `Update0(NULL)` record in the `IN` class.
     fn stub_record() -> Record {
-        Record::update0(hickory_proto::rr::Name::root(), 0, RecordType::NULL)
+        Record::update0(
+            hickory_proto::rr::Name::root(),
+            TimeToLive::ZERO,
+            RecordType::NULL,
+        )
     }
 
     #[test]

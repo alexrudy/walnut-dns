@@ -6,10 +6,10 @@ use std::{
 use hickory_proto::{
     ProtoError,
     op::{Header, Query},
-    rr::Record,
 };
 
 use super::{Message, Protocol};
+use crate::rr::Record;
 
 #[derive(Debug, Clone)]
 pub struct Incoming<M> {

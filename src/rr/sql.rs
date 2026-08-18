@@ -105,10 +105,9 @@ mod tests {
     }
 
     #[test]
-    fn test_sql_name_from_lower_name() {
+    fn test_sql_name_from_name() {
         let name = Name::from_utf8("example.com.").unwrap();
-        let lower_name = Name::from(name);
-        let sql_name = SqlName::from(lower_name);
+        let sql_name = SqlName::from(name);
 
         assert!(sql_name.to_utf8().starts_with("example.com."));
     }
