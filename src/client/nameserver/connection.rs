@@ -1,5 +1,6 @@
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+#[cfg(feature = "tls")]
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
