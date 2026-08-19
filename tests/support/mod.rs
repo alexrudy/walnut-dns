@@ -53,18 +53,15 @@ impl<Z: Clone + Send + Sync> CatalogStore<Z> for TestZoneStore<Z> {
         }
     }
 
-    async fn upsert(&self, name: walnut_dns::rr::Name, zones: &[Z]) -> Result<(), CatalogError> {
+    async fn upsert(&self, name: walnut_dns::rr::Name, zones: &[&Z]) -> Result<(), CatalogError> {
         let mut data = self.zones.lock().expect("poisoned");
-        data.insert(name, zones.to_vec());
+        data.insert(name, zones.into_iter().map(|z| (*z).clone()).collect());
         Ok(())
     }
 
     async fn list(&self, name: &Name) -> Result<Vec<Name>, CatalogError> {
         let data = self.zones.lock().expect("poisoned");
-        Ok(data
-            .keys()
-            .filter(|k| name.zone_of(k))
-            .cloned().collect())
+        Ok(data.keys().filter(|k| name.zone_of(k)).cloned().collect())
     }
 
     async fn remove(&self, name: &walnut_dns::rr::Name) -> Result<Option<Vec<Z>>, CatalogError> {

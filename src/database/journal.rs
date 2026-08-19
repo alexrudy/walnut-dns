@@ -6,6 +6,7 @@ use crate::{authority::Journal, catalog::CatalogError, rr::Zone};
 /// The SqliteJournal provides a way to record DNS operations (like record insertions
 /// and zone updates) to a SQLite database. This is useful for auditing, replication,
 /// and maintaining operation history.
+#[derive(Debug, Clone)]
 pub struct SqliteJournal {
     manager: ConnectionManager,
 }

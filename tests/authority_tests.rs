@@ -966,14 +966,14 @@ async fn test_get_nsec() {
 async fn test_journal() {
     subscribe();
     // test that this message can be inserted
-    let catalog = DnsSecStore::new(
+    let catalog = DnsSecStore::new_sqlite(
         SqliteStore::new_in_memory()
             .await
             .expect("could not create in memory DB"),
     );
 
     let mut authority = DnsSecZone::new(create_example());
-    authority.set_journal(catalog.journal());
+    authority.set_journal(catalog.journal().clone());
     authority.persist_to_journal().await.unwrap();
 
     let new_name = Name::from_str("new.example.com.").unwrap();
@@ -1046,14 +1046,14 @@ async fn test_journal() {
 async fn test_recovery() {
     subscribe();
     // test that this message can be inserted
-    let catalog = DnsSecStore::new(
+    let catalog = DnsSecStore::new_sqlite(
         SqliteStore::new_in_memory()
             .await
             .expect("could not create in memory DB"),
     );
 
     let mut authority = DnsSecZone::new(create_example());
-    authority.set_journal(catalog.journal());
+    authority.set_journal(catalog.journal().clone());
     authority.persist_to_journal().await.unwrap();
 
     let recovered_authority = catalog

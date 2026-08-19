@@ -66,6 +66,18 @@ pub trait Journal<Z> {
     async fn upsert_zone(&self, zone: &Z) -> Result<(), CatalogError>;
 }
 
+/// Dummy implementation for disabling journaling.
+#[async_trait::async_trait]
+impl<Z> Journal<Z> for () {
+    async fn insert_records(&self, _zone: &Z, _records: &[Record]) -> Result<(), CatalogError> {
+        Ok(())
+    }
+
+    async fn upsert_zone(&self, _zone: &Z) -> Result<(), CatalogError> {
+        Ok(())
+    }
+}
+
 /// Error type for DNSSEC zone operations
 ///
 /// This error type unifies various errors that can occur during DNSSEC zone

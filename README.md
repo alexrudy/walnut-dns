@@ -3,7 +3,7 @@
 [![Build Status][build-image]][build-link]
 ![MIT licensed][license-image]
 
-Walnut-DNS is an extension to [hickory-dns][], a pure rust DNS server.
+Walnut-DNS is an extension/fork of [hickory-dns][], a pure rust DNS server.
 
 Walnut-DNS enables stoarge using sqlite instead of zone files.
 

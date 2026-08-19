@@ -1,4 +1,5 @@
 use std::fmt;
+use std::ops::Deref as _;
 use std::sync::Arc;
 
 use hickory_proto::dnssec::crypto::signing_key_from_der;
@@ -8,11 +9,13 @@ use hickory_proto::rr::Name;
 use rustls_pki_types::PrivateKeyDer;
 use zeroize::Zeroizing;
 
-use crate::authority::{DnsSecZone, DnsSecZoneError};
+use crate::ZoneInfo as _;
+use crate::authority::{DnsSecZone, DnsSecZoneError, Journal};
 use crate::catalog::{CatalogError, CatalogStore};
-use crate::database::journal::SqliteJournal;
 use crate::rr::{TimeToLive, Zone};
-use crate::{SqliteStore, ZoneInfo as _};
+
+use super::SqliteStore;
+use super::journal::SqliteJournal;
 
 /// DNSSEC cryptographic key for zone signing
 ///
@@ -77,32 +80,68 @@ impl DnsKey {
 /// including key management and automatic zone signing. It provides the same
 /// storage interface as SqliteStore but returns DNSSEC-enabled zones.
 #[derive(Debug, Clone)]
-pub struct DnsSecStore {
-    catalog: SqliteStore,
+pub struct DnsSecStore<S, J> {
+    store: S,
+    journal: J,
     keys: Vec<Arc<DnsKey>>,
     allow_update: bool,
     dnssec_enabled: bool,
 }
 
-impl DnsSecStore {
-    /// Create a new DNSSEC store from a regular SQLite store
+impl<S> DnsSecStore<S, ()> {
+    /// Create a new DNSSEC store from a regular store
     ///
-    /// Wraps an existing SqliteStore to provide DNSSEC functionality.
-    /// The store starts with DNSSEC disabled and no keys configured.
     ///
     /// # Arguments
     ///
-    /// * `catalog` - The underlying SQLite store
+    /// * `store` - The underlying SQLite store
+    /// * `journal` - The journal store used for transaction tracking
     ///
     /// # Returns
     ///
     /// A new DNSSecStore instance
-    pub fn new(catalog: SqliteStore) -> Self {
+    pub fn new(store: S) -> Self {
         Self {
-            catalog,
+            store,
+            journal: (),
             keys: Vec::new(),
             allow_update: false,
             dnssec_enabled: false,
+        }
+    }
+}
+
+impl DnsSecStore<SqliteStore, SqliteJournal> {
+    /// Create a new DNSSEC store from a regular SQLite store and use that same
+    /// store as the journal.
+    ///
+    /// # Arguments
+    ///
+    /// * `store` - The underlying SQLite store
+    ///
+    /// # Returns
+    ///
+    /// A new DNSSecStore instance
+    pub fn new_sqlite(store: SqliteStore) -> Self {
+        let journal = store.journal();
+        Self {
+            store,
+            journal,
+            keys: Vec::new(),
+            allow_update: false,
+            dnssec_enabled: false,
+        }
+    }
+}
+
+impl<S, J> DnsSecStore<S, J> {
+    pub fn with_journal<J2>(self, journal: J2) -> DnsSecStore<S, J2> {
+        DnsSecStore {
+            store: self.store,
+            journal,
+            keys: self.keys,
+            allow_update: self.allow_update,
+            dnssec_enabled: self.dnssec_enabled,
         }
     }
 
@@ -193,16 +232,21 @@ impl DnsSecStore {
     /// # Returns
     ///
     /// A SqliteJournal instance
-    pub fn journal(&self) -> SqliteJournal {
-        self.catalog.journal()
+    pub fn journal(&self) -> &J {
+        &self.journal
     }
+}
 
+impl<S, J> DnsSecStore<S, J>
+where
+    J: Journal<DnsSecZone<Zone>> + Clone + Send + Sync + 'static,
+{
     fn map_zone(&self, zone: Zone) -> Result<DnsSecZone<Zone>, DnsSecZoneError> {
         let mut dnsseczone = DnsSecZone::new(zone);
         dnsseczone
             .set_allow_update(self.allow_update)
             .set_dnssec_enabled(self.dnssec_enabled)
-            .set_journal(self.catalog.journal());
+            .set_journal(self.journal.clone());
         for key in &self.keys {
             dnsseczone.add_zone_signing_key(key.build(dnsseczone.origin().clone())?)?;
         }
@@ -211,10 +255,14 @@ impl DnsSecStore {
 }
 
 #[async_trait::async_trait]
-impl CatalogStore<DnsSecZone<Zone>> for DnsSecStore {
+impl<S, J> CatalogStore<DnsSecZone<Zone>> for DnsSecStore<S, J>
+where
+    S: CatalogStore<Zone> + Sync + 'static,
+    J: Journal<DnsSecZone<Zone>> + Clone + Send + Sync + 'static,
+{
     #[tracing::instrument(skip_all, fields(%origin), level = "debug")]
     async fn find(&self, origin: &Name) -> Result<Option<Vec<DnsSecZone<Zone>>>, CatalogError> {
-        let zones = self.catalog.find(origin).await?;
+        let zones = self.store.find(origin).await?;
         if let Some(zones) = zones {
             Ok(Some(
                 zones
@@ -228,30 +276,17 @@ impl CatalogStore<DnsSecZone<Zone>> for DnsSecStore {
         }
     }
 
-    async fn upsert(&self, name: Name, zones: &[DnsSecZone<Zone>]) -> Result<(), CatalogError> {
-        let mut conn = self.catalog.connection().await?;
-        crate::block_in_place(|| {
-            let tx = conn.transaction()?;
-            let zx = crate::database::ZonePersistence::new(&tx);
-
-            // First clear existing name
-            zx.clear(&name)?;
-            let mut n = 0;
-            for zone in zones {
-                n += zx.upsert(zone)?;
-            }
-            tx.commit()?;
-            tracing::debug!("upsert {n} zones");
-            Ok(())
-        })
+    async fn upsert(&self, name: Name, zones: &[&DnsSecZone<Zone>]) -> Result<(), CatalogError> {
+        let zones = zones.iter().map(|&z| z.deref()).collect::<Vec<&Zone>>();
+        self.store.upsert(name, &zones).await
     }
 
     async fn list(&self, name: &Name) -> Result<Vec<Name>, CatalogError> {
-        self.catalog.list(name).await
+        self.store.list(name).await
     }
 
     async fn remove(&self, name: &Name) -> Result<Option<Vec<DnsSecZone<Zone>>>, CatalogError> {
-        self.catalog
+        self.store
             .remove(name)
             .await
             .map(|dz| dz.map(|zs| zs.into_iter().map(DnsSecZone::new).collect()))

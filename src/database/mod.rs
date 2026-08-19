@@ -437,7 +437,7 @@ impl CatalogStore<Zone> for SqliteStore {
     }
 
     #[tracing::instrument(skip_all, fields(zone=%name), level = "debug")]
-    async fn upsert(&self, name: Name, zones: &[Zone]) -> Result<(), CatalogError> {
+    async fn upsert(&self, name: Name, zones: &[&Zone]) -> Result<(), CatalogError> {
         let mut conn = self.manager.get().await?;
         crate::block_in_place(|| {
             let tx = conn.transaction()?;
@@ -808,7 +808,10 @@ mod tests {
         let zone1 = create_test_zone("test.example.com.");
         let zone2 = create_test_zone("test.example.org.");
         let name = zone1.origin().clone();
-        catalog.upsert(name.clone(), &[zone1, zone2]).await.unwrap();
+        catalog
+            .upsert(name.clone(), &[&zone1, &zone2])
+            .await
+            .unwrap();
 
         // List should contain both zones
         let root = Name::root();

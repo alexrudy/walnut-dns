@@ -98,7 +98,7 @@ pub trait CatalogStore<A> {
     /// # Errors
     ///
     /// Returns an error if the storage backend fails
-    async fn upsert(&self, name: Name, zones: &[A]) -> Result<(), CatalogError>;
+    async fn upsert(&self, name: Name, zones: &[&A]) -> Result<(), CatalogError>;
 
     /// List all zone names in the catalog
     ///
@@ -534,7 +534,9 @@ impl<A> Catalog<A> {
     ///
     /// Returns an error if the underlying storage fails
     pub async fn upsert(&self, name: Name, zones: Vec<A>) -> Result<(), CatalogError> {
-        (*self.zones).upsert(name, &zones).await
+        (*self.zones)
+            .upsert(name, &zones.iter().collect::<Vec<_>>())
+            .await
     }
 
     /// Remove a zone from the catalog
@@ -705,7 +707,7 @@ where
     /// Returns an error if the underlying storage fails
     pub async fn insert(&self, zone: A) -> Result<(), CatalogError> {
         let name = zone.origin().clone();
-        (*self.zones).upsert(name, &[zone]).await
+        (*self.zones).upsert(name, &[&zone]).await
     }
 }
 
