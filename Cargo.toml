@@ -86,7 +86,6 @@ features = [
 ]
 
 [dev-dependencies]
-hickory-proto = { version = "0.25", features = ["tls-ring"] }
 serde_json = "1.0"
 tempfile = "3.27"
 tokio = "1"
