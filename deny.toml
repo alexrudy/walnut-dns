@@ -4,21 +4,20 @@
 [advisories]
 yanked = "warn"
 ignore = [
-    "RUSTSEC-2026-0009"
+    "RUSTSEC-2026-0009",
+    "RUSTSEC-2026-0118",
+    "RUSTSEC-2026-0119"
 ]
 
 [licenses]
+unused-allowed-license = "allow"
 allow = ["MIT", "Apache-2.0", "Unicode-3.0", "Zlib", "ISC", "BSD-3-Clause", "CDLA-Permissive-2.0", "OpenSSL"]
 
 [bans]
 multiple-versions = "warn"
-skip-tree = ["windows-sys"]
+skip-tree = ["windows-sys", "rand@0.9.5", "hickory-proto"]
+skip = ["winnow@1.0.4", "hashbrown@0.15.5" ]
 
 [sources]
 unknown-registry = "warn"
 unknown-git = "warn"
-
-[sources.allow-org]
-github = [
-    "alexrudy",
-]
