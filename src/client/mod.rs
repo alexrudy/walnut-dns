@@ -5,30 +5,34 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use chateau::services::SharedService;
-use hickory_proto::ProtoError;
-use hickory_proto::op::{Edns, Header, OpCode, Query, ResponseCode};
+use hickory_proto::op::{Edns, OpCode, Query};
 use hickory_proto::rr::{DNSClass, Name, RecordType};
 use pin_project::pin_project;
 use serde::Deserialize;
 use tower::ServiceExt;
 
 use crate::cache::{DnsCache, DnsCacheService};
-use crate::codec::CodecError;
 use crate::messages::{DnsRequest, DnsRequestOptions, DnsResponse, Message};
 use crate::rr::RecordSet;
 
+pub use self::error::DnsClientError;
 #[cfg(feature = "h2")]
 pub use self::http::{DnsOverHttp, DnsOverHttpLayer, DnsOverHttpsFuture};
 pub use self::messages::{DnsRequestLayer, DnsRequestMiddleware, ResponseAdapter};
 use self::nameserver::{Nameserver, NameserverConfig, Pool, PoolConfig};
+pub use self::udp::{
+    DnsUdpConnection, DnsUdpConnectionConfiguration, DnsUdpProtocol, DnsUdpTransport,
+};
 
+mod error;
 #[cfg(feature = "h2")]
 mod http;
 mod messages;
 pub mod nameserver;
 mod udp;
 
-type DnsService = chateau::services::SharedService<DnsRequest, DnsResponse, DnsClientError>;
+pub(crate) type DnsService =
+    chateau::services::SharedService<DnsRequest, DnsResponse, DnsClientError>;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClientConfiguration {
@@ -205,51 +209,6 @@ impl Client {
 
         let request = DnsRequest::new(message, options);
         ClientResponseFuture(self.inner.clone().oneshot(request))
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum DnsClientError {
-    #[error("DNS Protocol: {0}")]
-    DnsProtocol(#[from] ProtoError),
-
-    #[error("Invalid response for message {}: {}", .0.id(), .1)]
-    Response(Header, ResponseCode),
-
-    #[cfg(feature = "h2")]
-    #[error("Http Request Error: {0}")]
-    Http(#[from] hyper::Error),
-
-    #[error(transparent)]
-    Service(Box<dyn std::error::Error + Send + Sync>),
-
-    #[error("Transport Error: {0}")]
-    Transport(#[source] Box<dyn std::error::Error + Send + Sync>),
-
-    #[error("Protocol Error: {0}")]
-    Protocol(#[source] Box<dyn std::error::Error + Send + Sync>),
-
-    #[error("Connection closed")]
-    Closed,
-
-    #[error("Unavailalbe: {0}")]
-    Unavailable(String),
-
-    #[error("Cache: {0}")]
-    Cache(#[source] Box<dyn std::error::Error + Send + Sync>),
-}
-
-impl From<CodecError> for DnsClientError {
-    fn from(value: CodecError) -> Self {
-        match value {
-            CodecError::DropMessage(proto_error, _) | CodecError::Protocol(proto_error) => {
-                DnsClientError::DnsProtocol(proto_error)
-            }
-            CodecError::FailedMessage(header, response_code) => {
-                DnsClientError::Response(header, response_code)
-            }
-            CodecError::IO(_) => DnsClientError::Closed,
-        }
     }
 }
 

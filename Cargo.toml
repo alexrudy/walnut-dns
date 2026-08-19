@@ -72,7 +72,7 @@ features = ["env-filter", "json", "fmt", "ansi", "std"]
 optional = true
 
 [dependencies.chateau]
-features = ["client", "codec", "server"]
+features = ["client", "codec", "server", "serde"]
 version = "0.4"
 
 [dependencies.hyperdriver]

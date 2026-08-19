@@ -1,33 +1,29 @@
-use std::{
-    future::Ready,
-    io,
-    net::SocketAddr,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll, ready},
-};
+use std::future::Ready;
+use std::io;
+use std::net::SocketAddr;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll, ready};
 
-use crate::codec::DnsCodec;
-use chateau::{
-    client::{
-        conn::{
-            Connection,
-            protocol::{
-                Multiplexed,
-                framed::{FramedConnection, ResponseFuture},
-            },
-        },
-        pool::{PoolableConnection, PoolableStream},
-    },
-    info::HasConnectionInfo,
-};
+use chateau::client::ConnectionManagerService;
+use chateau::client::conn::Connection;
+use chateau::client::conn::protocol::Multiplexed;
+use chateau::client::conn::protocol::framed::{FramedConnection, ResponseFuture};
+use chateau::client::conn::service::ClientExecutorService;
+use chateau::client::pool::manager::ConnectionManagerConfig;
+use chateau::client::pool::{PoolableConnection, PoolableStream};
+use chateau::info::HasConnectionInfo;
+use chateau::services::SharedService;
 use futures::future::BoxFuture;
+use serde::Deserialize;
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 use tokio_util::udp::UdpFramed;
 
+use crate::codec::DnsCodec;
+use crate::messages::{Message, Protocol};
+
 use super::DnsClientError;
-use crate::messages::Message;
 
 #[derive(Clone)]
 enum Bind {
@@ -46,6 +42,14 @@ impl DnsUdpTransport {
     pub fn new(bind: SocketAddr, address: SocketAddr) -> Self {
         Self {
             bind: Arc::new(Mutex::new(Bind::Address(bind))),
+            address,
+        }
+    }
+
+    /// Share this UDP connection with another address
+    pub fn share(&self, address: SocketAddr) -> Self {
+        Self {
+            bind: self.bind.clone(),
             address,
         }
     }
@@ -236,5 +240,40 @@ impl Future for DnsUdpConnectionFuture {
             Ok((response, _)) => Poll::Ready(Ok(response)),
             Err(error) => Poll::Ready(Err(DnsClientError::Protocol(error.into()))),
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DnsUdpConnectionConfiguration {
+    /// Remote address to use for destination of outbound DNS requests
+    pub remote_addr: SocketAddr,
+
+    /// Local address to bind the UDP socket to for listening.
+    pub local_addr: SocketAddr,
+
+    /// Configuration for the connection manager for sharing connections
+    pub manager: ConnectionManagerConfig,
+
+    /// Enable background worker for this UDP connection
+    pub worker: bool,
+}
+
+impl DnsUdpConnectionConfiguration {
+    /// Builds a shared service for the UDP connection.
+    pub fn build(self) -> SharedService<Message, Message, DnsClientError> {
+        let codec: DnsCodec<Message, Message> = DnsCodec::new_for_protocol(Protocol::Udp);
+        let transport = DnsUdpTransport::new(self.local_addr, self.remote_addr);
+        let protocol = DnsUdpProtocol::new(codec, /* spawn worker */ self.worker);
+
+        let svc = tower::ServiceBuilder::new().map_err(Into::into).service(
+            ConnectionManagerService::new(
+                transport,
+                protocol,
+                ClientExecutorService::new(),
+                self.manager,
+            ),
+        );
+
+        SharedService::new(svc)
     }
 }

@@ -210,6 +210,7 @@ dependencies = [
  "pin-project",
  "rustls",
  "rustls-native-certs",
+ "serde",
  "socket2 0.6.5",
  "thiserror",
  "tokio",

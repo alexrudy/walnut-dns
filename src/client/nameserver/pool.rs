@@ -1,12 +1,8 @@
-use std::{
-    fmt,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::{Context, Poll};
+use std::time::Duration;
 
 use future_eyeballs::{EyeballConfiguration, EyeballSet, HappyEyeballsError};
 use futures::future::BoxFuture;
