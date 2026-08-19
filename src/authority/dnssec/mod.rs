@@ -7,8 +7,9 @@ use chrono::Utc;
 use hickory_proto::ProtoError;
 use hickory_proto::dnssec::rdata::{DNSKEY, DNSSECRData, KEY, NSEC, NSEC3, NSEC3PARAM, RRSIG, SIG};
 use hickory_proto::dnssec::{DnsSecError, DnsSecResult, Nsec3HashAlgorithm, SigSigner, TBS};
+use hickory_proto::op::ResponseCode;
 use hickory_proto::rr::{DNSClass, LowerName, RData, RecordType, RrKey};
-use hickory_server::authority::{Nsec3QueryInfo, UpdateResult};
+use hickory_server::authority::Nsec3QueryInfo;
 use hickory_server::dnssec::NxProofKind;
 
 use super::lookup::{LookupControlFlow, LookupOptions, LookupRecords};
@@ -955,7 +956,7 @@ impl<Z> Update for DnsSecZone<Z>
 where
     Z: Update + Lookup + Records + Clone + Sync + Send + 'static,
 {
-    async fn update(&mut self, update: &Incoming<Message>) -> UpdateResult<bool> {
+    async fn update(&mut self, update: &Incoming<Message>) -> Result<bool, ResponseCode> {
         // the spec says to authorize after prereqs, seems better to auth first.
         self.authorize(update).await?;
         self.verify_prerequisites(update.prerequisites()).await?;

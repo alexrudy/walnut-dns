@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use hickory_proto::op::{Query, ResponseCode};
 use hickory_proto::rr::{DNSClass, LowerName, Name, RecordType, RrKey};
-use hickory_server::authority::{Nsec3QueryInfo, UpdateResult};
+use hickory_server::authority::Nsec3QueryInfo;
 use hickory_server::dnssec::NxProofKind;
 
 use crate::messages::Message;
@@ -546,7 +546,7 @@ pub trait Update: ZoneInfo {
     ///
     /// 3.4.2.5. Signal NOERROR to the requestor.
     /// ```
-    async fn update(&mut self, _update: &Incoming<Message>) -> UpdateResult<bool>;
+    async fn update(&mut self, _update: &Incoming<Message>) -> Result<bool, ResponseCode>;
 
     async fn get_nsec_records(
         &self,
@@ -565,7 +565,7 @@ pub trait Update: ZoneInfo {
 
 #[async_trait::async_trait]
 impl Update for Zone {
-    async fn update(&mut self, _update: &Incoming<Message>) -> UpdateResult<bool> {
+    async fn update(&mut self, _update: &Incoming<Message>) -> Result<bool, ResponseCode> {
         // No update for non-DNSSEC Zone
         if ZoneInfo::is_axfr_allowed(self) {
             tracing::warn!(origin=%ZoneInfo::origin(self), "No update for non-DNSSEC Zone");

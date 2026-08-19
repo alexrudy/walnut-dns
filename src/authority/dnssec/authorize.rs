@@ -3,7 +3,6 @@ use hickory_proto::{
     op::ResponseCode,
     rr::RecordType,
 };
-use hickory_server::authority::UpdateResult;
 use tracing::{info, warn};
 
 use crate::{
@@ -69,7 +68,7 @@ where
     ///   requestor.
     /// ```
     ///
-    pub async fn authorize(&self, update_message: &Message) -> UpdateResult<()> {
+    pub async fn authorize(&self, update_message: &Message) -> Result<(), ResponseCode> {
         use tracing::debug;
 
         // 3.3.3 - Pseudocode for Permission Checking

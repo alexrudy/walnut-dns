@@ -2,7 +2,6 @@ use hickory_proto::{
     op::ResponseCode,
     rr::{DNSClass, LowerName, RData, RecordType},
 };
-use hickory_server::authority::UpdateResult;
 use tracing::warn;
 
 use crate::{
@@ -96,7 +95,10 @@ where
     ///   NONE     rrset    empty    RRset does not exist
     ///   zone     rrset    rr       RRset exists (value dependent)
     /// ```
-    pub async fn verify_prerequisites(&self, pre_requisites: &[Record]) -> UpdateResult<()> {
+    pub async fn verify_prerequisites(
+        &self,
+        pre_requisites: &[Record],
+    ) -> Result<(), ResponseCode> {
         //   3.2.5 - Pseudocode for Prerequisite Section Processing
         //
         //      for rr in prerequisites
@@ -302,7 +304,7 @@ where
     ///   type, else signal FORMERR to the requestor.
     /// ```
     #[allow(clippy::unused_unit)]
-    pub async fn pre_scan(&self, records: &[Record]) -> UpdateResult<()> {
+    pub async fn pre_scan(&self, records: &[Record]) -> Result<(), ResponseCode> {
         // 3.4.1.3 - Pseudocode For Update Section Prescan
         //
         //      [rr] for rr in updates

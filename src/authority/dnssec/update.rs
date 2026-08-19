@@ -2,7 +2,6 @@ use hickory_proto::{
     op::ResponseCode,
     rr::{DNSClass, LowerName, RData, RecordType, RrKey},
 };
-use hickory_server::authority::UpdateResult;
 use tracing::{error, info};
 
 use crate::rr::Record;
@@ -71,7 +70,7 @@ where
         &mut self,
         records: &[Record],
         auto_signing_and_increment: bool,
-    ) -> UpdateResult<bool> {
+    ) -> Result<bool, ResponseCode> {
         let mut updated = false;
         let serial = self.serial();
 
