@@ -4,7 +4,7 @@
 //! results, including successful lookups, NXDOMAIN responses, and other negative responses.
 //! It provides conversions between the hickory-proto types and the internal representation.
 
-use std::{ops::Add, time::Duration};
+use std::{cmp::min, ops::Add, time::Duration};
 
 use chrono::{DateTime, TimeDelta, TimeZone as _, Utc};
 use hickory_proto::{
@@ -206,6 +206,11 @@ impl Lookup {
         !self.is_success()
     }
 
+    /// Returns the number of records in this lookup.
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+
     /// Checks if the lookup has no records.
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
@@ -301,6 +306,23 @@ impl Lookup {
         } else {
             None
         }
+    }
+
+    /// Clones the inner vec, appends the other vec
+    pub fn append(&self, other: Self) -> Self {
+        let mut records = Vec::with_capacity(self.len() + other.len());
+        records.extend_from_slice(&self.records);
+        records.extend_from_slice(&other.records);
+
+        // Choose the sooner deadline of the two lookups.
+        let valid_until = min(self.valid_until(), other.valid_until());
+        Self::new(
+            QueryID::new(),
+            self.query.clone(),
+            records,
+            ResponseCode::NoError,
+            valid_until,
+        )
     }
 }
 
@@ -449,7 +471,7 @@ impl FromRow for EntryMeta {
 /// let future = now + TimeToLive::from_secs(3600);
 /// let duration = future.since(now);
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CacheTimestamp(DateTime<Utc>);
 
 impl CacheTimestamp {

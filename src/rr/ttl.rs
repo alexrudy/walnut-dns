@@ -19,6 +19,7 @@ impl TimeToLive {
     pub const MAX: TimeToLive = TimeToLive(u32::MAX);
     pub const MIN: TimeToLive = TimeToLive(u32::MIN);
     pub const DEFAULT: TimeToLive = TimeToLive(86400u32);
+    pub const DAY: TimeToLive = TimeToLive(86400u32);
     pub const ZERO: TimeToLive = TimeToLive(0u32);
 
     /// Create a TimeToLive from seconds
