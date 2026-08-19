@@ -8,12 +8,11 @@ use hickory_proto::ProtoError;
 use hickory_proto::dnssec::rdata::{DNSKEY, DNSSECRData, KEY, NSEC, NSEC3, NSEC3PARAM, RRSIG, SIG};
 use hickory_proto::dnssec::{DnsSecError, DnsSecResult, Nsec3HashAlgorithm, SigSigner, TBS};
 use hickory_proto::rr::{DNSClass, LowerName, RData, RecordType, RrKey};
-use hickory_server::authority::LookupError;
 use hickory_server::authority::{Nsec3QueryInfo, UpdateResult};
 use hickory_server::dnssec::NxProofKind;
 
 use super::lookup::{LookupControlFlow, LookupOptions, LookupRecords};
-use super::{Lookup, Records, Update, ZoneInfo};
+use super::{Lookup, LookupError, Records, Update, ZoneInfo};
 use crate::catalog::CatalogError;
 use crate::messages::Message;
 use crate::messages::server::{Incoming, UpdateRequest as _};

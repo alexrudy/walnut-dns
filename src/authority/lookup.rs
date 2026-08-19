@@ -2,9 +2,10 @@ use core::fmt;
 use std::sync::Arc;
 
 use hickory_proto::rr::{Name, RecordType};
-use hickory_server::authority::LookupError;
 
 use crate::rr::{Record, RecordSet, RecordSetIter};
+
+use super::LookupError;
 
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]

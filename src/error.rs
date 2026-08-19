@@ -1,10 +1,9 @@
 use std::io;
 
 use hickory_proto::ProtoError;
-use hickory_server::authority::LookupError;
 use tokio::task::JoinError;
 
-use crate::codec::CodecError;
+use crate::{authority::LookupError, codec::CodecError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum HickoryError {

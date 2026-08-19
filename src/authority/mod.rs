@@ -27,7 +27,6 @@ use std::sync::Arc;
 
 use hickory_proto::op::{Query, ResponseCode};
 use hickory_proto::rr::{DNSClass, LowerName, Name, RecordType, RrKey};
-use hickory_server::authority::LookupError;
 use hickory_server::authority::{Nsec3QueryInfo, UpdateResult};
 use hickory_server::dnssec::NxProofKind;
 
@@ -37,9 +36,11 @@ use crate::rr::{Mismatch, Record, RecordSet, SerialNumber, TimeToLive, Zone, Zon
 
 pub(crate) mod dnssec;
 pub(crate) mod edns;
+pub(crate) mod error;
 pub(crate) mod lookup;
 
 pub use self::dnssec::{DnsSecZone, DnsSecZoneError, Journal};
+pub use self::error::LookupError;
 pub use self::lookup::{LookupControlFlow, LookupOptions, LookupRecords};
 
 pub(crate) type LookupChain<L, E = LookupError> =

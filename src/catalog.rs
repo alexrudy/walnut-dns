@@ -17,11 +17,10 @@ use std::{borrow::Borrow, sync::Arc};
 
 use hickory_proto::op::{Edns, Header, LowerQuery, MessageType, OpCode, ResponseCode};
 use hickory_proto::rr::RecordType;
-use hickory_server::authority::LookupError;
 
 use crate::authority::edns::lookup_options_for_edns;
 use crate::authority::lookup::{LookupControlFlow, LookupOptions, LookupRecords};
-use crate::authority::{Search, Update};
+use crate::authority::{LookupError, Search, Update};
 use crate::error::HickoryError;
 use crate::messages::Message;
 use crate::messages::server::Incoming;
@@ -375,7 +374,6 @@ async fn build_response(
                 };
 
                 if let Some(soa) = e.into_soa() {
-                    let soa = Record::from(soa.into_record_of_rdata());
                     let record_set = Arc::new(RecordSet::from_record(query.name().into(), soa));
 
                     (

@@ -21,13 +21,13 @@ use hickory_proto::op::{MessageType, Query, ResponseCode};
 use hickory_proto::rr::{LowerName, Name, RData, RecordType, rdata::A};
 use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 
-use hickory_server::authority::LookupError;
-
 mod support;
 use support::TestZoneStore;
 use support::subscribe;
 use walnut_dns::Catalog;
-use walnut_dns::authority::{Lookup, LookupControlFlow, LookupOptions, LookupRecords, ZoneInfo};
+use walnut_dns::authority::{
+    Lookup, LookupControlFlow, LookupError, LookupOptions, LookupRecords, ZoneInfo,
+};
 use walnut_dns::messages::{Message, Protocol, server::Incoming};
 use walnut_dns::rr::{Record, RecordSet, SerialNumber, TimeToLive, ZoneType};
 
