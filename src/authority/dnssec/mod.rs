@@ -9,8 +9,6 @@ use hickory_proto::dnssec::rdata::{DNSKEY, DNSSECRData, KEY, NSEC, NSEC3, NSEC3P
 use hickory_proto::dnssec::{DnsSecError, DnsSecResult, Nsec3HashAlgorithm, SigSigner, TBS};
 use hickory_proto::op::ResponseCode;
 use hickory_proto::rr::{DNSClass, LowerName, RData, RecordType, RrKey};
-use hickory_server::authority::Nsec3QueryInfo;
-use hickory_server::dnssec::NxProofKind;
 
 use super::lookup::{LookupControlFlow, LookupOptions, LookupRecords};
 use super::{Lookup, LookupError, Records, Update, ZoneInfo};
@@ -380,7 +378,7 @@ where
 
         let wildcard_match = {
             let wildcard = qname.clone().into_wildcard();
-            self.keys().any(|rr_key| rr_key.name == wildcard)
+            self.keys().any(|rr_key| rr_key.name == (&wildcard).into())
         };
 
         if wildcard_match {
@@ -1047,4 +1045,38 @@ where
     fn nx_proof_kind(&self) -> Option<&NxProofKind> {
         self.nx_proof_kind.as_ref()
     }
+}
+
+/// Information required to compute the NSEC3 records that should be sent for a query.
+pub struct Nsec3QueryInfo<'q> {
+    /// The queried name.
+    pub qname: &'q Name,
+    /// The queried record type.
+    pub qtype: RecordType,
+    /// Whether there was a wildcard match for `qname` regardless of `qtype`.
+    pub has_wildcard_match: bool,
+    /// The algorithm used to hash the names.
+    pub algorithm: Nsec3HashAlgorithm,
+    /// The salt used for hashing.
+    pub salt: &'q [u8],
+    /// The number of hashing iterations.
+    pub iterations: u16,
+}
+
+/// The kind of non-existence proof provided by the nameserver
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NxProofKind {
+    /// Use NSEC
+    Nsec,
+    /// Use NSEC3
+    Nsec3 {
+        /// The algorithm used to hash the names.
+        algorithm: Nsec3HashAlgorithm,
+        /// The salt used for hashing.
+        salt: Arc<[u8]>,
+        /// The number of hashing iterations.
+        iterations: u16,
+        /// The Opt-Out flag.
+        opt_out: bool,
+    },
 }

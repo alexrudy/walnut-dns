@@ -22,7 +22,6 @@ pub use self::http::{DnsOverHttp, DnsOverHttpLayer, DnsOverHttpsFuture};
 pub use self::messages::{DnsRequestLayer, DnsRequestMiddleware, ResponseAdapter};
 use self::nameserver::{Nameserver, NameserverConfig, Pool, PoolConfig};
 
-// mod codec;
 #[cfg(feature = "h2")]
 mod http;
 mod messages;
@@ -268,5 +267,27 @@ impl Future for ClientResponseFuture {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.project().0.poll(cx)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct QuickClient(pub Client);
+
+impl From<Client> for QuickClient {
+    fn from(client: Client) -> Self {
+        Self(client)
+    }
+}
+
+impl QuickClient {
+    pub async fn query(
+        &self,
+        name: Name,
+        query_class: DNSClass,
+        query_type: RecordType,
+    ) -> Result<DnsResponse, DnsClientError> {
+        let mut query = Query::query(name, query_type);
+        query.set_query_class(query_class);
+        self.0.lookup(query, Default::default()).await
     }
 }

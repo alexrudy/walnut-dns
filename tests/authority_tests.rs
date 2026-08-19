@@ -5,17 +5,15 @@ use hickory_proto::rr::Name;
 use hickory_proto::rr::rdata::{A, AAAA, NS, TXT};
 use hickory_proto::rr::{DNSClass, RData, RecordType};
 
-use hickory_server::dnssec::NxProofKind;
-
 use tracing::Instrument as _;
 use walnut_dns::Lookup as _;
 use walnut_dns::SqliteStore;
 use walnut_dns::ZoneInfo as _;
-use walnut_dns::authority::DnsSecZone;
 use walnut_dns::authority::LookupOptions;
 use walnut_dns::authority::Records as _;
 use walnut_dns::authority::Search as _;
 use walnut_dns::authority::Update as _;
+use walnut_dns::authority::{DnsSecZone, NxProofKind};
 use walnut_dns::catalog::CatalogStore;
 use walnut_dns::database::DnsSecStore;
 use walnut_dns::rr::{Record, TimeToLive};
@@ -666,11 +664,7 @@ async fn test_update() {
     {
         // assert that the correct set of records is there.
         let mut www_rrset: Vec<Record> = authority
-            .lookup(
-                &www_name.clone(),
-                RecordType::ANY,
-                LookupOptions::default(),
-            )
+            .lookup(&www_name.clone(), RecordType::ANY, LookupOptions::default())
             .await
             .unwrap()
             .iter()
@@ -683,11 +677,7 @@ async fn test_update() {
         // assert new record doesn't exist
         assert!(
             authority
-                .lookup(
-                    &new_name.clone(),
-                    RecordType::ANY,
-                    LookupOptions::default()
-                )
+                .lookup(&new_name.clone(), RecordType::ANY, LookupOptions::default())
                 .await
                 .unwrap()
                 .is_empty()
@@ -711,11 +701,7 @@ async fn test_update() {
     );
     assert_eq!(
         authority
-            .lookup(
-                &new_name.clone(),
-                RecordType::ANY,
-                LookupOptions::default()
-            )
+            .lookup(&new_name.clone(), RecordType::ANY, LookupOptions::default())
             .await
             .unwrap()
             .iter()
@@ -741,11 +727,7 @@ async fn test_update() {
 
     {
         let mut www_rrset: Vec<_> = authority
-            .lookup(
-                &www_name.clone(),
-                RecordType::ANY,
-                LookupOptions::default(),
-            )
+            .lookup(&www_name.clone(), RecordType::ANY, LookupOptions::default())
             .await
             .unwrap()
             .iter()
@@ -802,11 +784,7 @@ async fn test_update() {
     assert_eq!(serial + 4, authority.serial());
     {
         let mut www_rrset: Vec<_> = authority
-            .lookup(
-                &www_name.clone(),
-                RecordType::ANY,
-                LookupOptions::default(),
-            )
+            .lookup(&www_name.clone(), RecordType::ANY, LookupOptions::default())
             .await
             .unwrap()
             .iter()
@@ -853,11 +831,7 @@ async fn test_update() {
 
     {
         let mut www_rrset: Vec<Record> = authority
-            .lookup(
-                &www_name.clone(),
-                RecordType::ANY,
-                LookupOptions::default(),
-            )
+            .lookup(&www_name.clone(), RecordType::ANY, LookupOptions::default())
             .await
             .unwrap()
             .iter()
@@ -1024,11 +998,7 @@ async fn test_journal() {
 
     // assert that the correct set of records is there.
     let new_rrset: Vec<Record> = authority
-        .lookup(
-            &new_name.clone(),
-            RecordType::A,
-            LookupOptions::default(),
-        )
+        .lookup(&new_name.clone(), RecordType::A, LookupOptions::default())
         .await
         .unwrap()
         .iter()

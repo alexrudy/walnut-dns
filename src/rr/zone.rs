@@ -36,27 +36,6 @@ impl ZoneType {
     }
 }
 
-impl From<ZoneType> for hickory_server::authority::ZoneType {
-    fn from(value: ZoneType) -> Self {
-        match value {
-            ZoneType::Primary => hickory_server::authority::ZoneType::Primary,
-            ZoneType::Secondary => hickory_server::authority::ZoneType::Secondary,
-            ZoneType::External => hickory_server::authority::ZoneType::External,
-        }
-    }
-}
-
-impl From<hickory_server::authority::ZoneType> for ZoneType {
-    fn from(value: hickory_server::authority::ZoneType) -> Self {
-        match value {
-            hickory_server::authority::ZoneType::Primary => ZoneType::Primary,
-            hickory_server::authority::ZoneType::Secondary => ZoneType::Secondary,
-            hickory_server::authority::ZoneType::External => ZoneType::External,
-            _ => panic!("Deprecated zone type"),
-        }
-    }
-}
-
 impl ToSql for ZoneType {
     fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
         match self {
@@ -550,37 +529,6 @@ mod tests {
             86400,
         );
         Record::from_rdata(name, TimeToLive::from(3600), soa)
-    }
-
-    #[test]
-    fn test_zone_type_conversions() {
-        // Test to hickory_server::authority::ZoneType
-        assert_eq!(
-            hickory_server::authority::ZoneType::from(ZoneType::Primary),
-            hickory_server::authority::ZoneType::Primary
-        );
-        assert_eq!(
-            hickory_server::authority::ZoneType::from(ZoneType::Secondary),
-            hickory_server::authority::ZoneType::Secondary
-        );
-        assert_eq!(
-            hickory_server::authority::ZoneType::from(ZoneType::External),
-            hickory_server::authority::ZoneType::External
-        );
-
-        // Test from hickory_server::authority::ZoneType
-        assert_eq!(
-            ZoneType::from(hickory_server::authority::ZoneType::Primary),
-            ZoneType::Primary
-        );
-        assert_eq!(
-            ZoneType::from(hickory_server::authority::ZoneType::Secondary),
-            ZoneType::Secondary
-        );
-        assert_eq!(
-            ZoneType::from(hickory_server::authority::ZoneType::External),
-            ZoneType::External
-        );
     }
 
     #[test]

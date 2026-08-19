@@ -1,10 +1,9 @@
 use std::str::FromStr as _;
 
 use hickory_proto::rr::RData;
-use hickory_server::dnssec::NxProofKind;
 use walnut_dns::{
     Lookup as _, ZoneInfo as _,
-    authority::{DnsSecZone, Records},
+    authority::{DnsSecZone, NxProofKind, Records},
     rr::{Name, Zone, ZoneType},
 };
 
@@ -184,7 +183,6 @@ pub fn create_secure_example() -> DnsSecZone<Zone> {
     use hickory_proto::dnssec::{
         Algorithm, PublicKey, SigSigner, SigningKey, crypto::RsaSigningKey, rdata::DNSKEY,
     };
-    use hickory_server::authority::{Authority, DnssecAuthority};
     use rustls_pki_types::PrivatePkcs8KeyDer;
     use std::time::Duration;
 
