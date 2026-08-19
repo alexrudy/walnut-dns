@@ -55,7 +55,7 @@ impl<Z: Clone + Send + Sync> CatalogStore<Z> for TestZoneStore<Z> {
 
     async fn upsert(&self, name: walnut_dns::rr::Name, zones: &[&Z]) -> Result<(), CatalogError> {
         let mut data = self.zones.lock().expect("poisoned");
-        data.insert(name, zones.into_iter().map(|z| (*z).clone()).collect());
+        data.insert(name, zones.iter().map(|z| (*z).clone()).collect());
         Ok(())
     }
 

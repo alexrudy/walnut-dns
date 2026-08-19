@@ -24,7 +24,7 @@ use crate::authority::{LookupError, Search, Update};
 use crate::error::HickoryError;
 use crate::messages::Message;
 use crate::messages::server::Incoming;
-use crate::rr::{Name, Record, RecordSet};
+use crate::rr::{Name, RecordSet};
 use crate::{Lookup, ZoneInfo};
 
 /// Error type for catalog operations
@@ -363,7 +363,7 @@ async fn build_response(
 
                             match x.record_type() {
                                 RecordType::SOA => None,
-                                _ => Some(Arc::new(RecordSet::from_record(query.name().into(), Record::from(x.clone())))),
+                                _ => Some(Arc::new(RecordSet::from_record(query.name().into(), x.clone()))),
                             }
                         })
                         .collect();
