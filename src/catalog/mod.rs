@@ -27,6 +27,10 @@ use crate::messages::server::Incoming;
 use crate::rr::{Name, RecordSet};
 use crate::{Lookup, ZoneInfo};
 
+mod inmemory;
+
+pub use self::inmemory::InMemoryStore;
+
 /// Error type for catalog operations
 ///
 /// This error type wraps any error that can occur during catalog operations

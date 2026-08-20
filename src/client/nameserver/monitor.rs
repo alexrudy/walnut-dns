@@ -142,7 +142,7 @@ impl SmoothedTimer {
     fn update(&self, default: u32, update_fn: impl Fn(u32, f64) -> u32) {
         let use_default = self.last_update.load(Ordering::Acquire) == 0;
         let last_update = self.since_last_update(Instant::now());
-        let _ = self.srtt_microseconds.fetch_update(
+        let _ = self.srtt_microseconds.try_update(
             Ordering::SeqCst,
             Ordering::SeqCst,
             move |cur_srtt_microseconds| {
@@ -519,7 +519,9 @@ where
         if result.is_ok() {
             this.speed.record(this.started.elapsed());
         }
-        if let Some(p) = this.priority.take() { p.set(&result) }
+        if let Some(p) = this.priority.take() {
+            p.set(&result)
+        }
         this.activity.take();
         Poll::Ready(result)
     }
