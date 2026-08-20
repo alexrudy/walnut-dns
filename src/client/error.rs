@@ -35,6 +35,9 @@ pub enum DnsClientError {
 
     #[error("Cache: {0}")]
     Cache(#[source] Box<dyn std::error::Error + Send + Sync>),
+
+    #[error("Too many CNAME lookups attempted: {0}")]
+    CNameLimitExceeded(usize),
 }
 
 impl From<CodecError> for DnsClientError {

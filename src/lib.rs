@@ -8,6 +8,7 @@ pub mod error;
 pub mod lookup;
 pub mod messages;
 pub mod notify;
+pub mod recursor;
 pub mod resolver;
 pub mod rr;
 pub mod server;
