@@ -4,3 +4,10 @@ edition = "2024"
 
 
 [dependencies]
+uuid.workspace = true
+hickory-proto.workspace = true
+chrono.workspace = true
+rusqlite.workspace = true
+data-encoding.workspace = true
+tracing.workspace = true
+thiserror.workspace = true

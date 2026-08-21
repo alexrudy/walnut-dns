@@ -122,11 +122,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        authority::Records as _,
-        rr::{Record, SerialNumber, TimeToLive, Zone, ZoneType},
-    };
+    use crate::authority::Records as _;
     use hickory_proto::rr::rdata;
+    use walnut_proto::rr::{Record, SerialNumber, TimeToLive, Zone, ZoneType};
 
     fn create_test_zone(name: &str) -> Zone {
         let name = Name::from_utf8(name).unwrap();

@@ -215,7 +215,7 @@ impl RecordSet {
         }
     }
 
-    pub(crate) fn records_mut(&mut self) -> impl Iterator<Item = &mut Record> {
+    pub fn records_mut(&mut self) -> impl Iterator<Item = &mut Record> {
         self.records.iter_mut()
     }
 
@@ -561,7 +561,7 @@ impl RecordSet {
 
     /// Give a query type, if this record set points to a new name (e.g. via CNAME, ANAME, or another record which must be resolved)
     /// return the new name to resolve and the record type we are searching for now.
-    pub(crate) fn next_lookup_name(&self, query_type: RecordType) -> Option<(Name, RecordType)> {
+    pub fn next_lookup_name(&self, query_type: RecordType) -> Option<(Name, RecordType)> {
         match (self.record_type(), query_type) {
             (t @ RecordType::ANAME, RecordType::A)
             | (t @ RecordType::ANAME, RecordType::AAAA)
@@ -759,7 +759,7 @@ impl Iterator for RecordSetIntoHickoryIter {
 /// record set.
 #[derive(Debug, Clone, Copy, thiserror::Error)]
 #[error("Mismatched {0} between new record and record set")]
-pub struct Mismatch(pub(super) &'static str);
+pub struct Mismatch(pub &'static str);
 
 #[cfg(test)]
 mod tests {

@@ -6,12 +6,9 @@ use rusqlite::named_params;
 
 use crate::authority::Records as _;
 use crate::lookup::{EntryMeta, QueryLookup};
-use crate::rr::QueryID;
-use crate::{
-    ZoneInfo as _,
-    database::FromRow as _,
-    rr::{Record, SerialNumber, SqlName, Zone, ZoneID},
-};
+use crate::{ZoneInfo as _, database::FromRow as _};
+use walnut_proto::rr::QueryID;
+use walnut_proto::rr::{Record, SerialNumber, SqlName, Zone, ZoneID};
 
 use super::QueryBuilder;
 

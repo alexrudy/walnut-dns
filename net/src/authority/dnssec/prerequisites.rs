@@ -4,11 +4,8 @@ use hickory_proto::{
 };
 use tracing::warn;
 
-use crate::{
-    Lookup,
-    authority::lookup::LookupOptions,
-    rr::{Record, TimeToLive},
-};
+use crate::{Lookup, authority::lookup::LookupOptions};
+use walnut_proto::rr::{Record, TimeToLive};
 
 use super::DnsSecZone;
 

@@ -14,8 +14,9 @@ use walnut_dns::{
     catalog::CatalogStore as _,
     client::nameserver::{ConnectionConfig, Nameserver, NameserverConfig, ProtocolConfig},
     notify::{NotifyConfig, NotifyManager},
-    rr::{DNSClass, Name, RecordSet, RecordType, Zone, ZoneType},
 };
+
+use walnut_proto::rr::{DNSClass, Name, RecordSet, RecordType, Zone, ZoneType};
 
 fn main() -> ExitCode {
     match manage() {
@@ -29,7 +30,6 @@ fn manage() -> Result<(), ()> {
         .compact()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
-
     let mut app = clap::Command::new("walnut-dns")
         .about("Manage the walnut-dns database")
         .args([arg!(--db <PATH> "Path to the walnut DB")

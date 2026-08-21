@@ -5,13 +5,13 @@ use hickory_proto::rr::{rdata::*, *};
 use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 
 use tower::ServiceExt;
+use walnut_dns::Catalog;
 use walnut_dns::SqliteStore;
+use walnut_dns::ZoneInfo as _;
 use walnut_dns::authority::Records as _;
 use walnut_dns::messages::Message;
-use walnut_dns::rr::Record;
 use walnut_dns::server::{CatalogService, MessageMetadataLayer, ValidateLookupLayer};
-use walnut_dns::{Catalog, rr::ZoneType};
-use walnut_dns::{ZoneInfo as _, rr::Zone};
+use walnut_proto::rr::{Record, Zone, ZoneType};
 
 mod support;
 use support::examples::create_example;
@@ -19,7 +19,7 @@ use support::subscribe;
 
 #[allow(clippy::unreadable_literal)]
 pub fn create_records(zone: &mut Zone) {
-    use walnut_dns::rr::{Record, SerialNumber};
+    use walnut_proto::rr::{Record, SerialNumber};
 
     let origin: Name = zone.origin().clone();
 
@@ -88,7 +88,7 @@ pub fn create_records(zone: &mut Zone) {
 
 #[allow(clippy::unreadable_literal)]
 pub fn create_test() -> Zone {
-    use walnut_dns::rr::Record;
+    use walnut_proto::rr::Record;
     let origin: Name = Name::parse("test.com.", None).unwrap();
 
     let mut records = Zone::empty(

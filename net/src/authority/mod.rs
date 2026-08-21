@@ -22,7 +22,7 @@
 
 use std::borrow::Borrow;
 use std::collections::HashSet;
-use std::ops::{Deref, DerefMut, RangeBounds};
+use std::ops::RangeBounds;
 use std::sync::Arc;
 
 use hickory_proto::op::{Query, ResponseCode};
@@ -30,12 +30,13 @@ use hickory_proto::rr::{DNSClass, LowerName, Name, RecordType, RrKey};
 
 use crate::messages::Message;
 use crate::messages::server::Incoming;
-use crate::rr::{Mismatch, Record, RecordSet, SerialNumber, TimeToLive, Zone, ZoneType};
+use walnut_proto::rr::{Mismatch, Record, RecordSet, SerialNumber, TimeToLive, Zone, ZoneType};
 
 pub mod dnssec;
 pub(crate) mod edns;
 pub(crate) mod error;
 pub(crate) mod lookup;
+pub(crate) mod zone;
 
 pub use self::dnssec::Nsec3QueryInfo;
 pub use self::dnssec::NxProofKind;
@@ -278,57 +279,6 @@ pub trait Records {
         T: Ord + ?Sized,
         RrKey: Borrow<T> + Ord,
         R: RangeBounds<T>;
-}
-
-impl<A> Records for A
-where
-    A: Deref + DerefMut,
-    <A as Deref>::Target: Records,
-{
-    fn get(&self, key: &RrKey) -> Option<&RecordSet> {
-        self.deref().get(key)
-    }
-
-    fn get_mut(&mut self, key: &RrKey) -> Option<&mut RecordSet> {
-        self.deref_mut().get_mut(key)
-    }
-
-    fn keys(&self) -> impl Iterator<Item = &RrKey> {
-        self.deref().keys()
-    }
-
-    fn records(&self) -> impl Iterator<Item = &RecordSet> {
-        self.deref().records()
-    }
-
-    fn records_reversed(&self) -> impl Iterator<Item = &RecordSet> {
-        self.deref().records_reversed()
-    }
-
-    fn records_mut(&mut self) -> impl Iterator<Item = &mut RecordSet> {
-        self.deref_mut().records_mut()
-    }
-
-    fn upsert(&mut self, record: Record, serial: SerialNumber) -> Result<bool, Mismatch> {
-        self.deref_mut().upsert(record, serial)
-    }
-
-    fn remove(&mut self, key: &RrKey) -> Option<RecordSet> {
-        self.deref_mut().remove(key)
-    }
-
-    fn replace(&mut self, rrset: RecordSet) -> Option<RecordSet> {
-        self.deref_mut().replace(rrset)
-    }
-
-    fn range<T, R>(&self, range: R) -> impl Iterator<Item = (&RrKey, &RecordSet)>
-    where
-        T: Ord + ?Sized,
-        RrKey: Borrow<T> + Ord,
-        R: RangeBounds<T>,
-    {
-        self.deref().range(range)
-    }
 }
 
 /// Provides DNS record lookup and modification capabilities for a zone

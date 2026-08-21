@@ -30,8 +30,8 @@ use walnut_dns::authority::{
     Lookup, LookupControlFlow, LookupError, LookupOptions, LookupRecords, ZoneInfo,
 };
 use walnut_dns::messages::Message;
-use walnut_dns::rr::{Record, RecordSet, SerialNumber, TimeToLive, ZoneType};
 use walnut_dns::server::{CatalogService, MessageMetadataLayer, ValidateLookupLayer};
+use walnut_proto::rr::{Record, RecordSet, SerialNumber, TimeToLive, ZoneType};
 
 /// Tests the catalog's chained-authority resolution.
 #[tokio::test]
@@ -163,7 +163,7 @@ impl ZoneInfo for TestAuthority {
         SerialNumber::ZERO
     }
 
-    fn soa(&self) -> Option<&walnut_dns::rr::Record> {
+    fn soa(&self) -> Option<&walnut_proto::rr::Record> {
         None
     }
 

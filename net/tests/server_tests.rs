@@ -41,13 +41,13 @@ use walnut_dns::client::nameserver::{NameServerConnection, Nameserver};
 use walnut_dns::client::{Client, ClientConfiguration};
 use walnut_dns::messages::Message;
 use walnut_dns::messages::server::Incoming;
-use walnut_dns::rr::{Record, Zone};
 use walnut_dns::server::stream::DnsOverStream;
 use walnut_dns::server::udp::{DnsOverUdp, UdpListener};
 use walnut_dns::server::{
     CatalogService, MessageMetadataLayer, ValidateLookupLayer, ValidateRequestLayer,
 };
 use walnut_dns::{Catalog, SqliteStore};
+use walnut_proto::rr::{Record, Zone};
 
 mod support;
 use support::examples::create_example;

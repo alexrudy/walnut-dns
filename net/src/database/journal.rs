@@ -1,5 +1,6 @@
 use super::{ConnectionManager, RecordPersistence, ZonePersistence};
-use crate::{authority::Journal, catalog::CatalogError, rr::Zone};
+use crate::{authority::Journal, catalog::CatalogError};
+use walnut_proto::rr::{Record, Zone};
 
 /// SQLite-based journal for DNS operations
 ///
@@ -22,11 +23,7 @@ impl<Z> Journal<Z> for SqliteJournal
 where
     Z: AsRef<Zone> + Sync + 'static,
 {
-    async fn insert_records(
-        &self,
-        zone: &Z,
-        records: &[crate::rr::Record],
-    ) -> Result<(), CatalogError> {
+    async fn insert_records(&self, zone: &Z, records: &[Record]) -> Result<(), CatalogError> {
         let mut conn = self.manager.get().await?;
         crate::block_in_place(|| {
             let tx = conn.transaction()?;

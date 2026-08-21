@@ -7,7 +7,7 @@ use hickory_proto::{
     rr::{RecordType, rdata::SOA},
 };
 
-use crate::rr::{RecordRef, TimeToLive};
+use walnut_proto::rr::{RecordRef, TimeToLive};
 
 use super::raw::Message;
 
@@ -617,11 +617,11 @@ impl NegativeType {
 #[cfg(test)]
 mod tests {
     use crate::messages::Message;
-    use crate::rr::Record;
     use hickory_proto::op::{Query, ResponseCode};
     use hickory_proto::rr::RData;
     use hickory_proto::rr::rdata::{A, CNAME, NS, SOA};
     use hickory_proto::rr::{Name, RecordType};
+    use walnut_proto::rr::Record;
 
     use super::*;
 

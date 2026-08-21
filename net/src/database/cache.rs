@@ -12,7 +12,7 @@ use thiserror::Error;
 
 use crate::database::{ConnectionManager, query::QueryPersistence};
 use crate::database::{MONARCH, Result};
-use crate::rr::TimeToLive;
+use walnut_proto::rr::TimeToLive;
 
 use crate::cache::{BoxError, CacheConfig, DnsCache};
 use crate::lookup::QueryLookup;
@@ -218,9 +218,10 @@ impl DnsCache for SQLiteCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{cache::CacheTimestamp, rr::QueryID};
+    use crate::cache::CacheTimestamp;
     use hickory_proto::rr::{Name, RData, Record, RecordType, rdata::A};
     use std::str::FromStr;
+    use walnut_proto::rr::QueryID;
 
     async fn create_test_cache() -> SQLiteCache {
         let connection = rusqlite::Connection::open_in_memory().unwrap();

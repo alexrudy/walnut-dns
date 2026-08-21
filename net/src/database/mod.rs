@@ -14,7 +14,7 @@ use self::journal::SqliteJournal;
 use self::record::RecordPersistence;
 use self::zone::ZonePersistence;
 use crate::catalog::{CatalogError, CatalogStore};
-use crate::rr::{Name, Zone, ZoneID};
+use walnut_proto::rr::{Name, Zone, ZoneID};
 
 pub mod cache;
 pub mod dnssec;
@@ -36,33 +36,7 @@ pub use pool::RusqliteConnectionManager;
 pub(crate) mod query;
 pub(crate) mod record;
 pub(crate) mod zone;
-
-/// Trait for deserializing objects from SQLite rows
-///
-/// This trait provides a way to construct objects from SQLite query results.
-/// It's used throughout the database layer to convert raw row data into
-/// strongly-typed Rust structures.
-pub(crate) trait FromRow {
-    /// Create an instance from a SQLite row
-    ///
-    /// Extracts the necessary data from the provided row and constructs
-    /// a new instance of the implementing type.
-    ///
-    /// # Arguments
-    ///
-    /// * `row` - The SQLite row containing the data
-    ///
-    /// # Returns
-    ///
-    /// A new instance of the implementing type
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the row data cannot be converted to the expected type
-    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self>
-    where
-        Self: Sized;
-}
+pub use walnut_proto::serialize::sqlite::FromRow;
 
 pub(crate) const MONARCH: StaticMonarchConfiguration<1> = StaticMonarchConfiguration {
     name: "walnut",
@@ -566,14 +540,11 @@ impl<const N: usize> QueryBuilder<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        ZoneInfo as _,
-        authority::Records as _,
-        rr::{Record, SerialNumber, TimeToLive, Zone, ZoneType},
-    };
+    use crate::{ZoneInfo as _, authority::Records as _};
     use hickory_proto::rr::{RecordType, rdata};
     use std::path::Path;
     use tempfile::TempDir;
+    use walnut_proto::rr::{Record, SerialNumber, TimeToLive, Zone, ZoneType};
 
     fn create_test_zone(name: &str) -> Zone {
         let name = Name::from_utf8(name).unwrap();

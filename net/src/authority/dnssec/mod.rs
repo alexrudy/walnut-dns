@@ -15,7 +15,7 @@ use super::{Lookup, LookupError, Records, Update, ZoneInfo};
 use crate::catalog::CatalogError;
 use crate::messages::Message;
 use crate::messages::server::{Incoming, UpdateRequest as _};
-use crate::rr::{AsHickory as _, Mismatch, Name, Record, RecordSet, TimeToLive};
+use walnut_proto::rr::{AsHickory as _, Mismatch, Name, Record, RecordSet, TimeToLive};
 
 mod authorize;
 mod prerequisites;
@@ -932,7 +932,7 @@ where
         self.zone.origin()
     }
 
-    fn zone_type(&self) -> crate::rr::ZoneType {
+    fn zone_type(&self) -> walnut_proto::rr::ZoneType {
         self.zone.zone_type()
     }
 
@@ -944,7 +944,7 @@ where
         self.zone.dns_class()
     }
 
-    fn serial(&self) -> crate::rr::SerialNumber {
+    fn serial(&self) -> walnut_proto::rr::SerialNumber {
         self.zone.serial()
     }
 
@@ -952,7 +952,7 @@ where
         self.zone.soa()
     }
 
-    fn increment_soa_serial(&mut self) -> crate::rr::SerialNumber {
+    fn increment_soa_serial(&mut self) -> walnut_proto::rr::SerialNumber {
         self.zone.increment_soa_serial()
     }
 

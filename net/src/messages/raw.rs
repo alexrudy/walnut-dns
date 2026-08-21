@@ -13,8 +13,8 @@ use hickory_proto::{
     serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder},
 };
 
-use crate::rr::Record;
 use tracing::{debug, warn};
+use walnut_proto::rr::Record;
 
 /// An alias for results returned by functions of this crate
 pub(crate) type ProtoResult<T> = ::core::result::Result<T, ProtoError>;
@@ -1051,7 +1051,7 @@ impl fmt::Display for Message {
 
 #[cfg(test)]
 mod tests {
-    use crate::rr::TimeToLive;
+    use walnut_proto::rr::TimeToLive;
 
     use super::*;
 

@@ -21,8 +21,8 @@ use thiserror::Error;
 use crate::{
     database::FromRow,
     messages::{DnsResponse, Message},
-    rr::{QueryID, Record, SqlName, TimeToLive},
 };
+use walnut_proto::rr::{QueryID, Record, SqlName, TimeToLive};
 
 /// Metadata associated with a query.
 ///

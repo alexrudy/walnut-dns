@@ -25,13 +25,13 @@ use tracing::warn;
 
 use super::QueryLookup;
 use crate::cache::CacheTimestamp;
-use crate::rr::QueryID;
-use crate::rr::Record;
-use crate::rr::TimeToLive;
 use crate::{
     client::DnsClientError,
     messages::{DnsRequest, DnsResponse, Message},
 };
+use walnut_proto::rr::QueryID;
+use walnut_proto::rr::Record;
+use walnut_proto::rr::TimeToLive;
 
 fn lookup_with_max_ttl(query: Query, records: Vec<Record>) -> QueryLookup {
     QueryLookup::new(
@@ -736,7 +736,7 @@ mod tests {
 
     #[test]
     fn test_read_hosts_conf() {
-        let path = format!("{}/../tests/data/hosts", env!("CARGO_MANIFEST_DIR"));
+        let path = format!("{}/tests/data/hosts", env!("CARGO_MANIFEST_DIR"));
         let hosts = Hosts::from_file(path).unwrap();
 
         let name = Name::from_str("localhost.").unwrap();

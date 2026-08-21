@@ -3,7 +3,7 @@ use std::{io, sync::Arc};
 use hickory_proto::{ProtoError, ProtoErrorKind, op::ResponseCode, rr::rdata::SOA};
 use thiserror::Error;
 
-use crate::rr::Record;
+use walnut_proto::rr::Record;
 
 /// A query could not be fulfilled
 #[derive(Debug, Error)]

@@ -4,11 +4,11 @@ use hickory_proto::{
 };
 use tracing::{error, info};
 
-use crate::rr::Record;
 use crate::{
     Lookup,
     authority::{Records, Update},
 };
+use walnut_proto::rr::Record;
 
 use super::DnsSecZone;
 

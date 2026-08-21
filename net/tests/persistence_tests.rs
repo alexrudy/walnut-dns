@@ -1,8 +1,8 @@
 use hickory_proto::rr::rdata;
 use walnut_dns::ZoneInfo as _;
 use walnut_dns::catalog::CatalogStore;
-use walnut_dns::rr::{Name, NameExt, Record, Zone};
-use walnut_dns::{database::SqliteStore, rr::ZoneType};
+use walnut_dns::database::SqliteStore;
+use walnut_proto::rr::{Name, NameExt, Record, Zone, ZoneType};
 
 mod support;
 use support::subscribe;
@@ -208,7 +208,7 @@ async fn read_zone_to_db() {
     let catalog = SqliteStore::new_in_memory().await.unwrap();
     let zone = Zone::read_from_file(
         Name::root(),
-        concat!(env!("CARGO_MANIFEST_DIR"), "/zones/root.zone"),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../zones/root.zone"),
         ZoneType::External,
     )
     .unwrap();

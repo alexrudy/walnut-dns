@@ -9,8 +9,8 @@ use crate::{
     Lookup,
     authority::lookup::{LookupControlFlow, LookupOptions},
     messages::Message,
-    rr::Record,
 };
+use walnut_proto::rr::Record;
 
 use super::DnsSecZone;
 

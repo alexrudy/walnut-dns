@@ -2006,6 +2006,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "walnut-proto",
  "webpki-roots",
  "zeroize",
 ]
@@ -2013,6 +2014,15 @@ dependencies = [
 [[package]]
 name = "walnut-proto"
 version = "0.0.0"
+dependencies = [
+ "chrono",
+ "data-encoding",
+ "hickory-proto",
+ "rusqlite",
+ "thiserror",
+ "tracing",
+ "uuid",
+]
 
 [[package]]
 name = "want"

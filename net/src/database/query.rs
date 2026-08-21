@@ -4,7 +4,7 @@ use tracing::trace;
 
 use crate::database::record::RecordPersistence;
 use crate::lookup::{CacheTimestamp, EntryMeta, QueryLookup};
-use crate::rr::{QueryID, SqlName, TimeToLive};
+use walnut_proto::rr::{QueryID, SqlName, TimeToLive};
 
 use super::{FromRow, QueryBuilder};
 

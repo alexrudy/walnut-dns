@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use hickory_proto::rr::{Name, RecordType};
 
-use crate::rr::{Record, RecordSet, RecordSetIter};
+use walnut_proto::rr::{Record, RecordSet, RecordSetIter};
 
 use super::LookupError;
 

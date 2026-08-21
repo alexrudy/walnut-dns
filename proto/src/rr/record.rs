@@ -9,7 +9,7 @@ use hickory_proto::{
     serialize::binary::{BinDecodable, BinDecoder, BinEncodable, Restrict},
 };
 
-use crate::database::FromRow;
+use crate::serialize::sqlite::FromRow;
 
 use super::{AsHickory, RecordID, SqlName, ttl::TimeToLive};
 use hickory_proto::rr::Name;
@@ -381,7 +381,7 @@ impl<R: RecordData> Record<R> {
         &self.rdata
     }
 
-    pub(crate) fn rdata_mut(&mut self) -> &mut R {
+    pub fn rdata_mut(&mut self) -> &mut R {
         &mut self.rdata
     }
 

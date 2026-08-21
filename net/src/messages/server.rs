@@ -9,7 +9,7 @@ use hickory_proto::{
 };
 
 use super::{Message, Protocol};
-use crate::rr::Record;
+use walnut_proto::rr::Record;
 
 #[derive(Debug, Clone)]
 pub struct Incoming<M> {

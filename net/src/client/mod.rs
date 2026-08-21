@@ -13,7 +13,7 @@ use tower::ServiceExt;
 
 use crate::cache::{DnsCache, DnsCacheService};
 use crate::messages::{DnsRequest, DnsRequestOptions, DnsResponse, Message};
-use crate::rr::RecordSet;
+use walnut_proto::rr::RecordSet;
 
 pub use self::error::DnsClientError;
 #[cfg(feature = "h2")]

@@ -12,7 +12,7 @@ use zeroize::Zeroizing;
 use crate::ZoneInfo as _;
 use crate::authority::{DnsSecZone, DnsSecZoneError, Journal};
 use crate::catalog::{CatalogError, CatalogStore};
-use crate::rr::{TimeToLive, Zone};
+use walnut_proto::rr::{TimeToLive, Zone};
 
 use super::SqliteStore;
 use super::journal::SqliteJournal;

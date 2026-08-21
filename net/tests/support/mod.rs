@@ -5,7 +5,7 @@ use std::sync::{Mutex, Once};
 
 use walnut_dns::catalog::CatalogError;
 use walnut_dns::catalog::CatalogStore;
-use walnut_dns::rr::Name;
+use walnut_proto::rr::Name;
 
 pub mod examples;
 
@@ -37,7 +37,7 @@ impl<Z> TestZoneStore<Z> {
 
 #[async_trait::async_trait]
 impl<Z: Clone + Send + Sync> CatalogStore<Z> for TestZoneStore<Z> {
-    async fn find(&self, origin: &walnut_dns::rr::Name) -> Result<Option<Vec<Z>>, CatalogError> {
+    async fn find(&self, origin: &walnut_proto::rr::Name) -> Result<Option<Vec<Z>>, CatalogError> {
         let data = self.zones.lock().expect("poisoned");
         let mut name = origin.clone();
         loop {
@@ -53,7 +53,7 @@ impl<Z: Clone + Send + Sync> CatalogStore<Z> for TestZoneStore<Z> {
         }
     }
 
-    async fn upsert(&self, name: walnut_dns::rr::Name, zones: &[&Z]) -> Result<(), CatalogError> {
+    async fn upsert(&self, name: walnut_proto::rr::Name, zones: &[&Z]) -> Result<(), CatalogError> {
         let mut data = self.zones.lock().expect("poisoned");
         data.insert(name, zones.iter().map(|z| (*z).clone()).collect());
         Ok(())
@@ -64,7 +64,7 @@ impl<Z: Clone + Send + Sync> CatalogStore<Z> for TestZoneStore<Z> {
         Ok(data.keys().filter(|k| name.zone_of(k)).cloned().collect())
     }
 
-    async fn remove(&self, name: &walnut_dns::rr::Name) -> Result<Option<Vec<Z>>, CatalogError> {
+    async fn remove(&self, name: &walnut_proto::rr::Name) -> Result<Option<Vec<Z>>, CatalogError> {
         let mut data = self.zones.lock().expect("poisoned");
         Ok(data.remove(name))
     }

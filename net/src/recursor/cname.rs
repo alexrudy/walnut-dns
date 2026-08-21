@@ -271,9 +271,9 @@ mod test {
         catalog::{CatalogStore, InMemoryStore},
         messages::DnsQuery,
         recursor::cname::CNameResolverLayer,
-        rr::{Record, SerialNumber, TimeToLive, Zone, ZoneType},
         server::CatalogService,
     };
+    use walnut_proto::rr::{Record, SerialNumber, TimeToLive, Zone, ZoneType};
 
     fn create_test_zone(name: &str) -> Zone {
         let name = Name::from_utf8(name).unwrap();

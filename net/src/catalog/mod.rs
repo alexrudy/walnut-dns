@@ -24,8 +24,8 @@ use crate::error::HickoryError;
 use crate::lookup::QueryLookup;
 use crate::messages::server::Incoming;
 use crate::messages::{DnsQuery, Message};
-use crate::rr::{Name, RecordSet};
 use crate::{Lookup, ZoneInfo};
+use walnut_proto::rr::{Name, RecordSet};
 
 mod inmemory;
 

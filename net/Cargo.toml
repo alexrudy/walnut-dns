@@ -12,28 +12,30 @@ camino.workspace = true
 chrono.workspace = true
 clap = { workspace = true, features = ["derive"], optional = true }
 data-encoding.workspace = true
-futures.workspace = true
 future-eyeballs.workspace = true
+futures.workspace = true
 hickory-proto = { workspace = true, features = ["mdns", "dnssec-ring", "text-parsing"] }
 http = { workspace = true, optional = true }
 http-body = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }
+once_cell.workspace = true
 parking_lot = { workspace = true, features = ["arc_lock", "send_guard"] }
 pin-project.workspace = true
+rand.workspace = true
 rusqlite = { workspace = true, features = ["blob", "chrono", "uuid", "trace"] }
 rustls-pki-types.workspace = true
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 tokio-util = { workspace = true, features = ["codec", "net"] }
+toml_edit = { workspace = true, features = ["serde"] }
 tower = { workspace = true, features = ["util"]}
+tower-http = { workspace = true, features = ["trace"] }
 tracing.workspace = true
 webpki-roots = { workspace = true, optional = true }
 zeroize.workspace = true
-toml_edit = { workspace = true, features = ["serde"] }
-rand.workspace = true
-once_cell.workspace = true
-tower-http = { workspace = true, features = ["trace"] }
+
+walnut-proto.path = "../proto"
 
 [dependencies.uuid]
 workspace = true

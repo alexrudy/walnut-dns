@@ -16,7 +16,7 @@ use walnut_dns::authority::Update as _;
 use walnut_dns::authority::{DnsSecZone, NxProofKind};
 use walnut_dns::catalog::CatalogStore;
 use walnut_dns::database::DnsSecStore;
-use walnut_dns::rr::{Record, TimeToLive};
+use walnut_proto::rr::{Record, TimeToLive};
 
 mod support;
 use support::examples::{create_example, create_secure_example};

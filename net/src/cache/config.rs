@@ -9,7 +9,7 @@ use std::{collections::BTreeMap, ops::RangeInclusive};
 
 use hickory_proto::rr::RecordType;
 
-use crate::rr::TimeToLive;
+use walnut_proto::rr::TimeToLive;
 
 /// Configuration for DNS cache TTL bounds.
 ///

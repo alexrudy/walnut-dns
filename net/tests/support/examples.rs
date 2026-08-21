@@ -4,13 +4,13 @@ use hickory_proto::rr::RData;
 use walnut_dns::{
     Lookup as _, ZoneInfo as _,
     authority::{DnsSecZone, NxProofKind, Records},
-    rr::{Name, Zone, ZoneType},
 };
+use walnut_proto::rr::{Name, Zone, ZoneType};
 
 /// Construct an example DNS Zone
 pub fn create_example() -> Zone {
     use hickory_proto::rr::rdata::*;
-    use walnut_dns::rr::{Record, SerialNumber, Zone};
+    use walnut_proto::rr::{Record, SerialNumber, Zone};
 
     let origin: Name = Name::parse("example.com.", None).unwrap();
 

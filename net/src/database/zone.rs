@@ -2,11 +2,8 @@ use hickory_proto::rr::Name;
 use rusqlite::named_params;
 
 use crate::database::record::RecordPersistence;
-use crate::{
-    ZoneInfo as _,
-    database::FromRow as _,
-    rr::{SqlName, Zone, ZoneID},
-};
+use crate::{ZoneInfo as _, database::FromRow as _};
+use walnut_proto::rr::{SqlName, Zone, ZoneID};
 
 use super::QueryBuilder;
 

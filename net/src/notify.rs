@@ -22,7 +22,7 @@ use tracing::{debug, instrument};
 use crate::client::nameserver::Nameserver;
 use crate::client::{DnsClientError, DnsRequestMiddleware};
 use crate::messages::{DnsRequest, DnsRequestOptions, DnsResponse, Message};
-use crate::rr::RecordSet;
+use walnut_proto::rr::RecordSet;
 
 #[derive(Debug, Error)]
 #[error("notify request failed")]
