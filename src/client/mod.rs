@@ -104,7 +104,10 @@ impl Client {
         }
     }
 
-    pub fn with_cache(self, cache: DnsCache) -> Self {
+    pub fn with_cache<C>(self, cache: C) -> Self
+    where
+        C: DnsCache + Clone + Send + Sync + 'static,
+    {
         Self {
             inner: SharedService::new(DnsCacheService::new(self.inner, cache)),
             config: self.config,

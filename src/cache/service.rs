@@ -9,7 +9,7 @@ use chrono::Utc;
 use futures::future::BoxFuture;
 use hickory_proto::op::ResponseCode;
 
-use super::DnsCache;
+use super::{BoxError, DnsCache};
 use crate::client::DnsClientError;
 use crate::messages::{DnsRequest, DnsResponse, Message};
 
@@ -30,18 +30,21 @@ use crate::messages::{DnsRequest, DnsResponse, Message};
 ///     .service(dns_service);
 /// ```
 #[derive(Debug, Clone)]
-pub struct DnsCacheLayer {
-    cache: DnsCache,
+pub struct DnsCacheLayer<C> {
+    cache: C,
 }
 
-impl From<DnsCache> for DnsCacheLayer {
-    fn from(cache: DnsCache) -> Self {
+impl<C> DnsCacheLayer<C> {
+    pub fn new(cache: C) -> Self {
         Self { cache }
     }
 }
 
-impl<S> tower::Layer<S> for DnsCacheLayer {
-    type Service = DnsCacheService<S>;
+impl<C, S> tower::Layer<S> for DnsCacheLayer<C>
+where
+    C: Clone,
+{
+    type Service = DnsCacheService<C, S>;
 
     fn layer(&self, inner: S) -> Self::Service {
         DnsCacheService {
@@ -62,35 +65,37 @@ impl<S> tower::Layer<S> for DnsCacheLayer {
 ///
 /// * `S` - The underlying DNS service type
 #[derive(Debug, Clone)]
-pub struct DnsCacheService<S> {
+pub struct DnsCacheService<C, S> {
     service: S,
-    cache: DnsCache,
+    cache: C,
 }
 
-impl<S> DnsCacheService<S> {
+impl<C, S> DnsCacheService<C, S> {
     /// Creates a new caching DNS service.
     ///
     /// # Arguments
     ///
     /// * `service` - The underlying DNS service to wrap
     /// * `cache` - The DNS cache to use for storing responses
-    pub fn new(service: S, cache: DnsCache) -> Self {
+    pub fn new(service: S, cache: C) -> Self {
         Self { service, cache }
     }
 
     /// Converts a cache error to a DNS client error.
-    fn cache_error(error: super::CacheError) -> DnsClientError {
+    fn cache_error(error: impl Into<BoxError>) -> DnsClientError {
         DnsClientError::Cache(error.into())
     }
+}
 
+impl<C, S> DnsCacheService<C, S>
+where
+    C: DnsCache,
+{
     /// Caches a DNS response if it should be cached.
     ///
     /// Only caches responses that have either successful (NoError) answers
     /// or negative (NXDomain) responses.
-    async fn cache_response(
-        cache: &DnsCache,
-        response: &DnsResponse,
-    ) -> Result<(), DnsClientError> {
+    async fn cache_response(cache: &C, response: &DnsResponse) -> Result<(), DnsClientError> {
         let now = Utc::now();
 
         match response.response_code() {
@@ -110,13 +115,14 @@ impl<S> DnsCacheService<S> {
     }
 }
 
-impl<S> tower::Service<DnsRequest> for DnsCacheService<S>
+impl<C, S> tower::Service<DnsRequest> for DnsCacheService<C, S>
 where
     S: tower::Service<DnsRequest, Response = DnsResponse, Error = DnsClientError>
         + Clone
         + Send
         + 'static,
     S::Future: Send + 'static,
+    C: DnsCache + Clone + Send + Sync + 'static,
 {
     type Response = DnsResponse;
     type Error = DnsClientError;
@@ -184,30 +190,19 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cache::CacheConfig;
-    use std::sync::Arc;
+    use crate::{cache::CacheConfig, database::cache::SQLiteCache};
 
-    async fn create_test_cache() -> DnsCache {
+    async fn create_test_cache() -> SQLiteCache {
         let connection = rusqlite::Connection::open_in_memory().unwrap();
         let manager = crate::database::ConnectionManager::from(connection);
         let config = CacheConfig::default();
-        DnsCache::new(manager, config).await.unwrap()
+        SQLiteCache::new(manager, config).await.unwrap()
     }
 
     #[tokio::test]
-    async fn test_cache_construction() {
+    async fn test_cache_layer_construction() {
         let cache = create_test_cache().await;
-        assert!(Arc::strong_count(&cache.config) >= 1);
-    }
 
-    #[test]
-    fn test_cache_layer_construction() {
-        let connection = rusqlite::Connection::open_in_memory().unwrap();
-        let manager = crate::database::ConnectionManager::from(connection);
-        let cache = DnsCache {
-            manager,
-            config: Arc::new(CacheConfig::default()),
-        };
-        let _layer = DnsCacheLayer::from(cache);
+        let _layer = DnsCacheLayer::new(cache);
     }
 }

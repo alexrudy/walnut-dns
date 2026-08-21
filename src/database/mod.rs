@@ -16,6 +16,7 @@ use self::zone::ZonePersistence;
 use crate::catalog::{CatalogError, CatalogStore};
 use crate::rr::{Name, Zone, ZoneID};
 
+pub mod cache;
 pub mod dnssec;
 pub mod journal;
 
