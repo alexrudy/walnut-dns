@@ -1,0 +1,6 @@
+[package]
+name = "walnut-proto"
+edition = "2024"
+
+
+[dependencies]

@@ -736,7 +736,7 @@ mod tests {
 
     #[test]
     fn test_read_hosts_conf() {
-        let path = format!("{}/tests/data/hosts", env!("CARGO_MANIFEST_DIR"));
+        let path = format!("{}/../tests/data/hosts", env!("CARGO_MANIFEST_DIR"));
         let hosts = Hosts::from_file(path).unwrap();
 
         let name = Name::from_str("localhost.").unwrap();

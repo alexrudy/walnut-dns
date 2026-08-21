@@ -17,15 +17,15 @@ udeps: udeps-one udeps-hack
 
 #[private]
 udeps-one:
-    CARGO_TARGET_DIR="target/udeps" cargo +{{nightly}} udeps --all-features
+    CARGO_TARGET_DIR="target/udeps" cargo +{{nightly}} udeps -p walnut-dns --all-features
 
 #[private]
 udeps-hack:
-    CARGO_TARGET_DIR="target/udeps" cargo +{{nightly}} hack udeps --each-feature
+    CARGO_TARGET_DIR="target/udeps" cargo +{{nightly}} hack udeps -p walnut-dns --each-feature
 
 # Use machete to check for unused dependencies
 machete:
-    cargo +{{rust}} machete --skip-target-dir
+    cargo +{{rust}} machete -p walnut-dns --skip-target-dir
 
 alias c := check
 # Check compilation

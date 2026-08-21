@@ -1,0 +1,115 @@
+[package]
+name = "walnut-dns"
+edition = "2024"
+
+
+[dependencies]
+arc-swap.workspace = true
+async-trait.workspace = true
+bb8 = { workspace = true, optional = true }
+bytes.workspace = true
+camino.workspace = true
+chrono.workspace = true
+clap = { workspace = true, features = ["derive"], optional = true }
+data-encoding.workspace = true
+futures.workspace = true
+future-eyeballs.workspace = true
+hickory-proto = { workspace = true, features = ["mdns", "dnssec-ring", "text-parsing"] }
+http = { workspace = true, optional = true }
+http-body = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
+parking_lot = { workspace = true, features = ["arc_lock", "send_guard"] }
+pin-project.workspace = true
+rusqlite = { workspace = true, features = ["blob", "chrono", "uuid", "trace"] }
+rustls-pki-types.workspace = true
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+tokio-util = { workspace = true, features = ["codec", "net"] }
+tower = { workspace = true, features = ["util"]}
+tracing.workspace = true
+webpki-roots = { workspace = true, optional = true }
+zeroize.workspace = true
+toml_edit = { workspace = true, features = ["serde"] }
+rand.workspace = true
+once_cell.workspace = true
+tower-http = { workspace = true, features = ["trace"] }
+
+[dependencies.uuid]
+workspace = true
+features = [
+    "v4",                # Lets you generate random UUIDs
+    "fast-rng",          # Use a faster (but still sufficiently random) RNG
+    "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
+    "serde",
+]
+
+[dependencies.tokio]
+workspace = true
+features = ["rt", "rt-multi-thread", "net"]
+
+[dependencies.rustls]
+workspace = true
+default-features = false
+features = ["logging", "std", "tls12"]
+
+[dependencies.monarch-db]
+workspace = true
+
+[dependencies.tracing-subscriber]
+workspace = true
+features = ["env-filter", "json", "fmt", "ansi", "std"]
+optional = true
+
+[dependencies.chateau]
+workspace = true
+features = ["client", "codec", "server", "serde"]
+
+[dependencies.hyperdriver]
+workspace = true
+optional = true
+features = [
+    "server",
+    "tls",
+    "tls-ring",
+    "stream",
+]
+
+[dev-dependencies]
+serde_json = "1.0"
+tempfile = "3.27"
+tokio = "1"
+tower = "0.5"
+static-assertions = { version = "1", package = "static_assertions" }
+
+[dev-dependencies.tracing-subscriber]
+version = "^0.3"
+features = ["env-filter", "json", "fmt", "ansi", "std"]
+
+[features]
+default = []
+tls = ["dep:webpki-roots"]
+tls-ring = ["tls", "chateau/tls-ring", "hickory-proto/tls-ring"]
+tls-awc-lc = ["tls", "chateau/tls-aws-lc", "hickory-proto/tls-aws-lc-rs"]
+http = ["dep:http", "dep:http-body", "dep:http-body-util"]
+h2 = ["http", "dep:hyper", "dep:hyperdriver"]
+h2-ring = ["hickory-proto/https-ring", "h2"]
+h2-aws-lc = ["hickory-proto/https-aws-lc-rs", "h2"]
+pool = ["dep:bb8"]
+bundled = ["rusqlite/bundled"]
+cli = ["dep:clap", "dep:tracing-subscriber", "tokio/signal", "tokio/fs"]
+
+[[bin]]
+name = "walnut-manage"
+path = "src/bin/manage.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "walnut"
+path = "src/bin/client.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "walnut-server"
+path = "src/bin/server.rs"
+required-features = ["cli"]

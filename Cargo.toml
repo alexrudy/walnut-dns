@@ -1,7 +1,12 @@
-[package]
-name = "walnut-dns"
+[workspace]
+resolver = "2"
+members = [
+    "net",
+    "proto"
+]
+
+[workspace.package]
 version = "0.1.0"
-edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.87"
 description = "Additions and helpers for flexible hickory-dns servers"
@@ -12,22 +17,22 @@ authors = ["Alex Rudy <opensource@alexrudy.net>"]
 categories = ["network-programming", "web-programming"]
 keywords = ["dns", "server", "async"]
 
-[dependencies]
+[workspace.dependencies]
 arc-swap = "1"
 async-trait = "0.1"
-bb8 = { version = "0.8", optional = true }
+bb8 = "0.8"
 bytes = "1"
 camino = "1"
 chrono = "0.4"
-clap = { version = "4", features = ["derive"], optional = true }
+clap = "4"
 data-encoding = { version = "2.11.1", default-features = false }
 futures = "0.3"
 future-eyeballs = "0.1"
 hickory-proto = { version = "0.25", features = ["mdns", "dnssec-ring", "text-parsing"] }
-http = { version = "1", optional = true }
-http-body = { version = "1", optional = true }
-http-body-util = { version = "0.1", optional = true }
-hyper = { version = "1", optional = true }
+http = { version = "1",  }
+http-body = { version = "1",  }
+http-body-util = { version = "0.1",  }
+hyper = "1"
 parking_lot = { version = "0.12", features = ["arc_lock", "send_guard"] }
 pin-project = "1.1.13"
 rusqlite = { version = "0.37", features = ["blob", "chrono", "uuid", "trace"] }
@@ -37,92 +42,19 @@ thiserror = "2"
 tokio-util = { version = "0.7.19", features = ["codec", "net"] }
 tower = { version = "0.5", features = ["util"]}
 tracing = "0.1"
-webpki-roots = { version = "1", optional = true }
+webpki-roots = "1"
 zeroize = "1"
 toml_edit = { version = "0.23.10", features = ["serde"] }
 rand = "0.9.5"
 once_cell = "1.21.4"
 tower-http = { version = "0.7.0", features = ["trace"] }
-
-[dependencies.uuid]
-version = "^1"
-features = [
-    "v4",                # Lets you generate random UUIDs
-    "fast-rng",          # Use a faster (but still sufficiently random) RNG
-    "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
-    "serde",
-]
-
-[dependencies.tokio]
-version = "1"
-features = ["rt", "rt-multi-thread", "net"]
-
-[dependencies.rustls]
-version = "0.23"
-default-features = false
-features = ["logging", "std", "tls12"]
-
-[dependencies.monarch-db]
-version = ">=0.1.1"
-# git = "https://github.com/alexrudy/monarch-db.git"
-
-[dependencies.tracing-subscriber]
-version = "^0.3"
-features = ["env-filter", "json", "fmt", "ansi", "std"]
-optional = true
-
-[dependencies.chateau]
-features = ["client", "codec", "server", "serde"]
-version = "0.4"
-
-[dependencies.hyperdriver]
-version = "0.12.5"
-optional = true
-features = [
-    "server",
-    "tls",
-    "tls-ring",
-    "stream",
-]
-
-[dev-dependencies]
-serde_json = "1.0"
-tempfile = "3.27"
+uuid = "^1"
 tokio = "1"
-tower = "0.5"
-static-assertions = { version = "1", package = "static_assertions" }
-
-[dev-dependencies.tracing-subscriber]
-version = "^0.3"
-features = ["env-filter", "json", "fmt", "ansi", "std"]
-
-[features]
-default = []
-tls = ["dep:webpki-roots"]
-tls-ring = ["tls", "chateau/tls-ring", "hickory-proto/tls-ring"]
-tls-awc-lc = ["tls", "chateau/tls-aws-lc", "hickory-proto/tls-aws-lc-rs"]
-http = ["dep:http", "dep:http-body", "dep:http-body-util"]
-h2 = ["http", "dep:hyper", "dep:hyperdriver"]
-h2-ring = ["hickory-proto/https-ring", "h2"]
-h2-aws-lc = ["hickory-proto/https-aws-lc-rs", "h2"]
-pool = ["dep:bb8"]
-bundled = ["rusqlite/bundled"]
-cli = ["dep:clap", "dep:tracing-subscriber", "tokio/signal", "tokio/fs"]
-
-[[bin]]
-name = "walnut-manage"
-path = "src/bin/manage.rs"
-required-features = ["cli"]
-
-[[bin]]
-name = "walnut"
-path = "src/bin/client.rs"
-required-features = ["cli"]
-
-[[bin]]
-name = "walnut-server"
-path = "src/bin/server.rs"
-required-features = ["cli"]
+rustls = { version = "0.23", default-features = false }
+monarch-db = { version = ">=0.1.1" }
+tracing-subscriber = { version = "^0.3", features = ["env-filter", "json", "fmt", "ansi", "std"] }
+chateau = "0.4"
+hyperdriver = "0.12.5"
 
 [patch.crates-io]
 # chateau = { path = "/home/alexrudy/dev/github.com/alexrudy/chateau" }
