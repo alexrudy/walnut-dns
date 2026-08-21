@@ -3,7 +3,7 @@ use rusqlite::named_params;
 use tracing::trace;
 
 use crate::database::record::RecordPersistence;
-use crate::lookup::{CacheTimestamp, EntryMeta, Lookup};
+use crate::lookup::{CacheTimestamp, EntryMeta, QueryLookup};
 use crate::rr::{QueryID, SqlName, TimeToLive};
 
 use super::{FromRow, QueryBuilder};
@@ -25,7 +25,7 @@ impl<'c> QueryPersistence<'c> {
             "name",
             "record_type",
             "dns_class",
-            "response_code",
+            "flags",
             "expires",
             "last_access",
         ],
@@ -33,7 +33,7 @@ impl<'c> QueryPersistence<'c> {
     };
 
     #[allow(dead_code)]
-    pub(crate) fn get(&self, query: QueryID, now: CacheTimestamp) -> rusqlite::Result<Lookup> {
+    pub(crate) fn get(&self, query: QueryID, now: CacheTimestamp) -> rusqlite::Result<QueryLookup> {
         let columns = Self::TABLE.columns.join(", ");
 
         let mut stmt = self.connection.prepare(&format!(
@@ -49,7 +49,7 @@ impl<'c> QueryPersistence<'c> {
         rx.populate_lookup(entry)
     }
 
-    pub(crate) fn find(&self, query: Query, now: CacheTimestamp) -> rusqlite::Result<Lookup> {
+    pub(crate) fn find(&self, query: Query, now: CacheTimestamp) -> rusqlite::Result<QueryLookup> {
         let columns = Self::TABLE.columns.join(", ");
 
         let mut stmt = self.connection.prepare(&format!(
@@ -68,7 +68,7 @@ impl<'c> QueryPersistence<'c> {
 
     pub(crate) fn insert_lookup(
         &self,
-        lookup: &Lookup,
+        lookup: &QueryLookup,
         now: CacheTimestamp,
         ttl: TimeToLive,
     ) -> rusqlite::Result<()> {
@@ -82,11 +82,11 @@ impl<'c> QueryPersistence<'c> {
             ":name": SqlName::from(lookup.query().name().clone()),
             ":record_type": u16::from(lookup.query().query_type()),
             ":dns_class": u16::from(lookup.query().query_class()),
-            ":response_code": u16::from(lookup.response_code()),
+            ":flags": u16::from(lookup.metadata()),
             ":expires": expires,
             ":last_access": now,
         })?;
-        trace!("Adding {n} records", n = lookup.records().len());
+        trace!("Adding {n} records", n = lookup.records().iter().count());
         let rx = RecordPersistence::new(self.connection);
         rx.insert_records_for_query(lookup.id(), lookup.records().iter())?;
 

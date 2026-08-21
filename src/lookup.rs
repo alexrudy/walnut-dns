@@ -4,7 +4,7 @@
 //! results, including successful lookups, NXDOMAIN responses, and other negative responses.
 //! It provides conversions between the hickory-proto types and the internal representation.
 
-use std::{cmp::min, ops::Add, time::Duration};
+use std::{ops::Add, time::Duration};
 
 use chrono::{DateTime, TimeDelta, TimeZone as _, Utc};
 use hickory_proto::{
@@ -23,6 +23,210 @@ use crate::{
     messages::{DnsResponse, Message},
     rr::{QueryID, Record, SqlName, TimeToLive},
 };
+
+/// Metadata associated with a query.
+///
+/// Represented as effectively the bitfield from a meesage header.
+/// ```text
+///                                    1  1  1  1  1  1
+///      0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5
+///     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+///     |QR|   Opcode  |AA|TC|RD|RA|ZZ|AD|CD|   RCODE   |
+///     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+///```
+///
+/// The metadata doesn't carry any bits outside of this range,
+/// and even in this range, it sets some bits unconditionally.
+///
+/// QR is always MessageType::Response
+/// OpCode is always OpCode::Query
+/// TC is always zero (truncated responses are not cached), and this internal
+///    structure is set up only to represent complete responses.
+/// RD/RA are always zero (recursion desired should be copied from the message instead,
+/// and recursion available is not relevant in non-recursive contexts like this one.)
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+pub struct QueryMetadata {
+    /// ```text
+    /// AA              Authoritative Answer - this bit is valid in responses,
+    ///                 and specifies that the responding name server is an
+    ///                 authority for the domain name in question section.
+    ///
+    ///                 Note that the contents of the answer section may have
+    ///                 multiple owner names because of aliases.  The AA bit
+    ///                 corresponds to the name which matches the query name, or
+    ///                 the first owner name in the answer section.
+    /// ```
+    pub authoritative: bool,
+    /// [RFC 4035, DNSSEC Resource Records, March 2005](https://tools.ietf.org/html/rfc4035#section-3.1.6)
+    ///
+    /// ```text
+    ///
+    /// 3.1.6.  The AD and CD Bits in an Authoritative Response
+    ///
+    ///   The CD and AD bits are designed for use in communication between
+    ///   security-aware resolvers and security-aware recursive name servers.
+    ///   These bits are for the most part not relevant to query processing by
+    ///   security-aware authoritative name servers.
+    ///
+    ///   A security-aware name server does not perform signature validation
+    ///   for authoritative data during query processing, even when the CD bit
+    ///   is clear.  A security-aware name server SHOULD clear the CD bit when
+    ///   composing an authoritative response.
+    ///
+    ///   A security-aware name server MUST NOT set the AD bit in a response
+    ///   unless the name server considers all RRsets in the Answer and
+    ///   Authority sections of the response to be authentic.  A security-aware
+    ///   name server's local policy MAY consider data from an authoritative
+    ///   zone to be authentic without further validation.  However, the name
+    ///   server MUST NOT do so unless the name server obtained the
+    ///   authoritative zone via secure means (such as a secure zone transfer
+    ///   mechanism) and MUST NOT do so unless this behavior has been
+    ///   configured explicitly.
+    ///
+    ///   A security-aware name server that supports recursion MUST follow the
+    ///   rules for the CD and AD bits given in Section 3.2 when generating a
+    ///   response that involves data obtained via recursion.
+    /// ```
+    pub authentic_data: bool,
+    /// See [`Metadata::authentic_data`] for more information on the CD bit.
+    pub checking_disabled: bool,
+    /// ```text
+    /// RCODE           Response code - this 4 bit field is set as part of
+    ///                 responses.  The values have the following
+    ///                 interpretation: <see super::response_code>
+    /// ```
+    pub response_code: ResponseCode,
+}
+
+impl From<QueryMetadata> for u16 {
+    fn from(meta: QueryMetadata) -> Self {
+        let mut flags: u16 = 0x8000;
+
+        if meta.authoritative {
+            flags |= 0x0400;
+        }
+        if meta.authentic_data {
+            flags |= 0x0020;
+        }
+        if meta.checking_disabled {
+            flags |= 0x0016;
+        }
+
+        flags |= meta.response_code.low() as u16;
+
+        flags
+    }
+}
+
+impl From<u16> for QueryMetadata {
+    fn from(flags: u16) -> Self {
+        QueryMetadata {
+            authoritative: flags & 0x0400 != 0,
+            authentic_data: flags & 0x0020 != 0,
+            checking_disabled: flags & 0x0016 != 0,
+            response_code: ResponseCode::from(0, (flags & 0x000F) as u8),
+        }
+    }
+}
+
+impl From<ResponseCode> for QueryMetadata {
+    fn from(code: ResponseCode) -> Self {
+        QueryMetadata {
+            authoritative: false,
+            authentic_data: false,
+            checking_disabled: false,
+            response_code: code,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct QueryLookupSections {
+    pub answers: Vec<Record>,
+    pub authorities: Vec<Record>,
+    pub additionals: Vec<Record>,
+}
+
+impl QueryLookupSections {
+    pub fn merge(&mut self, other: Self) {
+        self.answers.extend(other.answers);
+        self.authorities.extend(other.authorities);
+        self.additionals.extend(other.additionals);
+    }
+
+    pub fn iter(&self) -> QueryLookupIter<'_> {
+        QueryLookupIter::new(self)
+    }
+
+    pub fn len(&self) -> usize {
+        self.answers.len() + self.authorities.len() + self.additionals.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.answers.is_empty() && self.authorities.is_empty() && self.additionals.is_empty()
+    }
+}
+
+pub struct QueryLookupIter<'q> {
+    current: Option<std::slice::Iter<'q, Record>>,
+    queue: Vec<std::slice::Iter<'q, Record>>,
+}
+
+impl<'q> QueryLookupIter<'q> {
+    pub fn new(sections: &'q QueryLookupSections) -> Self {
+        Self {
+            current: None,
+            queue: vec![
+                sections.additionals.iter(),
+                sections.authorities.iter(),
+                sections.answers.iter(),
+            ],
+        }
+    }
+}
+
+impl<'q> Iterator for QueryLookupIter<'q> {
+    type Item = &'q Record;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(current) = &mut self.current {
+                if let Some(item) = current.next() {
+                    return Some(item);
+                }
+            }
+            if let Some(next) = self.queue.pop() {
+                self.current = Some(next);
+            } else {
+                return None;
+            }
+        }
+    }
+}
+
+pub struct SectionIter<'q> {
+    inner: Option<std::slice::Iter<'q, Record>>,
+}
+
+impl<'q> SectionIter<'q> {
+    pub fn new(section: &'q [Record]) -> Self {
+        Self {
+            inner: Some(section.iter()),
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self { inner: None }
+    }
+}
+
+impl<'q> Iterator for SectionIter<'q> {
+    type Item = &'q Record;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.as_mut().and_then(|i| i.next())
+    }
+}
 
 /// A unified DNS lookup result that can represent any type of DNS response.
 ///
@@ -52,15 +256,15 @@ use crate::{
 /// }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Lookup {
-    id: QueryID,
-    query: Query,
-    records: Vec<Record>,
-    response_code: ResponseCode,
-    valid_until: CacheTimestamp,
+pub struct QueryLookup {
+    pub id: QueryID,
+    pub query: Query,
+    pub records: QueryLookupSections,
+    pub metadata: QueryMetadata,
+    pub valid_until: CacheTimestamp,
 }
 
-impl Lookup {
+impl QueryLookup {
     /// Creates a new lookup result.
     ///
     /// # Arguments
@@ -80,8 +284,16 @@ impl Lookup {
         Self {
             id,
             query,
-            records,
-            response_code,
+            records: QueryLookupSections {
+                answers: records,
+                ..Default::default()
+            },
+            metadata: QueryMetadata {
+                authoritative: false,
+                authentic_data: false,
+                checking_disabled: false,
+                response_code,
+            },
             valid_until,
         }
     }
@@ -93,8 +305,13 @@ impl Lookup {
         Self {
             id: QueryID::new(),
             query,
-            records: Vec::new(),
-            response_code,
+            records: QueryLookupSections::default(),
+            metadata: QueryMetadata {
+                authoritative: false,
+                authentic_data: false,
+                checking_disabled: false,
+                response_code,
+            },
             valid_until: CacheTimestamp::now(),
         }
     }
@@ -104,8 +321,16 @@ impl Lookup {
         Self {
             id: QueryID::new(),
             query,
-            records,
-            response_code: ResponseCode::NoError,
+            records: QueryLookupSections {
+                answers: records,
+                ..Default::default()
+            },
+            metadata: QueryMetadata {
+                authoritative: false,
+                authentic_data: false,
+                checking_disabled: false,
+                response_code: ResponseCode::NoError,
+            },
             valid_until: CacheTimestamp::now() + TimeToLive::DEFAULT,
         }
     }
@@ -120,8 +345,16 @@ impl Lookup {
         Self {
             id: QueryID::new(),
             query,
-            records,
-            response_code: ResponseCode::NoError,
+            records: QueryLookupSections {
+                answers: records,
+                ..Default::default()
+            },
+            metadata: QueryMetadata {
+                authoritative: false,
+                authentic_data: false,
+                checking_disabled: false,
+                response_code: ResponseCode::NoError,
+            },
             valid_until: CacheTimestamp::now() + TimeToLive::DEFAULT,
         }
     }
@@ -151,14 +384,28 @@ impl Lookup {
         self.query.query_class()
     }
 
+    /// Returns the metadata for this lookup.
+    pub fn metadata(&self) -> QueryMetadata {
+        self.metadata
+    }
+
     /// Returns the DNS response code.
     pub fn response_code(&self) -> ResponseCode {
-        self.response_code
+        self.metadata.response_code
+    }
+
+    pub fn set_response_code(&mut self, response_code: ResponseCode) {
+        self.metadata.response_code = response_code;
     }
 
     /// Returns all DNS records in this lookup result.
-    pub fn records(&self) -> &[Record] {
+    pub fn records(&self) -> &QueryLookupSections {
         &self.records
+    }
+
+    /// Mutuable access to records
+    pub fn records_mut(&mut self) -> &mut QueryLookupSections {
+        &mut self.records
     }
 
     /// Returns the cache expiration timestamp.
@@ -185,7 +432,7 @@ impl Lookup {
     ///
     /// `true` if the response code indicates success (NoError).
     pub fn is_success(&self) -> bool {
-        matches!(self.response_code, ResponseCode::NoError)
+        matches!(self.metadata.response_code, ResponseCode::NoError)
     }
 
     /// Checks if this represents an NXDOMAIN response.
@@ -194,7 +441,7 @@ impl Lookup {
     ///
     /// `true` if the response code indicates the domain does not exist.
     pub fn is_nxdomain(&self) -> bool {
-        matches!(self.response_code, ResponseCode::NXDomain)
+        matches!(self.metadata.response_code, ResponseCode::NXDomain)
     }
 
     /// Checks if this represents a negative response (no records found).
@@ -206,16 +453,6 @@ impl Lookup {
         !self.is_success()
     }
 
-    /// Returns the number of records in this lookup.
-    pub fn len(&self) -> usize {
-        self.records.len()
-    }
-
-    /// Checks if the lookup has no records.
-    pub fn is_empty(&self) -> bool {
-        self.records.is_empty()
-    }
-
     /// Returns answer records for successful lookups.
     ///
     /// Filters records to only include those that match the query type
@@ -224,15 +461,11 @@ impl Lookup {
     /// # Returns
     ///
     /// An iterator over answer records, or empty if this is a negative response.
-    pub fn answer_records(&self) -> Box<dyn Iterator<Item = &Record> + '_> {
+    pub fn answer_records(&self) -> SectionIter<'_> {
         if self.is_success() {
-            Box::new(
-                self.records
-                    .iter()
-                    .filter(|r| r.record_type() == self.query_type()),
-            )
+            SectionIter::new(&self.records.answers)
         } else {
-            Box::new([].iter())
+            SectionIter::empty()
         }
     }
 
@@ -246,8 +479,9 @@ impl Lookup {
     /// The SOA record if present, or `None` if not found.
     pub fn soa(&self) -> Option<&Record> {
         self.records
+            .authorities
             .iter()
-            .find(|r| r.record_type() == RecordType::SOA)
+            .find(|rr| matches!(rr.record_type(), RecordType::SOA))
     }
 
     /// Returns authority records (nameservers, SOA, etc.).
@@ -256,7 +490,7 @@ impl Lookup {
     ///
     /// An iterator over authority records.
     pub fn authority_records(&self) -> impl Iterator<Item = &Record> {
-        self.records.iter().filter(|r| {
+        self.records.authorities.iter().filter(|r| {
             matches!(
                 r.record_type(),
                 RecordType::SOA | RecordType::NS | RecordType::DS
@@ -271,8 +505,18 @@ impl Lookup {
     /// An iterator over NS records.
     pub fn ns(&self) -> impl Iterator<Item = &Record> {
         self.records
+            .authorities
             .iter()
-            .filter(|rr| rr.record_type() == RecordType::NS)
+            .filter(|rr| matches!(rr.record_type(), RecordType::NS))
+    }
+
+    /// Returns additional records included in the response.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over additional records
+    pub fn additional_records(&self) -> impl Iterator<Item = &Record> {
+        self.records.additionals.iter()
     }
 
     /// Returns glue records for the specified name.
@@ -285,7 +529,10 @@ impl Lookup {
     ///
     /// An iterator over glue records matching the name.
     pub fn glue(&self, name: &Name) -> impl Iterator<Item = &Record> {
-        self.records.iter().filter(move |rr| rr.name() == name)
+        self.records
+            .additionals
+            .iter()
+            .filter(move |rr| rr.name() == name)
     }
 
     /// Returns the negative caching TTL for negative responses.
@@ -308,35 +555,29 @@ impl Lookup {
         }
     }
 
-    /// Clones the inner vec, appends the other vec
-    pub fn append(&self, other: Self) -> Self {
-        let mut records = Vec::with_capacity(self.len() + other.len());
-        records.extend_from_slice(&self.records);
-        records.extend_from_slice(&other.records);
-
-        // Choose the sooner deadline of the two lookups.
-        let valid_until = min(self.valid_until(), other.valid_until());
-        Self::new(
-            QueryID::new(),
-            self.query.clone(),
-            records,
-            ResponseCode::NoError,
-            valid_until,
-        )
+    /// Sets whether this response is authoritative.
+    pub fn set_authoritative(&mut self, authoritative: bool) {
+        self.metadata.authoritative = authoritative;
     }
 }
 
-impl From<Lookup> for Message {
-    fn from(lookup: Lookup) -> Self {
+impl From<QueryLookup> for Message {
+    fn from(lookup: QueryLookup) -> Self {
         let mut msg = Message::new();
         msg.add_query(lookup.query.clone());
-        msg.set_response_code(lookup.response_code);
+        msg.set_response_code(lookup.metadata.response_code);
         msg.set_message_type(hickory_proto::op::MessageType::Response);
 
         if lookup.is_success() {
             // Add answer records for successful responses
             msg.add_answers(lookup.answer_records().cloned());
         }
+
+        msg.add_additionals(lookup.additional_records().cloned());
+
+        msg.set_authoritative(lookup.metadata().authoritative);
+        msg.set_authentic_data(lookup.metadata().authentic_data);
+        msg.set_checking_disabled(lookup.metadata().checking_disabled);
 
         // Add authority records for all response types
         msg.add_name_servers(lookup.authority_records().cloned());
@@ -351,12 +592,16 @@ impl From<Lookup> for Message {
     }
 }
 
-impl TryFrom<DnsResponse> for Lookup {
+impl TryFrom<DnsResponse> for QueryLookup {
     type Error = ProtoError;
 
     fn try_from(response: DnsResponse) -> Result<Self, Self::Error> {
         let response_code = response.response_code();
         let negative_ttl = response.negative_ttl();
+        let mut metadata = QueryMetadata::from(response_code);
+        metadata.authoritative = response.authoritative();
+        metadata.authentic_data = response.authentic_data();
+        metadata.checking_disabled = response.checking_disabled();
         let (message, _) = response.into_parts();
 
         let ttl = if matches!(response_code, ResponseCode::NoError) {
@@ -374,20 +619,19 @@ impl TryFrom<DnsResponse> for Lookup {
 
         let deadline = ttl.deadline();
 
-        Ok(Lookup {
+        Ok(QueryLookup {
             id: QueryID::new(),
             query: message
                 .queries
                 .into_iter()
                 .next()
                 .ok_or_else(|| ProtoErrorKind::BadQueryCount(0))?,
-            records: message
-                .answers
-                .into_iter()
-                .chain(message.name_servers)
-                .chain(message.additionals)
-                .collect(),
-            response_code,
+            records: QueryLookupSections {
+                answers: message.answers,
+                authorities: message.name_servers,
+                additionals: message.additionals,
+            },
+            metadata,
             valid_until: deadline.into(),
         })
     }
@@ -400,7 +644,7 @@ impl TryFrom<DnsResponse> for Lookup {
 pub struct EntryMeta {
     id: QueryID,
     query: Query,
-    response_code: ResponseCode,
+    metadata: QueryMetadata,
     expires: CacheTimestamp,
 }
 
@@ -424,14 +668,17 @@ impl EntryMeta {
     /// # Returns
     ///
     /// A unified `Lookup` that can represent any response type.
-    pub fn into_lookup(self, records: Vec<Record>) -> Lookup {
-        Lookup::new(
-            self.id,
-            self.query,
-            records,
-            self.response_code,
-            self.expires,
-        )
+    pub fn into_lookup(self, records: Vec<Record>) -> QueryLookup {
+        QueryLookup {
+            id: self.id,
+            query: self.query,
+            records: QueryLookupSections {
+                answers: records,
+                ..Default::default()
+            },
+            metadata: self.metadata,
+            valid_until: self.expires,
+        }
     }
 }
 
@@ -452,7 +699,7 @@ impl FromRow for EntryMeta {
         Ok(EntryMeta {
             id: row.get("id")?,
             query,
-            response_code: row.get::<_, u16>("response_code")?.into(),
+            metadata: row.get::<_, u16>("flags")?.into(),
             expires: row.get("expires")?,
         })
     }
@@ -564,7 +811,7 @@ impl ToSql for CacheTimestamp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hickory_proto::rr::{RData, Record, rdata::A};
+    use hickory_proto::rr::{RData, rdata::A};
     use std::{str::FromStr, time::Duration};
 
     #[test]
@@ -615,13 +862,13 @@ mod tests {
         let query = Query::query(Name::from_str("example.com.").unwrap(), RecordType::A);
         let record = Record::from_rdata(
             Name::from_str("example.com.").unwrap(),
-            300,
+            300.into(),
             RData::A(A::new(192, 168, 1, 1)),
         );
         let valid_until = CacheTimestamp::now();
         let id = QueryID::new();
 
-        let lookup = Lookup::new(
+        let lookup = QueryLookup::new(
             id,
             query.clone(),
             vec![record.into()],
@@ -645,7 +892,7 @@ mod tests {
         let query = Query::query(Name::from_str("nonexistent.com.").unwrap(), RecordType::A);
         let soa_record = Record::from_rdata(
             Name::from_str("nonexistent.com.").unwrap(),
-            3600,
+            3600.into(),
             RData::SOA(hickory_proto::rr::rdata::SOA::new(
                 Name::from_str("ns1.nonexistent.com.").unwrap(),
                 Name::from_str("admin.nonexistent.com.").unwrap(),
@@ -657,13 +904,8 @@ mod tests {
             )),
         );
 
-        let lookup = Lookup::new(
-            QueryID::new(),
-            query,
-            vec![soa_record.into()],
-            ResponseCode::NXDomain,
-            CacheTimestamp::now(),
-        );
+        let mut lookup = QueryLookup::no_records(query, ResponseCode::NXDomain);
+        lookup.records_mut().authorities.push(soa_record);
 
         assert_eq!(lookup.response_code(), ResponseCode::NXDomain);
         assert!(lookup.is_nxdomain());
@@ -678,7 +920,7 @@ mod tests {
     fn test_lookup_ttl_calculation() {
         let now = Utc::now();
         let future = now + chrono::Duration::seconds(300);
-        let lookup = Lookup::new(
+        let lookup = QueryLookup::new(
             QueryID::new(),
             Query::query(Name::from_str("example.com.").unwrap(), RecordType::A),
             vec![],
@@ -699,7 +941,7 @@ mod tests {
         let meta = EntryMeta {
             id,
             query: query.clone(),
-            response_code: ResponseCode::NoError,
+            metadata: ResponseCode::NoError.into(),
             expires,
         };
 
@@ -715,11 +957,11 @@ mod tests {
         let query = Query::query(Name::from_str("example.com.").unwrap(), RecordType::A);
         let record = Record::from_rdata(
             Name::from_str("example.com.").unwrap(),
-            300,
+            300.into(),
             RData::A(A::new(192, 168, 1, 1)),
         );
 
-        let lookup = Lookup::from_records(query.clone(), vec![record.into()]);
+        let lookup = QueryLookup::from_records(query.clone(), vec![record]);
 
         assert_eq!(lookup.query(), &query);
         assert_eq!(lookup.response_code(), ResponseCode::NoError);
@@ -732,7 +974,7 @@ mod tests {
         let query = Query::query(Name::from_str("example.com.").unwrap(), RecordType::A);
         let rdata = RData::A(A::new(192, 168, 1, 1));
 
-        let lookup = Lookup::from_rdata(query.clone(), rdata);
+        let lookup = QueryLookup::from_rdata(query.clone(), rdata);
 
         assert_eq!(lookup.query(), &query);
         assert_eq!(lookup.response_code(), ResponseCode::NoError);
@@ -744,12 +986,12 @@ mod tests {
     fn test_lookup_no_records() {
         let query = Query::query(Name::from_str("example.com.").unwrap(), RecordType::A);
 
-        let lookup = Lookup::no_records(query.clone(), ResponseCode::NXDomain);
+        let lookup = QueryLookup::no_records(query.clone(), ResponseCode::NXDomain);
 
         assert_eq!(lookup.query(), &query);
         assert_eq!(lookup.response_code(), ResponseCode::NXDomain);
         assert!(lookup.is_nxdomain());
-        assert!(lookup.is_empty());
+        assert!(lookup.records().is_empty());
         assert_eq!(lookup.records().len(), 0);
     }
 }

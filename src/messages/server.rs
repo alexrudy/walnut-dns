@@ -34,6 +34,10 @@ impl<M> Incoming<M> {
     pub fn protocol(&self) -> Protocol {
         self.protocol
     }
+
+    pub fn into_inner(self) -> M {
+        self.message
+    }
 }
 
 impl<M> AsRef<M> for Incoming<M> {

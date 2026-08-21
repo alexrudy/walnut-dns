@@ -32,6 +32,7 @@ use rustls::{
 use tokio::net::TcpListener;
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
+use tower::ServiceExt;
 #[cfg(feature = "tls")]
 use walnut_dns::client::DnsRequestMiddleware;
 use walnut_dns::client::nameserver::{ConnectionConfig, NameserverConfig};
@@ -39,9 +40,13 @@ use walnut_dns::client::nameserver::{ConnectionConfig, NameserverConfig};
 use walnut_dns::client::nameserver::{NameServerConnection, Nameserver};
 use walnut_dns::client::{Client, ClientConfiguration};
 use walnut_dns::messages::Message;
+use walnut_dns::messages::server::Incoming;
 use walnut_dns::rr::{Record, Zone};
 use walnut_dns::server::stream::DnsOverStream;
 use walnut_dns::server::udp::{DnsOverUdp, UdpListener};
+use walnut_dns::server::{
+    CatalogService, MessageMetadataLayer, ValidateLookupLayer, ValidateRequestLayer,
+};
 use walnut_dns::{Catalog, SqliteStore};
 
 mod support;
@@ -186,10 +191,7 @@ async fn test_server_form_error_on_multiple_queries() {
 
 #[tokio::test]
 async fn test_server_no_response_on_response() {
-    use tower::Service as _;
     use walnut_dns::error::HickoryError;
-    use walnut_dns::messages::Protocol;
-    use walnut_dns::messages::server::Incoming;
 
     subscribe();
 
@@ -200,7 +202,13 @@ async fn test_server_no_response_on_response() {
     // nothing back" cannot be observed with a request/response client, which would simply wait for
     // a reply that never arrives. At the service level the refusal surfaces as an error, which is
     // what the server's connection loop then swallows without emitting a response.
-    let mut catalog = new_catalog().await;
+    let catalog = new_catalog().await;
+
+    let svc = tower::ServiceBuilder::new()
+        .layer(ValidateRequestLayer::new())
+        .layer(MessageMetadataLayer::new())
+        .layer(ValidateLookupLayer::new())
+        .service(CatalogService::new(catalog));
 
     let query_a = Query::query(Name::from_str("www.example.com.").unwrap(), RecordType::A);
     let mut message = Message::new();
@@ -209,10 +217,7 @@ async fn test_server_no_response_on_response() {
         .set_op_code(OpCode::Query)
         .add_query(query_a);
 
-    let peer = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 5353));
-    let request = Incoming::new(message, peer, Protocol::Udp);
-
-    let result = catalog.call(request).await;
+    let result = svc.oneshot(message).await;
 
     assert!(
         matches!(result, Err(HickoryError::ResponseAsRequest)),
@@ -333,7 +338,6 @@ async fn lazy_udp_client(addr: SocketAddr) -> Client {
     let ns = NameserverConfig::single(addr.ip(), conn_config);
     let cfg = ClientConfiguration::from(ns);
 
-    
     Client::new(cfg)
 }
 
@@ -342,7 +346,7 @@ async fn lazy_tcp_client(addr: SocketAddr) -> Client {
     conn_config.port = addr.port();
     let ns = NameserverConfig::single(addr.ip(), conn_config);
     let cfg = ClientConfiguration::from(ns);
-    
+
     Client::new(cfg)
 }
 
@@ -463,8 +467,15 @@ async fn new_catalog() -> Catalog<Zone> {
 
 async fn server_thread_udp(udp_socket: UdpSocket, shutdown: oneshot::Receiver<()>) {
     let catalog = new_catalog().await;
+    let catalog_svc = tower::ServiceBuilder::new()
+        .map_request(|incoming: Incoming<Message>| incoming.into_inner())
+        .layer(ValidateRequestLayer::new())
+        .layer(MessageMetadataLayer::new())
+        .layer(ValidateLookupLayer::new())
+        .service(CatalogService::new(catalog));
+
     let server = Server::builder()
-        .with_shared_service(catalog)
+        .with_shared_service(catalog_svc)
         .with_tokio()
         .with_acceptor(UdpListener::new(udp_socket.into()))
         .with_protocol(DnsOverUdp::new())
@@ -478,9 +489,15 @@ async fn server_thread_udp(udp_socket: UdpSocket, shutdown: oneshot::Receiver<()
 #[allow(unused)]
 async fn server_thread_tcp(tcp_listener: TcpListener, shutdown: oneshot::Receiver<()>) {
     let catalog = new_catalog().await;
+    let catalog_svc = tower::ServiceBuilder::new()
+        .map_request(|incoming: Incoming<Message>| incoming.into_inner())
+        .layer(ValidateRequestLayer::new())
+        .layer(MessageMetadataLayer::new())
+        .layer(ValidateLookupLayer::new())
+        .service(CatalogService::new(catalog));
 
     let server = Server::builder()
-        .with_shared_service(catalog)
+        .with_shared_service(catalog_svc)
         .with_tokio()
         .with_protocol(DnsOverStream::tcp())
         .with_acceptor(tcp_listener)
@@ -497,6 +514,13 @@ async fn server_thread_tls(
     cert_chain: Arc<dyn ResolvesServerCert>,
 ) {
     let catalog = new_catalog().await;
+    let catalog_svc = tower::ServiceBuilder::new()
+        .map_request(|incoming: Incoming<Message>| incoming.into_inner())
+        .layer(ValidateRequestLayer::new())
+        .layer(MessageMetadataLayer::new())
+        .layer(ValidateLookupLayer::new())
+        .service(CatalogService::new(catalog));
+
     let mut tls_config = ServerConfig::builder_with_provider(default_provider().into())
         .with_safe_default_protocol_versions()
         .unwrap()
@@ -507,7 +531,7 @@ async fn server_thread_tls(
 
     Server::builder()
         .with_acceptor(acceptor)
-        .with_shared_service(catalog)
+        .with_shared_service(catalog_svc)
         .with_tokio()
         .with_protocol(DnsOverStream::tls())
         .with_graceful_shutdown(async move {
@@ -524,9 +548,16 @@ async fn server_thread_https(
     cert_chain: Arc<dyn ResolvesServerCert>,
 ) {
     use hyperdriver::server::ServerProtocolExt as _;
-    use walnut_dns::services::http::DnsOverHttpLayer;
+    use walnut_dns::{messages::server::Incoming, services::http::DnsOverHttpLayer};
 
     let catalog = new_catalog().await;
+    let catalog_svc = tower::ServiceBuilder::new()
+        .map_request(|incoming: Incoming<Message>| incoming.into_inner())
+        .layer(ValidateRequestLayer::new())
+        .layer(MessageMetadataLayer::new())
+        .layer(ValidateLookupLayer::new())
+        .service(CatalogService::new(catalog));
+
     let mut tls_config = ServerConfig::builder_with_provider(default_provider().into())
         .with_safe_default_protocol_versions()
         .unwrap()
@@ -544,7 +575,7 @@ async fn server_thread_https(
             tower::ServiceBuilder::new()
                 .layer(tower_http::trace::TraceLayer::new_for_http())
                 .layer(DnsOverHttpLayer::new(http::Version::HTTP_2))
-                .service(catalog),
+                .service(catalog_svc),
         )
         .with_graceful_shutdown(async move {
             shutdown.await.ok();

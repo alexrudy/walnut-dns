@@ -2,10 +2,12 @@ use hickory_proto::dnssec::rdata::DNSSECRData;
 use hickory_proto::op::Query;
 use hickory_proto::rr::{RData, RecordType};
 use tower::ServiceExt as _;
-use tracing::trace;
+use tracing::{trace, warn};
 
-use crate::client::DnsClientError;
-use crate::messages::Message;
+use crate::authority::LookupError;
+use crate::lookup::QueryLookup;
+
+use crate::messages::DnsQuery;
 use crate::recursor::limit::LimitError;
 
 use super::limit::QueryCountLimit;
@@ -42,18 +44,18 @@ impl<S> CNameResolver<S> {
     }
 }
 
-impl<S> tower::Service<Query> for CNameResolver<S>
+impl<S> tower::Service<DnsQuery> for CNameResolver<S>
 where
-    S: tower::Service<Query, Response = Message, Error = DnsClientError>
+    S: tower::Service<DnsQuery, Response = QueryLookup, Error = LookupError>
         + Clone
         + Send
         + Sync
         + 'static,
     S::Future: Send + 'static,
 {
-    type Response = Message;
+    type Response = QueryLookup;
 
-    type Error = DnsClientError;
+    type Error = LookupError;
 
     type Future = future::CNameResolverFuture<S, S::Future>;
 
@@ -64,7 +66,7 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: Query) -> Self::Future {
+    fn call(&mut self, req: DnsQuery) -> Self::Future {
         let service = self.inner.clone();
         let mut service = std::mem::replace(&mut self.inner, service);
 
@@ -75,12 +77,12 @@ where
 
 /// CNAME Resolution algorithm.
 async fn resolve_cname<S>(
-    request: &Query,
+    request: &DnsQuery,
     service: &QueryCountLimit<S>,
-    mut response: Message,
-) -> Result<Message, DnsClientError>
+    mut response: QueryLookup,
+) -> Result<QueryLookup, LookupError>
 where
-    S: tower::Service<Query, Response = Message, Error = DnsClientError> + Clone,
+    S: tower::Service<DnsQuery, Response = QueryLookup, Error = LookupError> + Clone,
 {
     let query_type = request.query_type();
 
@@ -91,7 +93,8 @@ where
 
     // Return early if there aren't any CNAME in the response.
     let has_cname = response
-        .all_sections()
+        .records()
+        .iter()
         .any(|rec| matches!(rec.rdata(), RData::CNAME(_)));
     if !has_cname {
         return Ok(response);
@@ -100,13 +103,14 @@ where
     // Start resolving CNAME chain, with a limit on the number of entries we will resolve.
     let mut cname_chain = Vec::new();
 
-    for record in response.all_sections() {
+    for record in response.records.iter() {
         let RData::CNAME(name) = record.rdata() else {
             continue;
         };
 
         if response
-            .answers()
+            .records()
+            .answers
             .iter()
             .any(|answer| answer.name() == &name.0)
         {
@@ -115,17 +119,20 @@ where
         }
         trace!("Processing {}", record.name());
         let cname_query = Query::query(name.0.clone(), query_type);
+        let cname_dns_query = DnsQuery::new(cname_query, request.extensions().cloned());
 
         // Query depth is implicitly checked by QueryCountLimit
-        let response = service
-            .clone()
-            .oneshot(cname_query)
-            .await
-            .map_err(|error| match error {
-                LimitError::Service(error) => error,
-                LimitError::CountExceeded(limit) => DnsClientError::CNameLimitExceeded(limit),
-            })?;
-        cname_chain.extend(response.answers().iter().filter_map(|rr| {
+        let cname_response = match service.clone().oneshot(cname_dns_query).await {
+            Ok(cname_response) => cname_response,
+            Err(LimitError::Service(error)) => {
+                return Err(error);
+            }
+            Err(LimitError::CountExceeded(limit)) => {
+                warn!("CNAME limit exceeded: {} queries", limit);
+                return Ok(response);
+            }
+        };
+        cname_chain.extend(cname_response.records().answers.iter().filter_map(|rr| {
             if rr.record_type() == query_type || rr.record_type() == RecordType::CNAME {
                 trace!(type=%rr.record_type(), "Adding {} to chain", rr.name());
                 return Some(rr.clone());
@@ -144,7 +151,7 @@ where
     }
 
     if !cname_chain.is_empty() {
-        response.answers.extend(cname_chain);
+        response.records_mut().answers.extend(cname_chain);
     }
 
     Ok(response)
@@ -162,14 +169,17 @@ mod future {
     };
     use pin_project::pin_project;
 
-    use crate::{client::DnsClientError, messages::Message, recursor::limit::QueryCountLimit};
+    use crate::{
+        authority::LookupError, lookup::QueryLookup, messages::DnsQuery,
+        recursor::limit::QueryCountLimit,
+    };
 
     use super::resolve_cname;
 
     #[pin_project(project=StateProject)]
     enum State<F> {
         Poll(#[pin] F),
-        CName(Pin<Box<dyn Future<Output = Result<Message, DnsClientError>> + Send + 'static>>),
+        CName(Pin<Box<dyn Future<Output = Result<QueryLookup, LookupError>> + Send + 'static>>),
         Done,
     }
 
@@ -178,11 +188,11 @@ mod future {
         #[pin]
         future: State<F>,
         service: QueryCountLimit<S>,
-        request: Query,
+        request: DnsQuery,
     }
 
     impl<S, F> CNameResolverFuture<S, F> {
-        pub(super) fn new(future: F, service: S, request: Query, limit: usize) -> Self {
+        pub(super) fn new(future: F, service: S, request: DnsQuery, limit: usize) -> Self {
             Self {
                 future: State::Poll(future),
                 service: QueryCountLimit::new(service, limit),
@@ -191,21 +201,21 @@ mod future {
         }
     }
     impl<S, F> CNameResolverFuture<S, F> where
-        S: tower::Service<Query, Response = Message, Error = DnsClientError> + Clone
+        S: tower::Service<Query, Response = QueryLookup, Error = LookupError> + Clone
     {
     }
 
     impl<S, F> Future for CNameResolverFuture<S, F>
     where
-        S: tower::Service<Query, Response = Message, Error = DnsClientError>
+        S: tower::Service<DnsQuery, Response = QueryLookup, Error = LookupError>
             + Clone
             + Send
             + Sync
             + 'static,
         S::Future: Send + 'static,
-        F: Future<Output = Result<Message, DnsClientError>>,
+        F: Future<Output = Result<QueryLookup, LookupError>>,
     {
-        type Output = Result<Message, DnsClientError>;
+        type Output = Result<QueryLookup, LookupError>;
 
         fn poll(
             self: Pin<&mut CNameResolverFuture<S, F>>,
@@ -231,7 +241,8 @@ mod future {
 
                 // Return early if there aren't any CNAME in the response.
                 let has_cname = response
-                    .all_sections()
+                    .records()
+                    .iter()
                     .any(|rec| matches!(rec.rdata(), RData::CNAME(_)));
                 if !has_cname {
                     return Poll::Ready(Ok(response));
@@ -249,13 +260,19 @@ mod future {
 
 #[cfg(test)]
 mod test {
-    use hickory_proto::rr::{Name, rdata};
+    use hickory_proto::{
+        op::Query,
+        rr::{Name, RecordType, rdata},
+    };
 
     use crate::{
-        ZoneInfo as _,
+        Catalog, ZoneInfo as _,
         authority::Records,
         catalog::{CatalogStore, InMemoryStore},
+        messages::DnsQuery,
+        recursor::cname::CNameResolverLayer,
         rr::{Record, SerialNumber, TimeToLive, Zone, ZoneType},
+        server::CatalogService,
     };
 
     fn create_test_zone(name: &str) -> Zone {
@@ -299,18 +316,23 @@ mod test {
     }
 
     #[tokio::test]
-    async fn empty_zone() {
+    async fn test_lookup_empty_zone() {
+        use tower::ServiceExt as _;
+
         let store = InMemoryStore::new();
         let zone = create_test_zone("example.com.");
         store.upsert(zone.origin().clone(), &[&zone]).await.unwrap();
 
-        let found = store
-            .find(&Name::from_utf8("example.com.").unwrap())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].origin(), &Name::from_utf8("example.com.").unwrap());
-        assert!(found[0].is_empty());
+        let svc = tower::ServiceBuilder::new()
+            .layer(CNameResolverLayer::new(3))
+            .service(CatalogService::new(Catalog::new(store)));
+
+        let query = DnsQuery::new(
+            Query::query(Name::from_utf8("example.com.").unwrap(), RecordType::A),
+            None,
+        );
+
+        let found = svc.oneshot(query).await.unwrap();
+        assert_eq!(found.records().len(), 1);
     }
 }

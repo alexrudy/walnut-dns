@@ -5,7 +5,11 @@ use clap::arg;
 use tracing_subscriber::EnvFilter;
 use walnut_dns::{
     Catalog, SqliteStore,
-    server::udp::{DnsOverUdp, UdpListener},
+    messages::{Message, server::Incoming},
+    server::{
+        CatalogService, MessageMetadataLayer, ValidateLookupLayer,
+        udp::{DnsOverUdp, UdpListener},
+    },
 };
 
 #[tokio::main(flavor = "multi_thread")]
@@ -56,9 +60,15 @@ async fn server(
     let store = SqliteStore::new(connection.into()).await?;
     let catalog = Catalog::new(store);
 
+    let catalog_svc = tower::ServiceBuilder::new()
+        .map_request(|incoming: Incoming<Message>| incoming.into_inner())
+        .layer(MessageMetadataLayer::new())
+        .layer(ValidateLookupLayer::new())
+        .service(CatalogService::new(catalog));
+
     let socket = tokio::net::UdpSocket::bind((address, port)).await?;
     let server = Server::builder()
-        .with_shared_service(catalog)
+        .with_shared_service(catalog_svc)
         .with_acceptor(UdpListener::new(socket.into()))
         .with_protocol(DnsOverUdp::new())
         .with_tokio()

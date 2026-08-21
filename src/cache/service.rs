@@ -95,7 +95,7 @@ impl<S> DnsCacheService<S> {
 
         match response.response_code() {
             ResponseCode::NoError | ResponseCode::NXDomain => {
-                let lookup: crate::lookup::Lookup = response.clone().try_into()?;
+                let lookup: crate::lookup::QueryLookup = response.clone().try_into()?;
                 cache
                     .insert(&lookup, now)
                     .await

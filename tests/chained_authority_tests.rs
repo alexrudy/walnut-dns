@@ -24,12 +24,14 @@ use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 mod support;
 use support::TestZoneStore;
 use support::subscribe;
+use tower::ServiceExt as _;
 use walnut_dns::Catalog;
 use walnut_dns::authority::{
     Lookup, LookupControlFlow, LookupError, LookupOptions, LookupRecords, ZoneInfo,
 };
-use walnut_dns::messages::{Message, Protocol, server::Incoming};
+use walnut_dns::messages::Message;
 use walnut_dns::rr::{Record, RecordSet, SerialNumber, TimeToLive, ZoneType};
+use walnut_dns::server::{CatalogService, MessageMetadataLayer, ValidateLookupLayer};
 
 /// Tests the catalog's chained-authority resolution.
 #[tokio::test]
@@ -259,8 +261,13 @@ async fn do_query(catalog: &Catalog<TestAuthority>, query_name: &str) -> Message
 
     let question_bytes = question.to_bytes().unwrap();
     let question_req = Message::from_bytes(&question_bytes).unwrap();
-    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
-    catalog.lookup(&question_req, None).await.unwrap()
+
+    let svc = tower::ServiceBuilder::new()
+        .layer(MessageMetadataLayer::new())
+        .layer(ValidateLookupLayer::new())
+        .service(CatalogService::new(catalog.clone()));
+
+    svc.oneshot(question_req).await.unwrap()
 }
 
 // Handle boilerplate for the most common test case pattern: a positive response with a single A

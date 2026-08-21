@@ -17,7 +17,7 @@ use hickory_proto::{
 use once_cell::sync::Lazy;
 use std::pin::Pin;
 
-use super::Lookup;
+use super::QueryLookup;
 use crate::messages::{DnsRequest, DnsResponse};
 use crate::{client::DnsClientError, messages::Message};
 
@@ -109,16 +109,16 @@ impl ReservedNamesResolver {
         }
     }
 
-    fn check_resolver_usage(&self, query: Query, usage: &'static ZoneUsage) -> Lookup {
+    fn check_resolver_usage(&self, query: Query, usage: &'static ZoneUsage) -> QueryLookup {
         match usage.resolver() {
             ResolverUsage::Loopback => match query.query_type() {
-                RecordType::A => Lookup::from_rdata(query, LOCALHOST_V4.clone()),
-                RecordType::AAAA => Lookup::from_rdata(query, LOCALHOST_V6.clone()),
-                RecordType::PTR => Lookup::from_rdata(query, LOCALHOST_PTR.clone()),
-                _ => Lookup::no_records(query, ResponseCode::NoError),
+                RecordType::A => QueryLookup::from_rdata(query, LOCALHOST_V4.clone()),
+                RecordType::AAAA => QueryLookup::from_rdata(query, LOCALHOST_V6.clone()),
+                RecordType::PTR => QueryLookup::from_rdata(query, LOCALHOST_PTR.clone()),
+                _ => QueryLookup::no_records(query, ResponseCode::NoError),
             },
             ResolverUsage::Normal | ResolverUsage::LinkLocal | ResolverUsage::NxDomain => {
-                Lookup::no_records(query, ResponseCode::NXDomain)
+                QueryLookup::no_records(query, ResponseCode::NXDomain)
             }
         }
     }
@@ -136,7 +136,7 @@ impl ReservedNamesResolver {
     ///
     /// * `Some(lookup)` - If the query is for a reserved name
     /// * `None` - If the query is not for a reserved name and should be forwarded
-    pub fn resolve(&self, query: Query) -> Option<Lookup> {
+    pub fn resolve(&self, query: Query) -> Option<QueryLookup> {
         let usage = self.get(query.name().clone())?;
 
         // Check if this usage area should handle this query

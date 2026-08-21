@@ -4,11 +4,12 @@ use hickory_proto::op::*;
 use hickory_proto::rr::{rdata::*, *};
 use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 
+use tower::ServiceExt;
 use walnut_dns::SqliteStore;
 use walnut_dns::authority::Records as _;
-use walnut_dns::messages::server::Incoming;
-use walnut_dns::messages::{Message, Protocol};
+use walnut_dns::messages::Message;
 use walnut_dns::rr::Record;
+use walnut_dns::server::{CatalogService, MessageMetadataLayer, ValidateLookupLayer};
 use walnut_dns::{Catalog, rr::ZoneType};
 use walnut_dns::{ZoneInfo as _, rr::Zone};
 
@@ -127,6 +128,11 @@ async fn test_catalog_lookup() {
     catalog.insert(example).await.unwrap();
     catalog.insert(test).await.unwrap();
 
+    let svc = tower::ServiceBuilder::new()
+        .layer(MessageMetadataLayer::new())
+        .layer(ValidateLookupLayer::new())
+        .service(CatalogService::new(catalog));
+
     let mut question: Message = Message::new();
 
     let mut query: Query = Query::new();
@@ -137,9 +143,8 @@ async fn test_catalog_lookup() {
     // temp request
     let question_bytes = question.to_bytes().unwrap();
     let question_req = Message::from_bytes(&question_bytes).unwrap();
-    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
-    let result = catalog.lookup(&question_req, None).await.unwrap();
+    let result = svc.clone().oneshot(question_req).await.unwrap();
 
     assert_eq!(result.response_code(), ResponseCode::NoError);
     assert_eq!(result.message_type(), MessageType::Response);
@@ -167,9 +172,7 @@ async fn test_catalog_lookup() {
     // temp request
     let question_bytes = question.to_bytes().unwrap();
     let question_req = Message::from_bytes(&question_bytes).unwrap();
-    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
-
-    let result = catalog.lookup(&question_req, None).await.unwrap();
+    let result = svc.clone().oneshot(question_req).await.unwrap();
 
     assert_eq!(result.response_code(), ResponseCode::NoError);
     assert_eq!(result.message_type(), MessageType::Response);
@@ -197,6 +200,11 @@ async fn test_catalog_lookup_soa() {
     catalog.insert(example).await.unwrap();
     catalog.insert(test).await.unwrap();
 
+    let svc = tower::ServiceBuilder::new()
+        .layer(MessageMetadataLayer::new())
+        .layer(ValidateLookupLayer::new())
+        .service(CatalogService::new(catalog));
+
     let mut question: Message = Message::new();
 
     let mut query: Query = Query::new();
@@ -208,9 +216,8 @@ async fn test_catalog_lookup_soa() {
     // temp request
     let question_bytes = question.to_bytes().unwrap();
     let question_req = Message::from_bytes(&question_bytes).unwrap();
-    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
-    let result = catalog.lookup(&question_req, None).await.unwrap();
+    let result = svc.clone().oneshot(question_req).await.unwrap();
 
     assert_eq!(result.response_code(), ResponseCode::NoError);
     assert_eq!(result.message_type(), MessageType::Response);
@@ -236,8 +243,10 @@ async fn test_catalog_lookup_soa() {
     // assert SOA requests get NS records
     let mut ns: Vec<Record> = result.name_servers().to_vec();
     ns.sort();
-
-    assert_eq!(ns.len(), 2);
+    for nsr in &ns {
+        eprintln!("{}", nsr);
+    }
+    assert_eq!(ns.len(), 2, "Expected 2 NS records");
     assert_eq!(ns.first().unwrap().record_type(), RecordType::NS);
     assert_eq!(
         ns.first().unwrap().data(),
@@ -259,9 +268,12 @@ async fn test_catalog_nx_soa() {
 
     let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
     catalog.insert(example).await.unwrap();
+    let svc = tower::ServiceBuilder::new()
+        .layer(MessageMetadataLayer::new())
+        .layer(ValidateLookupLayer::new())
+        .service(CatalogService::new(catalog));
 
     let mut question: Message = Message::new();
-
     let mut query: Query = Query::new();
     query.set_name(Name::parse("nx.example.com.", None).unwrap());
 
@@ -270,9 +282,8 @@ async fn test_catalog_nx_soa() {
     // temp request
     let question_bytes = question.to_bytes().unwrap();
     let question_req = Message::from_bytes(&question_bytes).unwrap();
-    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
-    let result = catalog.lookup(&question_req, None).await.unwrap();
+    let result = svc.oneshot(question_req).await.unwrap();
 
     assert_eq!(result.response_code(), ResponseCode::NXDomain);
     assert_eq!(result.message_type(), MessageType::Response);
@@ -305,6 +316,11 @@ async fn test_non_authoritive_nx_refused() {
     let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
     catalog.insert(example).await.unwrap();
 
+    let svc = tower::ServiceBuilder::new()
+        .layer(MessageMetadataLayer::new())
+        .layer(ValidateLookupLayer::new())
+        .service(CatalogService::new(catalog));
+
     let mut question: Message = Message::new();
 
     let mut query: Query = Query::new();
@@ -316,9 +332,8 @@ async fn test_non_authoritive_nx_refused() {
     // temp request
     let question_bytes = question.to_bytes().unwrap();
     let question_req = Message::from_bytes(&question_bytes).unwrap();
-    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
-    let result = catalog.lookup(&question_req, None).await.unwrap();
+    let result = svc.oneshot(question_req).await.unwrap();
 
     assert_eq!(result.response_code(), ResponseCode::Refused);
     assert_eq!(result.message_type(), MessageType::Response);
@@ -357,6 +372,11 @@ async fn test_axfr() {
     let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
     catalog.insert(test).await.unwrap();
 
+    let svc = tower::ServiceBuilder::new()
+        .layer(MessageMetadataLayer::new())
+        .layer(ValidateLookupLayer::new())
+        .service(CatalogService::new(catalog));
+
     let mut query: Query = Query::new();
     query.set_name(origin.clone());
     query.set_query_type(RecordType::AXFR);
@@ -367,9 +387,8 @@ async fn test_axfr() {
     // temp request
     let question_bytes = question.to_bytes().unwrap();
     let question_req = Message::from_bytes(&question_bytes).unwrap();
-    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
-    let result = catalog.lookup(&question_req, None).await.unwrap();
+    let result = svc.oneshot(question_req).await.unwrap();
 
     let mut answers: Vec<Record> = result.answers().to_vec();
 
@@ -475,6 +494,11 @@ async fn test_axfr_refused() {
     let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
     catalog.insert(test).await.unwrap();
 
+    let svc = tower::ServiceBuilder::new()
+        .layer(MessageMetadataLayer::new())
+        .layer(ValidateLookupLayer::new())
+        .service(CatalogService::new(catalog));
+
     let mut query: Query = Query::new();
     query.set_name(origin);
     query.set_query_type(RecordType::AXFR);
@@ -485,9 +509,8 @@ async fn test_axfr_refused() {
     // temp request
     let question_bytes = question.to_bytes().unwrap();
     let question_req = Message::from_bytes(&question_bytes).unwrap();
-    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
-    let result = catalog.lookup(&question_req, None).await.unwrap();
+    let result = svc.oneshot(question_req).await.unwrap();
 
     assert_eq!(result.response_code(), ResponseCode::Refused);
     assert!(result.answers().is_empty());
@@ -511,6 +534,12 @@ async fn test_cname_additionals() {
     let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
     catalog.insert(example).await.unwrap();
 
+    let svc = tower::ServiceBuilder::new()
+        .layer(MessageMetadataLayer::new())
+        .layer(ValidateLookupLayer::new())
+        // .layer(CNameResolverLayer::new(2))
+        .service(CatalogService::new(catalog));
+
     let mut question: Message = Message::new();
 
     let mut query: Query = Query::new();
@@ -522,9 +551,8 @@ async fn test_cname_additionals() {
     // temp request
     let question_bytes = question.to_bytes().unwrap();
     let question_req = Message::from_bytes(&question_bytes).unwrap();
-    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
-    let result = catalog.lookup(&question_req, None).await.unwrap();
+    let result = dbg!(svc.oneshot(question_req).await.unwrap());
 
     assert_eq!(result.message_type(), MessageType::Response);
     assert_eq!(result.response_code(), ResponseCode::NoError);
@@ -555,6 +583,11 @@ async fn test_multiple_cname_additionals() {
     let catalog = Catalog::new(SqliteStore::new_in_memory().await.unwrap());
     catalog.insert(example).await.unwrap();
 
+    let svc = tower::ServiceBuilder::new()
+        .layer(MessageMetadataLayer::new())
+        .layer(ValidateLookupLayer::new())
+        .service(CatalogService::new(catalog));
+
     let mut question: Message = Message::new();
 
     let mut query: Query = Query::new();
@@ -566,9 +599,8 @@ async fn test_multiple_cname_additionals() {
     // temp request
     let question_bytes = question.to_bytes().unwrap();
     let question_req = Message::from_bytes(&question_bytes).unwrap();
-    let question_req = Incoming::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
 
-    let result = catalog.lookup(&question_req, None).await.unwrap();
+    let result = svc.oneshot(question_req).await.unwrap();
 
     assert_eq!(result.message_type(), MessageType::Response);
     assert_eq!(result.response_code(), ResponseCode::NoError);

@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS query (
     name STRING NOT NULL,
     record_type INTEGER NOT NULL,
     dns_class INTEGER NOT NULL,
-    response_code INTEGER NOT NULL,
+    flags INTEGER NOT NULL,
     expires INTEGER NOT NULL,
     last_access INTEGER NOT NULL
 );

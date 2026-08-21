@@ -47,7 +47,7 @@ use crate::rr::TimeToLive;
 
 pub use self::config::CacheConfig;
 pub use self::service::{DnsCacheLayer, DnsCacheService};
-pub use crate::lookup::{CacheTimestamp, EntryMeta, Lookup};
+pub use crate::lookup::{CacheTimestamp, EntryMeta, QueryLookup};
 
 mod config;
 mod lookup;
@@ -145,7 +145,7 @@ impl DnsCache {
     /// # Errors
     ///
     /// Returns a `CacheError` if the database operation fails.
-    pub async fn insert(&self, lookup: &Lookup, now: DateTime<Utc>) -> Result<(), CacheError> {
+    pub async fn insert(&self, lookup: &QueryLookup, now: DateTime<Utc>) -> Result<(), CacheError> {
         let ttl = if lookup.is_success() {
             lookup.ttl(now)
         } else {
@@ -193,7 +193,7 @@ impl DnsCache {
         &self,
         query: Query,
         now: DateTime<Utc>,
-    ) -> Result<Option<Lookup>, CacheError> {
+    ) -> Result<Option<QueryLookup>, CacheError> {
         let mut connection = self.manager.get().await?;
         crate::block_in_place(|| {
             let tx = connection.transaction()?;
@@ -257,7 +257,7 @@ mod tests {
             300,
             RData::A(A::new(192, 168, 1, 1)),
         );
-        let lookup = Lookup::new(
+        let lookup = QueryLookup::new(
             QueryID::new(),
             query.clone(),
             vec![record.into()],
@@ -279,7 +279,7 @@ mod tests {
         let now = Utc::now();
 
         let query = Query::query(Name::from_str("nonexistent.com.").unwrap(), RecordType::A);
-        let nxdomain = Lookup::new(
+        let nxdomain = QueryLookup::new(
             QueryID::new(),
             query.clone(),
             vec![],
@@ -302,7 +302,7 @@ mod tests {
         let past = now - chrono::Duration::seconds(3600);
 
         let query = Query::query(Name::from_str("expired.com.").unwrap(), RecordType::A);
-        let lookup = Lookup::new(
+        let lookup = QueryLookup::new(
             QueryID::new(),
             query.clone(),
             vec![],

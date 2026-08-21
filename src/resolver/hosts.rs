@@ -23,7 +23,7 @@ use hickory_proto::rr::rdata::PTR;
 use hickory_proto::rr::{Name, RecordType};
 use tracing::warn;
 
-use super::Lookup;
+use super::QueryLookup;
 use crate::cache::CacheTimestamp;
 use crate::rr::QueryID;
 use crate::rr::Record;
@@ -33,8 +33,8 @@ use crate::{
     messages::{DnsRequest, DnsResponse, Message},
 };
 
-fn lookup_with_max_ttl(query: Query, records: Vec<Record>) -> Lookup {
-    Lookup::new(
+fn lookup_with_max_ttl(query: Query, records: Vec<Record>) -> QueryLookup {
+    QueryLookup::new(
         QueryID::new(),
         query,
         records,
@@ -46,9 +46,9 @@ fn lookup_with_max_ttl(query: Query, records: Vec<Record>) -> Lookup {
 #[derive(Debug, Default)]
 struct LookupType {
     /// represents the A record type
-    a: Option<Lookup>,
+    a: Option<QueryLookup>,
     /// represents the AAAA record type
-    aaaa: Option<Lookup>,
+    aaaa: Option<QueryLookup>,
 }
 
 /// Configuration for the local hosts file
@@ -83,7 +83,7 @@ impl Hosts {
     }
 
     /// Look up the addresses for the given host from the system hosts file.
-    pub fn lookup_static_host(&self, query: &Query) -> Option<Lookup> {
+    pub fn lookup_static_host(&self, query: &Query) -> Option<QueryLookup> {
         if self.by_name.is_empty() {
             return None;
         }
@@ -141,7 +141,7 @@ impl Hosts {
     }
 
     /// Insert a new Lookup for the associated `Name` and `RecordType`
-    pub fn insert(&mut self, mut name: Name, record_type: RecordType, lookup: Lookup) {
+    pub fn insert(&mut self, mut name: Name, record_type: RecordType, mut lookup: QueryLookup) {
         assert!(record_type == RecordType::A || record_type == RecordType::AAAA);
 
         name.set_fqdn(true);
@@ -163,7 +163,9 @@ impl Hosts {
                 }
             };
 
-            old_lookup.append(lookup)
+            //TODO: This clone could be removed with more ergonomic lookups.
+            lookup.records_mut().merge(old_lookup.records.clone());
+            lookup
         };
 
         // replace the appended version
@@ -368,7 +370,7 @@ impl HostsResolver {
     ///
     /// * `Some(lookup)` - If the query was found in the hosts file
     /// * `None` - If the query was not found and should be forwarded
-    pub fn resolve(&self, query: Query) -> Option<Lookup> {
+    pub fn resolve(&self, query: Query) -> Option<QueryLookup> {
         self.hosts.lookup_static_host(&query)
     }
 }
@@ -522,12 +524,12 @@ mod tests {
         let localhost_name = Name::from_str("localhost.").unwrap();
         let localhost_a_query = Query::query(localhost_name.clone(), RecordType::A);
         let localhost_a_lookup =
-            Lookup::from_rdata(localhost_a_query, RData::A(A::new(127, 0, 0, 1)));
+            QueryLookup::from_rdata(localhost_a_query, RData::A(A::new(127, 0, 0, 1)));
         hosts.insert(localhost_name.clone(), RecordType::A, localhost_a_lookup);
 
         // Add localhost AAAA record (::1)
         let localhost_aaaa_query = Query::query(localhost_name.clone(), RecordType::AAAA);
-        let localhost_aaaa_lookup = Lookup::from_rdata(
+        let localhost_aaaa_lookup = QueryLookup::from_rdata(
             localhost_aaaa_query,
             RData::AAAA(AAAA::new(0, 0, 0, 0, 0, 0, 0, 1)),
         );
@@ -541,7 +543,7 @@ mod tests {
         let test_local_name = Name::from_str("test.local.").unwrap();
         let test_local_query = Query::query(test_local_name.clone(), RecordType::A);
         let test_local_lookup =
-            Lookup::from_rdata(test_local_query, RData::A(A::new(192, 168, 1, 100)));
+            QueryLookup::from_rdata(test_local_query, RData::A(A::new(192, 168, 1, 100)));
         hosts.insert(test_local_name, RecordType::A, test_local_lookup);
 
         HostsResolver::new(hosts)

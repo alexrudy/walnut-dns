@@ -5,7 +5,7 @@ use hickory_proto::serialize::binary::BinEncodable;
 use rusqlite::named_params;
 
 use crate::authority::Records as _;
-use crate::lookup::{EntryMeta, Lookup};
+use crate::lookup::{EntryMeta, QueryLookup};
 use crate::rr::QueryID;
 use crate::{
     ZoneInfo as _,
@@ -111,7 +111,7 @@ impl<'c> RecordPersistence<'c> {
 
     /// Populate a single zone with records
     #[tracing::instrument("populate", skip_all, level = "trace")]
-    pub(crate) fn populate_lookup(&self, params: EntryMeta) -> rusqlite::Result<Lookup> {
+    pub(crate) fn populate_lookup(&self, params: EntryMeta) -> rusqlite::Result<QueryLookup> {
         let mut stmt = self
             .connection
             .prepare(&Self::TABLE.select("WHERE query_id = :query_id"))?;
