@@ -289,11 +289,11 @@ impl TSigner {
         first_message: bool,
     ) -> Result<(Vec<u8>, u64, Range<u64>), DnsSecError> {
         let (tbv, record) = signed_bitmessage_to_buf(message, previous_hash, first_message)?;
-        let tsig = record.data;
+        let tsig = record.rdata;
 
         // https://tools.ietf.org/html/rfc8945#section-5.2
         // 1.  Check key
-        if record.name != self.0.signer_name || tsig.algorithm != self.0.algorithm {
+        if record.name_labels != self.0.signer_name || tsig.algorithm != self.0.algorithm {
             return Err(DnsSecError::TsigWrongKey);
         }
 
@@ -417,7 +417,7 @@ impl TSigVerifier {
     ///
     /// Returns the verified `DnsResponse` on success, or a `ProtocolError` if
     /// verification fails.
-    pub fn verify(&mut self, response_bytes: &[u8]) -> Result<Message, ProtocolError> {
+    pub fn verify(&mut self, response_bytes: &[u8]) -> Result<(), ProtocolError> {
         let (last_sig, rt, range) = self
             .signer
             .verify_message_byte(
@@ -430,7 +430,7 @@ impl TSigVerifier {
         if rt >= self.remote_time && range.contains(&self.request_time) {
             self.previous_signature = last_sig;
             self.remote_time = rt;
-            DnsResponse::from_buffer(response_bytes.to_vec())
+            Ok(())
         } else {
             Err(ProtocolError::from(
                 "tsig validation error: outdated response",

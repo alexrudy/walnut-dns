@@ -11,7 +11,6 @@ use core::str::FromStr;
 use std::string::String;
 use std::vec::Vec;
 
-use bytes::Buf;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +20,7 @@ use crate::{
     serialize::{
         binary::{
             BinDecodable, BinDecoder, BinEncodable, BinEncoder, DecodeError, RDataEncoding,
-            Restrict,
+            Restrict, RestrictedMath as _,
         },
         text::ParseError,
     },
@@ -149,7 +148,7 @@ impl From<CertType> for u16 {
 
 impl<'r> BinDecodable<'r> for CertType {
     fn read(decoder: &mut BinDecoder<'_>) -> Result<Self, DecodeError> {
-        let algorithm_id = decoder.read_u16()?;
+        let algorithm_id = decoder.read_u16()?.unverified();
         Ok(Self::from(algorithm_id))
     }
 }
@@ -370,7 +369,7 @@ impl From<Algorithm> for u8 {
 impl<'r> BinDecodable<'r> for Algorithm {
     // https://www.iana.org/assignments/dns-sec-alg-numbers/dns-sec-alg-numbers.xhtml
     fn read(decoder: &mut BinDecoder<'_>) -> Result<Self, DecodeError> {
-        let algorithm_id = decoder.read_u8()?;
+        let algorithm_id = decoder.read_u8()?.unverified();
         Ok(Self::from(algorithm_id))
     }
 }
@@ -517,7 +516,7 @@ impl<'r> RecordDataDecodable<'r> for CERT {
         let start_idx = decoder.index();
 
         let cert_type = CertType::read(decoder)?;
-        let key_tag = decoder.read_u16()?;
+        let key_tag = decoder.read_u16()?.unverified();
         let algorithm = Algorithm::read(decoder)?;
 
         let cert_len = length

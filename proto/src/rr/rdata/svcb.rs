@@ -639,7 +639,9 @@ impl FromStr for SvcParamKey {
         /// keys are in the format of key#, e.g. key12344, with a max value of u16
         fn parse_unknown_key(key: &str) -> Result<SvcParamKey, ProtocolError> {
             let key_value = key.strip_prefix("key").ok_or_else(|| {
-                ProtocolError::Msg(format!("bad formatted key ({key}), expected key1234"))
+                ProtocolError::Message(
+                    format!("bad formatted key ({key}), expected key1234").into(),
+                )
             })?;
 
             Ok(SvcParamKey::Key(u16::from_str(key_value)?))
@@ -1680,7 +1682,7 @@ mod tests {
             .expect("failed to parse record")
             .1;
         let record_set = records.into_iter().next().expect("no record found").1;
-        D::try_borrow(&record_set.into_iter().next().unwrap().data)
+        D::try_borrow(&record_set.into_iter().next().unwrap().rdata)
             .expect("Not the correct record")
             .clone()
     }

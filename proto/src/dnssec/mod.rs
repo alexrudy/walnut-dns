@@ -7,7 +7,6 @@
 
 //! dns security extension related modules
 
-use core::slice;
 use std::string::String;
 use std::vec::Vec;
 
@@ -17,7 +16,7 @@ use thiserror::Error;
 
 use crate::dnssec::crypto::Digest;
 use crate::error::ProtocolError;
-use crate::rr::{Name, RData, Record, rdata::tsig::TsigAlgorithm};
+use crate::rr::{Name, Record, rdata::tsig::TsigAlgorithm};
 use crate::serialize::binary::{BinEncodable, BinEncoder, DecodeError, NameEncoding};
 
 mod algorithm;
@@ -52,24 +51,6 @@ pub use trust_anchor::TrustAnchors;
 
 mod verifier;
 pub use verifier::Verifier;
-
-/// An iterator over record data with all data wrapped in a Proven type for dnssec validation
-pub struct DnssecIter<'a>(slice::Iter<'a, Record<RData>>);
-
-impl<'a> DnssecIter<'a> {
-    /// Create a new DnssecIter from any iterator of Record references
-    pub fn new(records: &'a [Record<RData>]) -> Self {
-        Self(records.iter())
-    }
-}
-
-impl<'a> Iterator for DnssecIter<'a> {
-    type Item = Proven<&'a Record>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(Proven::from)
-    }
-}
 
 /// ```text
 /// RFC 5155                         NSEC3                        March 2008
@@ -363,23 +344,6 @@ impl From<String> for DnsSecError {
 impl From<&'static str> for DnsSecError {
     fn from(msg: &'static str) -> Self {
         Self::Message(msg)
-    }
-}
-
-impl Clone for DnsSecError {
-    fn clone(&self) -> Self {
-        use DnsSecError::*;
-        match self {
-            HmacInvalid => HmacInvalid,
-            Message(msg) => Message(msg),
-            Msg(msg) => Msg(msg.clone()),
-            // foreign
-            Proto(proto) => Proto(proto.clone()),
-            RingKeyRejected(r) => Msg(format!("Ring rejected key: {r}")),
-            RingUnspecified(_r) => RingUnspecified(ring_like::Unspecified),
-            TsigUnsupportedMacAlgorithm(alg) => TsigUnsupportedMacAlgorithm(alg.clone()),
-            TsigWrongKey => TsigWrongKey,
-        }
     }
 }
 

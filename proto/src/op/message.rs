@@ -17,7 +17,7 @@ use tracing::debug;
 use tracing::warn;
 
 #[cfg(feature = "__dnssec")]
-use crate::dnssec::{DnssecIter, rdata::DNSSECRData};
+use crate::dnssec::rdata::DNSSECRData;
 use crate::random;
 #[cfg(feature = "__dnssec")]
 use crate::rr::{TSigVerifier, TSigner};
@@ -338,12 +338,6 @@ impl Message {
         self
     }
 
-    /// Returns a borrowed iterator of the answer records wrapped in a dnssec Proven type
-    #[cfg(feature = "__dnssec")]
-    pub fn dnssec_answers(&self) -> DnssecIter<'_> {
-        DnssecIter::new(&self.answers)
-    }
-
     /// Consume the message, returning an iterator over records from all sections
     pub fn take_all_sections(&mut self) -> impl Iterator<Item = Record> {
         let (answers, authorities, additionals) = (
@@ -456,7 +450,7 @@ impl Message {
                 continue;
             }
 
-            match record.data {
+            match record.rdata {
                 #[cfg(feature = "__dnssec")]
                 RData::DNSSEC(DNSSECRData::SIG(_)) => {
                     warn!(
@@ -497,7 +491,7 @@ impl Message {
     }
 
     /// Encodes the Message into a buffer
-    pub fn to_vec(&self) -> Result<Vec<u8>, ProtoError> {
+    pub fn to_vec(&self) -> Result<Vec<u8>, ProtocolError> {
         // TODO: this feels like the right place to verify the max packet size of the message,
         //  will need to update the header for truncation and the lengths if we send less than the
         //  full response. This needs to conform with the EDNS settings of the server...
@@ -518,7 +512,7 @@ impl Message {
         &mut self,
         finalizer: &TSigner,
         inception_time: u64,
-    ) -> ProtoResult<Option<TSigVerifier>> {
+    ) -> Result<Option<TSigVerifier>, ProtocolError> {
         debug!("finalizing message: {:?}", self);
 
         let (signature, verifier) = finalizer.sign_message(self, inception_time)?;
@@ -537,17 +531,17 @@ impl Deref for Message {
 }
 
 /// Returns the count written and a boolean if it was truncated
-fn count_was_truncated(result: ProtoResult<usize>) -> ProtoResult<(u16, bool)> {
+fn count_was_truncated(result: Result<usize, ProtocolError>) -> Result<(u16, bool), ProtocolError> {
     let (count, truncated) = match result {
         Ok(count) => (count, false),
-        Err(ProtoError::NotAllRecordsWritten { count }) => (count, true),
+        Err(ProtocolError::NotAllRecordsWritten { count }) => (count, true),
         Err(e) => return Err(e),
     };
 
     match u16::try_from(count) {
         Ok(count) => Ok((count, truncated)),
-        Err(_) => Err(ProtoError::Message(
-            "too many records to fit in header count",
+        Err(_) => Err(ProtocolError::Message(
+            "too many records to fit in header count".into(),
         )),
     }
 }
@@ -555,11 +549,11 @@ fn count_was_truncated(result: ProtoResult<usize>) -> ProtoResult<(u16, bool)> {
 /// A trait that defines types which can be emitted as a set, with the associated count returned.
 pub trait EmitAndCount {
     /// Emit self to the encoder and return the count of items
-    fn emit(&mut self, encoder: &mut BinEncoder<'_>) -> ProtoResult<usize>;
+    fn emit(&mut self, encoder: &mut BinEncoder<'_>) -> Result<usize, ProtocolError>;
 }
 
 impl<'e, I: Iterator<Item = &'e E>, E: 'e + BinEncodable> EmitAndCount for I {
-    fn emit(&mut self, encoder: &mut BinEncoder<'_>) -> ProtoResult<usize> {
+    fn emit(&mut self, encoder: &mut BinEncoder<'_>) -> Result<usize, ProtocolError> {
         encoder.emit_all(self)
     }
 }
@@ -579,7 +573,7 @@ pub fn emit_message_parts<Q, A, N, D>(
     edns: Option<&Edns>,
     signature: Option<&Record<TSIG>>,
     encoder: &mut BinEncoder<'_>,
-) -> ProtoResult<Header>
+) -> Result<Header, ProtocolError>
 where
     Q: EmitAndCount,
     A: EmitAndCount,
@@ -623,8 +617,8 @@ where
         queries: match u16::try_from(query_count) {
             Ok(count) => count,
             Err(_) => {
-                return Err(ProtoError::Message(
-                    "too many queries to fit in header count",
+                return Err(ProtocolError::Message(
+                    "too many queries to fit in header count".into(),
                 ));
             }
         },
@@ -647,7 +641,7 @@ where
 }
 
 impl BinEncodable for Message {
-    fn emit(&self, encoder: &mut BinEncoder<'_>) -> ProtoResult<()> {
+    fn emit(&self, encoder: &mut BinEncoder<'_>) -> Result<(), ProtocolError> {
         emit_message_parts(
             &self.metadata,
             &mut self.queries.iter(),
@@ -753,20 +747,17 @@ impl fmt::Display for Message {
 
 #[cfg(test)]
 mod tests {
+    use std::net::IpAddr;
+
     use super::*;
 
-    use crate::rr::rdata::A;
-    #[cfg(feature = "std")]
-    use crate::rr::rdata::OPT;
-    #[cfg(feature = "std")]
+    #[cfg(feature = "__dnssec")]
+    use crate::rr::TimeToLive;
     use crate::rr::rdata::opt::{ClientSubnet, EdnsCode, EdnsOption};
+    use crate::rr::rdata::{A, OPT};
     #[cfg(feature = "__dnssec")]
     use crate::rr::rdata::{TSIG, tsig::TsigAlgorithm};
     use crate::rr::{Name, RData};
-    #[cfg(feature = "std")]
-    use crate::std::net::IpAddr;
-    #[cfg(feature = "std")]
-    use crate::std::string::ToString;
 
     #[test]
     fn test_emit_and_read_header() {
@@ -926,12 +917,12 @@ mod tests {
         let records = vec![
             Record::from_rdata(
                 Name::from_labels(vec!["example", "com"]).unwrap(),
-                300,
+                300.into(),
                 RData::A(A::new(127, 0, 0, 1)),
             ),
             Record::from_rdata(
                 Name::from_labels(vec!["www", "example", "com"]).unwrap(),
-                300,
+                300.into(),
                 RData::A(A::new(127, 0, 0, 1)),
             ),
         ];
@@ -942,18 +933,17 @@ mod tests {
         assert!(signature.is_none());
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_read_records_edns() {
         let records = vec![
             Record::from_rdata(
                 Name::from_labels(vec!["example", "com"]).unwrap(),
-                300,
+                300.into(),
                 RData::A(A::new(127, 0, 0, 1)),
             ),
             Record::from_rdata(
                 Name::new(),
-                0,
+                TimeToLive::ZERO,
                 RData::OPT(OPT::new(vec![(
                     EdnsCode::Subnet,
                     EdnsOption::Subnet(ClientSubnet::new(IpAddr::from([127, 0, 0, 1]), 0, 24)),
@@ -973,12 +963,12 @@ mod tests {
         let records = vec![
             Record::from_rdata(
                 Name::from_labels(vec!["example", "com"]).unwrap(),
-                300,
+                300.into(),
                 RData::A(A::new(127, 0, 0, 1)),
             ),
             Record::from_rdata(
                 Name::from_labels(vec!["tsig", "example", "com"]).unwrap(),
-                0,
+                TimeToLive::ZERO,
                 fake_tsig(),
             ),
         ];
@@ -989,18 +979,18 @@ mod tests {
         assert!(signature.is_some());
     }
 
-    #[cfg(all(feature = "std", feature = "__dnssec"))]
+    #[cfg(all(feature = "__dnssec"))]
     #[test]
     fn test_read_records_edns_tsig() {
         let records = vec![
             Record::from_rdata(
                 Name::from_labels(vec!["example", "com"]).unwrap(),
-                300,
+                300.into(),
                 RData::A(A::new(127, 0, 0, 1)),
             ),
             Record::from_rdata(
                 Name::new(),
-                0,
+                TimeToLive::ZERO,
                 RData::OPT(OPT::new(vec![(
                     EdnsCode::Subnet,
                     EdnsOption::Subnet(ClientSubnet::new(IpAddr::from([127, 0, 0, 1]), 0, 24)),
@@ -1008,7 +998,7 @@ mod tests {
             ),
             Record::from_rdata(
                 Name::from_labels(vec!["tsig", "example", "com"]).unwrap(),
-                0,
+                TimeToLive::ZERO,
                 fake_tsig(),
             ),
         ];
@@ -1021,12 +1011,11 @@ mod tests {
         assert!(signature.is_some());
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_read_records_unsigned_multiple_edns() {
         let opt_record = Record::from_rdata(
             Name::new(),
-            0,
+            TimeToLive::ZERO,
             RData::OPT(OPT::new(vec![(
                 EdnsCode::Subnet,
                 EdnsOption::Subnet(ClientSubnet::new(IpAddr::from([127, 0, 0, 1]), 0, 24)),
@@ -1037,7 +1026,7 @@ mod tests {
                 opt_record.clone(),
                 Record::from_rdata(
                     Name::from_labels(vec!["example", "com"]).unwrap(),
-                    300,
+                    300.into(),
                     RData::A(A::new(127, 0, 0, 1)),
                 ),
                 opt_record.clone(),
@@ -1048,12 +1037,11 @@ mod tests {
         assert!(error.to_string().contains("more than one EDNS record"));
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_read_records_opt_not_additional() {
         let opt_record = Record::from_rdata(
             Name::new(),
-            0,
+            TimeToLive::ZERO,
             RData::OPT(OPT::new(vec![(
                 EdnsCode::Subnet,
                 EdnsOption::Subnet(ClientSubnet::new(IpAddr::from([127, 0, 0, 1]), 0, 24)),
@@ -1064,7 +1052,7 @@ mod tests {
                 opt_record.clone(),
                 Record::from_rdata(
                     Name::from_labels(vec!["example", "com"]).unwrap(),
-                    300,
+                    300.into(),
                     RData::A(A::new(127, 0, 0, 1)),
                 ),
             ],
@@ -1077,12 +1065,12 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "std", feature = "__dnssec"))]
+    #[cfg(all(feature = "__dnssec"))]
     #[test]
     fn test_read_records_signed_multiple_edns() {
         let opt_record = Record::from_rdata(
             Name::new(),
-            0,
+            TimeToLive::ZERO,
             RData::OPT(OPT::new(vec![(
                 EdnsCode::Subnet,
                 EdnsOption::Subnet(ClientSubnet::new(IpAddr::from([127, 0, 0, 1]), 0, 24)),
@@ -1093,13 +1081,13 @@ mod tests {
                 opt_record.clone(),
                 Record::from_rdata(
                     Name::from_labels(vec!["example", "com"]).unwrap(),
-                    300,
+                    300.into(),
                     RData::A(A::new(127, 0, 0, 1)),
                 ),
                 opt_record.clone(),
                 Record::from_rdata(
                     Name::from_labels(vec!["tsig", "example", "com"]).unwrap(),
-                    0,
+                    TimeToLive::ZERO,
                     fake_tsig(),
                 ),
             ],
@@ -1109,19 +1097,19 @@ mod tests {
         assert!(error.to_string().contains("more than one EDNS record"));
     }
 
-    #[cfg(all(feature = "std", feature = "__dnssec"))]
+    #[cfg(feature = "__dnssec")]
     #[test]
     fn test_read_records_tsig_not_additional() {
         let err = encode_and_read_records(
             vec![
                 Record::from_rdata(
                     Name::from_labels(vec!["example", "com"]).unwrap(),
-                    300,
+                    300.into(),
                     RData::A(A::new(127, 0, 0, 1)),
                 ),
                 Record::from_rdata(
                     Name::from_labels(vec!["tsig", "example", "com"]).unwrap(),
-                    0,
+                    TimeToLive::ZERO,
                     fake_tsig(),
                 ),
             ],
@@ -1134,12 +1122,12 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "std", feature = "__dnssec"))]
+    #[cfg(feature = "__dnssec")]
     #[test]
     fn test_read_records_tsig_not_last() {
         let a_record = Record::from_rdata(
             Name::from_labels(vec!["example", "com"]).unwrap(),
-            300,
+            300.into(),
             RData::A(A::new(127, 0, 0, 1)),
         );
         let error = encode_and_read_records(
@@ -1147,7 +1135,7 @@ mod tests {
                 a_record.clone(),
                 Record::from_rdata(
                     Name::from_labels(vec!["tsig", "example", "com"]).unwrap(),
-                    0,
+                    TimeToLive::ZERO,
                     fake_tsig(),
                 ),
                 a_record.clone(),
@@ -1159,12 +1147,12 @@ mod tests {
         assert!(error.contains("record after TSIG or SIG(0)"));
     }
 
-    #[cfg(all(feature = "std", feature = "__dnssec"))]
+    #[cfg(feature = "__dnssec")]
     #[test]
     fn test_read_records_sig0_not_last() {
         let a_record = Record::from_rdata(
             Name::from_labels(vec!["example", "com"]).unwrap(),
-            300,
+            300.into(),
             RData::A(A::new(127, 0, 0, 1)),
         );
         let error = encode_and_read_records(
@@ -1172,7 +1160,7 @@ mod tests {
                 a_record.clone(),
                 Record::from_rdata(
                     Name::from_labels(vec!["sig0", "example", "com"]).unwrap(),
-                    0,
+                    TimeToLive::ZERO,
                     fake_tsig(),
                 ),
                 a_record.clone(),
@@ -1184,19 +1172,19 @@ mod tests {
         assert!(error.contains("record after TSIG or SIG(0)"));
     }
 
-    #[cfg(all(feature = "std", feature = "__dnssec"))]
+    #[cfg(feature = "__dnssec")]
     #[test]
     fn test_read_records_multiple_tsig() {
         let tsig_record = Record::from_rdata(
             Name::from_labels(vec!["tsig", "example", "com"]).unwrap(),
-            0,
+            TimeToLive::ZERO,
             fake_tsig(),
         );
         let error = encode_and_read_records(
             vec![
                 Record::from_rdata(
                     Name::from_labels(vec!["example", "com"]).unwrap(),
-                    300,
+                    300.into(),
                     RData::A(A::new(127, 0, 0, 1)),
                 ),
                 tsig_record.clone(),
@@ -1209,19 +1197,19 @@ mod tests {
         assert!(error.contains("record after TSIG or SIG(0)"));
     }
 
-    #[cfg(all(feature = "std", feature = "__dnssec"))]
+    #[cfg(feature = "__dnssec")]
     #[test]
     fn test_read_records_multiple_sig0() {
         let sig0_record = Record::from_rdata(
             Name::from_labels(vec!["sig0", "example", "com"]).unwrap(),
-            0,
+            TimeToLive::ZERO,
             fake_tsig(),
         );
         let error = encode_and_read_records(
             vec![
                 Record::from_rdata(
                     Name::from_labels(vec!["example", "com"]).unwrap(),
-                    300,
+                    300.into(),
                     RData::A(A::new(127, 0, 0, 1)),
                 ),
                 sig0_record.clone(),
@@ -1238,7 +1226,7 @@ mod tests {
     fn encode_and_read_records(
         records: Vec<Record>,
         is_additional: bool,
-    ) -> ProtoResult<(Vec<Record>, Option<Edns>, Option<Box<Record<TSIG>>>)> {
+    ) -> Result<(Vec<Record>, Option<Edns>, Option<Box<Record<TSIG>>>), ProtocolError> {
         let mut bytes = Vec::new();
         let mut encoder = BinEncoder::new(&mut bytes);
         encoder.emit_all(records.iter())?;

@@ -483,6 +483,25 @@ impl<R: RecordData> Record<R> {
     }
 }
 
+impl Record {
+    #[cfg(test)]
+    pub(crate) fn stub() -> Self {
+        Self {
+            id: RecordID::default(),
+            name_labels: Name::from_ascii(".").unwrap(),
+            dns_class: DNSClass::IN,
+            ttl: TimeToLive::ZERO,
+            rdata: RData::Update0(RecordType::NULL),
+            #[cfg(feature = "mdns")]
+            mdns_cache_flush: false,
+            #[cfg(feature = "__dnssec")]
+            proof: Proof::default(),
+            expires: None,
+            glue: false,
+        }
+    }
+}
+
 impl<R: RecordData> PartialEq for Record<R> {
     fn eq(&self, other: &Self) -> bool {
         self.name_labels == other.name_labels

@@ -27,7 +27,7 @@ pub enum ProtocolError {
     #[error("not all records could be written, wrote: {count}")]
     NotAllRecordsWritten {
         /// Number of records that were written before the error
-        count: u16,
+        count: usize,
     },
 
     /// A response was received with QR=0, indicating it was a query and not a response

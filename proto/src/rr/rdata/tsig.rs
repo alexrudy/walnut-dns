@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::dnssec::{DnsSecError, ring_like::hmac};
 #[cfg(feature = "__dnssec")]
 use crate::op::{Header, Message, Query};
+use crate::rr::TimeToLive;
 #[cfg(feature = "__dnssec")]
 use crate::rr::tsig::TSigner;
 use crate::{
@@ -695,7 +696,7 @@ pub fn message_tbs<M: BinEncodable>(
     message: &M,
     pre_tsig: &TSIG,
     key_name: &Name,
-) -> ProtoResult<Vec<u8>> {
+) -> Result<Vec<u8>, ProtocolError> {
     let mut buf = Vec::with_capacity(512);
     let mut encoder = BinEncoder::new(&mut buf);
     message.emit(&mut encoder)?;
@@ -716,7 +717,7 @@ pub fn signed_bitmessage_to_buf(
     message: &[u8],
     previous_hash: Option<&[u8]>,
     first_message: bool,
-) -> ProtoResult<(Vec<u8>, Box<Record<TSIG>>)> {
+) -> Result<(Vec<u8>, Box<Record<TSIG>>), ProtocolError> {
     let mut decoder = BinDecoder::new(message);
     let Header {
         mut metadata,
@@ -769,7 +770,7 @@ pub fn signed_bitmessage_to_buf(
         return Err(ProtocolError::from("TSIG signature record not found"));
     };
 
-    let tsig = &tsig_rr.data;
+    let tsig = &tsig_rr.rdata;
     metadata.id = tsig.oid;
 
     // Construct the TBS data.
@@ -790,7 +791,7 @@ pub fn signed_bitmessage_to_buf(
 
     if first_message {
         // Emit the TSIG pseudo-record when this is the first message.
-        tsig.emit_tsig_for_mac(&mut encoder, &tsig_rr.name)?;
+        tsig.emit_tsig_for_mac(&mut encoder, &tsig_rr.name_labels)?;
     } else {
         // Emit only time and fudge data for later messages.
         encoder.emit_u16((tsig.time >> 32) as u16)?;
@@ -806,9 +807,9 @@ pub fn make_tsig_record(name: Name, rdata: TSIG) -> Record<TSIG> {
     // https://tools.ietf.org/html/rfc8945#section-4.2
 
     let mut tsig = Record::from_rdata(
-        name,  //   NAME:  The name of the key used, in domain name syntax
-        0,     //   TTL:  This MUST be 0.
-        rdata, //   TYPE:  This MUST be TSIG (250: Transaction SIGnature).
+        name,             //   NAME:  The name of the key used, in domain name syntax
+        TimeToLive::ZERO, //   TTL:  This MUST be 0.
+        rdata,            //   TYPE:  This MUST be TSIG (250: Transaction SIGnature).
     );
 
     //   CLASS:  This MUST be ANY.

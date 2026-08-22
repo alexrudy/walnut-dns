@@ -688,7 +688,7 @@ impl BinEncodable for ClientSubnet {
                     encoder.emit_vec(&octets[0..addr_len])?
                 } else {
                     return Err(ProtocolError::Message(
-                        "Invalid addr length for encode EcsOption",
+                        "Invalid addr length for encode EcsOption".into(),
                     ));
                 }
             }
@@ -702,7 +702,7 @@ impl BinEncodable for ClientSubnet {
                     encoder.emit_vec(&octets[0..addr_len])?
                 } else {
                     return Err(ProtocolError::Message(
-                        "Invalid addr length for encode EcsOption",
+                        "Invalid addr length for encode EcsOption".into(),
                     ));
                 }
             }

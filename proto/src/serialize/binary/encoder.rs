@@ -373,13 +373,13 @@ impl<'a> BinEncoder<'a> {
     pub fn emit_all<'e, I: Iterator<Item = &'e E>, E: 'e + BinEncodable>(
         &mut self,
         mut iter: I,
-    ) -> Result<u16, ProtocolError> {
+    ) -> Result<usize, ProtocolError> {
         self.emit_iter(&mut iter)
     }
 
     // TODO: dedup with above emit_all
     /// Emits all the elements of an Iterator to the encoder
-    pub fn emit_all_refs<'r, 'e, I, E>(&mut self, iter: I) -> Result<u16, ProtocolError>
+    pub fn emit_all_refs<'r, 'e, I, E>(&mut self, iter: I) -> Result<usize, ProtocolError>
     where
         'e: 'r,
         I: Iterator<Item = &'r &'e E>,
@@ -393,7 +393,7 @@ impl<'a> BinEncoder<'a> {
     pub fn emit_iter<'e, I: Iterator<Item = &'e E>, E: 'e + BinEncodable>(
         &mut self,
         iter: &mut I,
-    ) -> Result<u16, ProtocolError> {
+    ) -> Result<usize, ProtocolError> {
         let mut count = 0;
         for i in iter {
             let rollback = self.set_rollback();

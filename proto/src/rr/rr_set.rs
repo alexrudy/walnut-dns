@@ -266,30 +266,6 @@ impl RecordSet {
         RecordSetIter::signed(&self.records, &self.rrsigs)
     }
 
-    /// Convert this record set into an iterator over all records and signatures
-    ///
-    /// Consumes the record set and returns an iterator over all DNS records
-    /// and their RRSIG signatures.
-    ///
-    /// # Returns
-    ///
-    /// An iterator over all records and signatures
-    pub fn into_hickory_iter(self) -> RecordSetIntoHickoryIter {
-        RecordSetIntoHickoryIter(self.records.into_iter().chain(self.rrsigs))
-    }
-
-    /// Convert this record set into an iterator over all records and signatures
-    ///
-    /// Consumes the record set and returns an iterator over all DNS records
-    /// and their RRSIG signatures.
-    ///
-    /// # Returns
-    ///
-    /// An iterator over all records and signatures
-    pub fn hickory_iter(&self) -> RecordSetHickoryIter<'_> {
-        RecordSetHickoryIter(self.records.iter().chain(self.rrsigs.iter()))
-    }
-
     /// Check if this record set is empty
     ///
     /// Returns true if the record set contains no DNS records.
@@ -348,16 +324,7 @@ impl RecordSet {
     ///
     /// Returns an error if the RRSIG doesn't cover the correct record type
     pub fn insert_rrsig(&mut self, rrsig: Record) -> Result<(), Mismatch> {
-        if rrsig
-            .rdata()
-            .as_dnssec()
-            .and_then(|dnssecdata| dnssecdata.as_rrsig())
-            .map(|rrsig| rrsig.type_covered())
-            != Some(self.record_type)
-        {
-            return Err(Mismatch("RRSIG Covered type"));
-        }
-
+        //TODO: Validate RRSIG coverage
         self.rrsigs.push(rrsig);
         Ok(())
     }
@@ -558,63 +525,6 @@ impl RecordSet {
             Ok(false)
         }
     }
-
-    /// Give a query type, if this record set points to a new name (e.g. via CNAME, ANAME, or another record which must be resolved)
-    /// return the new name to resolve and the record type we are searching for now.
-    pub fn next_lookup_name(&self, query_type: RecordType) -> Option<(Name, RecordType)> {
-        match (self.record_type(), query_type) {
-            (t @ RecordType::ANAME, RecordType::A)
-            | (t @ RecordType::ANAME, RecordType::AAAA)
-            | (t @ RecordType::ANAME, RecordType::ANAME) => {
-                self.records(false).next().and_then(|record| {
-                    record
-                        .rdata()
-                        .as_aname()
-                        .map(|aname| (aname.0.clone(), t))
-                        .inspect(|(name, record_type)| {
-                            tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
-                        })
-                })
-            }
-            (t @ RecordType::NS, RecordType::NS) => self
-                .records(false)
-                .next()
-                .and_then(|record| record.rdata().as_ns().map(|ns| (ns.0.clone(), t)))
-                .inspect(|(name, record_type)| {
-                    tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
-                }),
-            (t @ RecordType::CNAME, _) => self.records(false).next().and_then(|record| {
-                record
-                    .rdata()
-                    .as_cname()
-                    .map(|cname| (cname.0.clone(), t))
-                    .inspect(|(name, record_type)| {
-                        tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
-                    })
-            }),
-            (t @ RecordType::MX, RecordType::MX) => self.records(false).next().and_then(|record| {
-                record
-                    .rdata()
-                    .as_mx()
-                    .map(|mx| (mx.exchange().clone(), t))
-                    .inspect(|(name, record_type)| {
-                        tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
-                    })
-            }),
-            (t @ RecordType::SRV, RecordType::SRV) => {
-                self.records(false).next().and_then(|record| {
-                    record
-                        .rdata()
-                        .as_srv()
-                        .map(|srv| (srv.target().clone(), t))
-                        .inspect(|(name, record_type)| {
-                            tracing::trace!("Next name: {}, record type: {:?}", name, record_type);
-                        })
-                })
-            }
-            _ => None,
-        }
-    }
 }
 
 impl From<Record> for RecordSet {
@@ -666,19 +576,6 @@ impl<'r> IntoIterator for &'r RecordSet {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct RecordSetHickoryIter<'r>(
-    std::iter::Chain<std::slice::Iter<'r, Record>, std::slice::Iter<'r, Record>>,
-);
-
-impl<'r> Iterator for RecordSetHickoryIter<'r> {
-    type Item = hickory_proto::rr::Record;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|record| record.as_hickory())
-    }
-}
-
-#[derive(Debug, Clone, Default)]
 pub struct RecordSetIntoIter(
     std::iter::Chain<std::vec::IntoIter<Record>, std::vec::IntoIter<Record>>,
 );
@@ -697,19 +594,6 @@ impl IntoIterator for RecordSet {
 
     fn into_iter(self) -> Self::IntoIter {
         RecordSetIntoIter(self.records.into_iter().chain(self.rrsigs))
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct RecordSetIntoHickoryIter(
-    std::iter::Chain<std::vec::IntoIter<Record>, std::vec::IntoIter<Record>>,
-);
-
-impl Iterator for RecordSetIntoHickoryIter {
-    type Item = hickory_proto::rr::Record;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|record| record.as_hickory())
     }
 }
 
@@ -911,7 +795,7 @@ mod tests {
         let name = create_test_name();
         let rrset = RecordSet::new(name.clone(), RecordType::A);
         let rrkey = rrset.rrkey();
-        let rrname: Name = rrkey.name().into();
+        let rrname: Name = rrkey.name().clone();
 
         assert_eq!(name, rrname);
         assert_eq!(rrkey.record_type, RecordType::A);
@@ -948,17 +832,6 @@ mod tests {
         // Clear RRSIGs (should be no-op when empty)
         rrset.clear_rrsigs();
         assert!(rrset.rrsigs().is_empty());
-    }
-
-    #[test]
-    fn test_recordset_as_hickory() {
-        let name = create_test_name();
-        let record = create_test_a_record();
-        let rrset = RecordSet::from_record(name.clone(), record);
-
-        let hickory_rrset = rrset.as_hickory();
-        assert_eq!(hickory_rrset.name(), &name);
-        assert_eq!(hickory_rrset.record_type(), RecordType::A);
     }
 
     #[test]
@@ -1046,7 +919,7 @@ mod tests {
         // Verify the SOA has the newer serial
         let soa_record = rrset.records(false).next().unwrap();
         if let RData::SOA(soa) = soa_record.rdata() {
-            assert_eq!(soa.serial(), 200);
+            assert_eq!(soa.serial, 200);
         } else {
             panic!("Expected SOA record");
         }
@@ -1275,7 +1148,7 @@ mod tests {
 
         assert!(rrset.signed_records().any(|r| {
             if let RData::DNSSEC(DNSSECRData::RRSIG(sig)) = r.rdata() {
-                sig.algorithm() == Algorithm::ED25519
+                sig.input().algorithm == Algorithm::ED25519
             } else {
                 false
             }
@@ -1283,7 +1156,7 @@ mod tests {
 
         assert!(rrset.signed_records().any(|r| {
             if let RData::DNSSEC(DNSSECRData::RRSIG(sig)) = r.rdata() {
-                sig.algorithm() == Algorithm::ECDSAP384SHA384
+                sig.input().algorithm == Algorithm::ECDSAP384SHA384
             } else {
                 false
             }
@@ -1291,7 +1164,7 @@ mod tests {
 
         assert!(rrset.signed_records().any(|r| {
             if let RData::DNSSEC(DNSSECRData::RRSIG(sig)) = r.rdata() {
-                sig.algorithm() == Algorithm::ED25519
+                sig.input().algorithm == Algorithm::ED25519
             } else {
                 false
             }

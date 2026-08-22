@@ -907,7 +907,7 @@ mod tests {
         let mut bytes = Vec::new();
         let mut encoder: BinEncoder<'_> = BinEncoder::new(&mut bytes);
         rdata.emit(&mut encoder).expect("failed to emit caa");
-        let bytes = encoder.bytes();
+        let bytes = encoder.into_bytes();
 
         println!("bytes: {bytes:?}");
 
@@ -990,7 +990,7 @@ mod tests {
         let mut bytes = Vec::new();
         let mut encoder: BinEncoder<'_> = BinEncoder::new(&mut bytes);
         rdata.emit(&mut encoder).expect("failed to emit caa");
-        let bytes = encoder.bytes();
+        let bytes = encoder.into_bytes();
         assert_eq!(bytes as &[u8], encoded);
     }
 

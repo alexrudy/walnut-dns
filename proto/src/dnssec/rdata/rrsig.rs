@@ -16,10 +16,11 @@ use serde::{Deserialize, Serialize};
 
 use super::{DNSSECRData, SIG, sig::SigInput};
 use crate::{
-    dnssec::{DnssecSigner, TBS},
+    dnssec::{Algorithm, DnssecSigner, TBS},
     error::ProtocolError,
     rr::{
-        DNSClass, RData, Record, RecordData, RecordDataDecodable, RecordSet, RecordType, TimeToLive,
+        DNSClass, Name, RData, Record, RecordData, RecordDataDecodable, RecordSet, RecordType,
+        SerialNumber, TimeToLive,
     },
     serialize::binary::{BinDecoder, BinEncodable, BinEncoder, DecodeError, Restrict},
 };
@@ -83,6 +84,53 @@ impl RRSIG {
             .min(TimeToLive::from(
                 self.input.sig_expiration.0.saturating_sub(current_time),
             ))
+            .into()
+    }
+
+    /// Creates a new SIG record data, used for both RRSIG and SIG(0) records.
+    ///
+    /// # Arguments
+    ///
+    /// * `type_covered` - The `RecordType` which this signature covers, should be NULL for SIG(0).
+    /// * `algorithm` - The `Algorithm` used to generate the `signature`.
+    /// * `num_labels` - The number of labels in the name, should be less 1 for *.name labels,
+    ///   see `Name::num_labels()`.
+    /// * `original_ttl` - The TTL for the RRSet stored in the zone, should be 0 for SIG(0).
+    /// * `sig_expiration` - Timestamp at which this signature is no longer valid, very important to
+    ///   keep this low, < +5 minutes to limit replay attacks.
+    /// * `sig_inception` - Timestamp when this signature was generated.
+    /// * `key_tag` - See the key_tag generation in `rr::dnssec::Signer::key_tag()`.
+    /// * `signer_name` - Domain name of the server which was used to generate the signature.
+    /// * `sig` - signature stored in this record.
+    ///
+    /// # Return value
+    ///
+    /// The new SIG record data.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        type_covered: RecordType,
+        algorithm: Algorithm,
+        num_labels: u8,
+        original_ttl: u32,
+        sig_expiration: u32,
+        sig_inception: u32,
+        key_tag: u16,
+        signer_name: Name,
+        sig: Vec<u8>,
+    ) -> Self {
+        Self(SIG {
+            input: SigInput {
+                type_covered,
+                algorithm,
+                num_labels,
+                original_ttl,
+                sig_expiration: SerialNumber(sig_expiration),
+                sig_inception: SerialNumber(sig_inception),
+                key_tag,
+                signer_name,
+            },
+            sig,
+        })
     }
 }
 
@@ -197,7 +245,7 @@ mod tests {
                 RData::DNSSEC(DNSSECRData::RRSIG(rrsig)),
             );
             rrsig_record.dns_class = DNSClass::IN;
-            rrset.insert_rrsig(rrsig_record);
+            rrset.insert_rrsig(rrsig_record).unwrap();
         }
 
         assert!(rrset.records(true).any(|r| {

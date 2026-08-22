@@ -423,7 +423,12 @@ impl Context {
                 entry.insert(RecordSet::from(record));
             }
             (_, Entry::Occupied(mut entry)) => {
-                entry.get_mut().insert(record, 0.into());
+                entry
+                    .get_mut()
+                    .insert(record, 0.into())
+                    .map_err(|mismatch| {
+                        ParseError::from(format!("Error adding entry: {mismatch}"))
+                    })?;
             }
         };
 
