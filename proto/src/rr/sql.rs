@@ -1,4 +1,4 @@
-use hickory_proto::{ProtoError, rr::Name};
+use crate::{rr::Name, serialize::text::ParseError};
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, Value, ValueRef};
 use std::{ops::Deref, str};
 
@@ -64,28 +64,25 @@ pub trait NameExt {
     /// # Errors
     ///
     /// Returns an error if the email address is invalid or cannot be parsed
-    fn parse_soa_email(email: impl AsRef<str>) -> Result<Self, ProtoError>
+    fn parse_soa_email(email: impl AsRef<str>) -> Result<Self, ParseError>
     where
         Self: Sized;
 }
 
 impl NameExt for Name {
-    fn parse_soa_email(email: impl AsRef<str>) -> Result<Self, ProtoError> {
-        let (local_part, domain) =
-            email
-                .as_ref()
-                .split_once('@')
-                .ok_or(hickory_proto::ProtoErrorKind::Message(
-                    "Email does not contain '@'",
-                ))?;
-        Name::from_utf8(format!("{}.{domain}", local_part.replace(".", r"\.")))
+    fn parse_soa_email(email: impl AsRef<str>) -> Result<Self, ParseError> {
+        let (local_part, domain) = email
+            .as_ref()
+            .split_once('@')
+            .ok_or_else(|| ParseError::MissingToken("@".into()))?;
+        Name::from_utf8(format!("{}.{domain}", local_part.replace(".", r"\."))).map_err(Into::into)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hickory_proto::rr::Name;
+    use crate::rr::Name;
 
     #[test]
     fn test_sql_name_creation() {

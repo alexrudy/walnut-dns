@@ -4,10 +4,31 @@ edition = "2024"
 
 
 [dependencies]
-uuid.workspace = true
-hickory-proto.workspace = true
+bytes.workspace = true
+chateau.workspace = true
 chrono.workspace = true
-rusqlite.workspace = true
 data-encoding.workspace = true
-tracing.workspace = true
+hickory-proto.workspace = true
+rusqlite.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+serde = { workspace = true, optional = true, features = ["derive"] }
+ipnet = "2.12.1"
+tinyvec = "1.12.0"
+idna = "1.1.0"
+rand.workspace = true
+url = "2.5.8"
+once_cell.workspace = true
+bitflags = { workspace = true, optional = true }
+rustls-pki-types = { workspace = true, optional = true }
+aws-lc-rs = { workspace = true, optional = true }
+ring = { workspace = true, optional = true }
+
+
+[features]
+serde = ["dep:serde", "chrono/serde"]
+mdns = []
+dnssec-aws-lc-rs = ["dep:aws-lc-rs", "aws-lc-rs/aws-lc-sys", "aws-lc-rs/ring-io", "__dnssec"]
+dnssec-ring = ["dep:ring", "__dnssec"]
+__dnssec = ["dep:bitflags", "dep:rustls-pki-types"]

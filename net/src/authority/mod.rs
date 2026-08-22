@@ -26,7 +26,7 @@ use std::ops::RangeBounds;
 use std::sync::Arc;
 
 use hickory_proto::op::{Query, ResponseCode};
-use hickory_proto::rr::{DNSClass, LowerName, Name, RecordType, RrKey};
+use hickory_proto::rr::{DNSClass, Name, RecordType, RrKey};
 
 use crate::messages::Message;
 use crate::messages::server::Incoming;
@@ -742,8 +742,8 @@ where
     ) -> Option<&RecordSet> {
         tracing::trace!("Lookup {name} {query_type}");
         // this range covers all the records for any of the RecordTypes at a given label.
-        let start_range_key = RrKey::new(LowerName::new(name), RecordType::Unknown(u16::MIN));
-        let end_range_key = RrKey::new(LowerName::new(name), RecordType::Unknown(u16::MAX));
+        let start_range_key = RrKey::new(Name::new(name), RecordType::Unknown(u16::MIN));
+        let end_range_key = RrKey::new(Name::new(name), RecordType::Unknown(u16::MAX));
 
         fn aname_covers_type(key_type: RecordType, query_type: RecordType) -> bool {
             (query_type == RecordType::A || query_type == RecordType::AAAA)

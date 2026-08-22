@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use hickory_proto::op::{MessageType, Query, ResponseCode};
-use hickory_proto::rr::{LowerName, Name, RData, RecordType, rdata::A};
+use hickory_proto::rr::{Name, RData, RecordType, rdata::A};
 use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 
 mod support;
@@ -220,7 +220,7 @@ fn inner_lookup(
     records: &TestRecords,
     lookup_options: LookupOptions,
 ) -> Option<LookupControlFlow<LookupRecords>> {
-    let ascii_name = LowerName::from(name).to_string();
+    let ascii_name = Name::from(name).to_string();
     tracing::debug!("inner_lookup {ascii_name}");
     for (record_name, (response_type, response_record)) in records.iter() {
         tracing::trace!("inner_lookup check {record_name}");

@@ -7,7 +7,8 @@ use rusqlite::{ToSql, types::FromSql};
 /// This type wraps an inner u32 to provide the proper
 /// wrapping and comparison semantics.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SerialNumber(u32);
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SerialNumber(pub(crate) u32);
 
 impl SerialNumber {
     pub const ZERO: SerialNumber = SerialNumber(0);

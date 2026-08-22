@@ -1,15 +1,15 @@
 use std::{collections::BTreeMap, fs, io, path::Path};
 
-use hickory_proto::{
+use crate::{
     rr::{DNSClass, Name, RrKey, rdata},
-    serialize::txt::Parser,
+    serialize::text::Parser,
 };
 use rusqlite::{ToSql, types::FromSql};
 use tracing::{debug, error, info};
 
 use crate::serialize::sqlite::FromRow;
 
-use super::{Record, SqlName, ZoneID, rset::RecordSet};
+use super::{Record, SqlName, ZoneID, rr_set::RecordSet};
 
 /// The authoratative nature of this zone.
 ///

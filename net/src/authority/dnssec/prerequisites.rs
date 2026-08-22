@@ -1,6 +1,6 @@
 use hickory_proto::{
     op::ResponseCode,
-    rr::{DNSClass, LowerName, RData, RecordType},
+    rr::{DNSClass, Name, RData, RecordType},
 };
 use tracing::warn;
 
@@ -130,7 +130,7 @@ where
         //           if (zone_rrset<rrset.name, rrset.type> != rrset)
         //                return (NXRRSET)
         for require in pre_requisites {
-            let required_name = LowerName::from(require.name());
+            let required_name = Name::from(require.name());
 
             if require.ttl() != TimeToLive::ZERO {
                 warn!("ttl must be 0 for: {}", require);

@@ -1,6 +1,6 @@
-use hickory_proto::rr::{DNSClass, Name, RData, RecordData, RecordType, RrKey};
+use crate::rr::{DNSClass, Name, RData, RecordData, RecordType, RrKey};
 
-use super::{AsHickory, SerialNumber, record::Record, ttl::TimeToLive};
+use super::{SerialNumber, record::Record, ttl::TimeToLive};
 
 /// A collection of like resource records.
 ///
@@ -196,7 +196,7 @@ impl RecordSet {
 impl RecordSet {
     /// Record Lookup Key for this Record Set
     pub fn rrkey(&self) -> RrKey {
-        RrKey::new(self.name().into(), self.record_type())
+        RrKey::new(self.name().clone(), self.record_type())
     }
 
     /// Get an iterator over all records in this set
@@ -441,8 +441,8 @@ impl RecordSet {
                     match soa_record.rdata() {
                         RData::SOA(existing_soa) => {
                             if let RData::SOA(new_soa) = record.rdata() {
-                                if SerialNumber::from(new_soa.serial())
-                                    <= SerialNumber::from(existing_soa.serial())
+                                if SerialNumber::from(new_soa.serial)
+                                    <= SerialNumber::from(existing_soa.serial)
                                 {
                                     tracing::debug!(
                                         "update SOA ignored serial out of date: {:?} <= {:?}",
@@ -625,46 +625,6 @@ impl From<Record> for RecordSet {
     }
 }
 
-impl From<hickory_proto::rr::RecordSet> for RecordSet {
-    fn from(value: hickory_proto::rr::RecordSet) -> Self {
-        let mut rrset = RecordSet::new(value.name().clone(), value.record_type());
-        let parts = value.into_parts();
-
-        for record in parts.records {
-            rrset.insert(record.into(), parts.serial.into()).unwrap();
-        }
-        for record in parts.rrsigs {
-            rrset.insert_rrsig(record.into()).unwrap();
-        }
-
-        rrset
-    }
-}
-
-impl AsHickory for RecordSet {
-    type Hickory = hickory_proto::rr::RecordSet;
-
-    fn as_hickory(&self) -> Self::Hickory {
-        let mut rset = hickory_proto::rr::RecordSet::new(
-            self.name().clone(),
-            self.record_type(),
-            self.serial().get(),
-        );
-        for record in self.records(false) {
-            rset.insert(
-                record.as_hickory().into_record_of_rdata(),
-                self.serial().get(),
-            );
-        }
-
-        for record in self.rrsigs() {
-            rset.insert_rrsig(record.as_hickory().into_record_of_rdata());
-        }
-
-        rset
-    }
-}
-
 #[derive(Debug, Clone)]
 enum RecordSetIterInner<'r> {
     Plain(std::slice::Iter<'r, Record>),
@@ -766,7 +726,10 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use super::*;
-    use hickory_proto::rr::{RecordType, rdata::A};
+    use crate::rr::{
+        RecordType,
+        rdata::{self, A},
+    };
 
     fn create_test_name() -> Name {
         Name::from_utf8("test.example.com.").unwrap()
@@ -911,7 +874,7 @@ mod tests {
         let record = Record::from_rdata(
             name,
             TimeToLive::from(300),
-            RData::CNAME(hickory_proto::rr::rdata::CNAME(
+            RData::CNAME(rdata::CNAME(
                 Name::from_utf8("target.example.com.").unwrap(),
             )),
         )
@@ -1021,7 +984,7 @@ mod tests {
 
     #[test]
     fn test_recordset_soa_serial_number_handling() {
-        use hickory_proto::rr::rdata::SOA;
+        use crate::rr::rdata::SOA;
 
         let name = create_test_name();
         let mut rrset = RecordSet::new(name.clone(), RecordType::SOA);
@@ -1091,7 +1054,7 @@ mod tests {
 
     #[test]
     fn test_recordset_ns_last_record_protection() {
-        use hickory_proto::rr::rdata::NS;
+        use crate::rr::rdata::NS;
 
         let name = create_test_name();
         let mut rrset = RecordSet::new(name.clone(), RecordType::NS);
@@ -1129,7 +1092,7 @@ mod tests {
 
     #[test]
     fn test_recordset_soa_deletion_protection() {
-        use hickory_proto::rr::rdata::SOA;
+        use crate::rr::rdata::SOA;
 
         let name = create_test_name();
         let mut rrset = RecordSet::new(name.clone(), RecordType::SOA);
@@ -1157,7 +1120,7 @@ mod tests {
 
     #[test]
     fn test_recordset_cname_replacement() {
-        use hickory_proto::rr::rdata::CNAME;
+        use crate::rr::rdata::CNAME;
 
         let name = create_test_name();
         let mut rrset = RecordSet::new(name.clone(), RecordType::CNAME);
@@ -1186,7 +1149,7 @@ mod tests {
 
     #[test]
     fn test_recordset_aname_replacement() {
-        use hickory_proto::rr::rdata::ANAME;
+        use crate::rr::rdata::ANAME;
 
         let name = create_test_name();
         let mut rrset = RecordSet::new(name.clone(), RecordType::ANAME);
@@ -1216,7 +1179,7 @@ mod tests {
     #[test]
     #[allow(clippy::blocks_in_conditions)]
     fn test_get_filter() {
-        use hickory_proto::dnssec::{
+        use crate::dnssec::{
             Algorithm,
             rdata::{DNSSECRData, RRSIG},
         };

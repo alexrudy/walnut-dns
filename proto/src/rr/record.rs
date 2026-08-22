@@ -1,18 +1,21 @@
 use std::{cmp::Ordering, fmt};
 
-use chrono::{DateTime, Utc};
-use hickory_proto::{
-    ProtoError, ProtoErrorKind,
-    dnssec::Proof,
-    op::{Edns, EdnsFlags},
-    rr::{DNSClass, RData, RecordData, RecordType, RrKey, rdata::OPT},
-    serialize::binary::{BinDecodable, BinDecoder, BinEncodable, Restrict},
+#[cfg(feature = "__dnssec")]
+use crate::dnssec::Proof;
+use crate::error::ProtocolError;
+use crate::rr::{DNSClass, RData, RecordData, RecordType, RrKey};
+use crate::serialize::binary::{
+    BinDecodable, BinDecoder, BinEncodable, BinEncoder, DecodeError, Restrict,
 };
+use chrono::{DateTime, Utc};
 
 use crate::serialize::sqlite::FromRow;
 
-use super::{AsHickory, RecordID, SqlName, ttl::TimeToLive};
-use hickory_proto::rr::Name;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+use super::{RecordID, SqlName, ttl::TimeToLive};
+use crate::rr::Name;
 
 /// From [RFC 6762](https://tools.ietf.org/html/rfc6762#section-10.2)
 /// ```text
@@ -30,16 +33,20 @@ const MDNS_ENABLE_CACHE_FLUSH: u16 = 1 << 15;
 /// an expiration timestamp to automatically delete a record from a primary zone at some
 /// future point.
 #[derive(Debug, Clone, Eq)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Record<R: RecordData = RData> {
+    #[serde(skip, default)]
     id: RecordID,
-    name_labels: Name,
-    dns_class: DNSClass,
-    ttl: TimeToLive,
-    rdata: R,
-    mdns_cache_flush: bool,
-    proof: Proof,
-    expires: Option<DateTime<Utc>>,
-    glue: bool,
+    pub name_labels: Name,
+    pub dns_class: DNSClass,
+    pub ttl: TimeToLive,
+    pub rdata: R,
+    pub mdns_cache_flush: bool,
+
+    #[cfg(feature = "__dnssec")]
+    pub proof: Proof,
+    pub expires: Option<DateTime<Utc>>,
+    pub glue: bool,
 }
 
 /// [RFC 1033](https://tools.ietf.org/html/rfc1033)
@@ -319,7 +326,7 @@ impl<R: RecordData> Record<R> {
 
     /// Record Lookup Key for this Record Set
     pub fn rrkey(&self) -> RrKey {
-        RrKey::new(self.name().into(), self.record_type())
+        RrKey::new(self.name().clone(), self.record_type())
     }
 
     /// Get the DNS name for this record
@@ -443,6 +450,36 @@ impl<R: RecordData> Record<R> {
     /// The expiration timestamp, or None if no expiration is set
     pub fn expires(&self) -> Option<DateTime<Utc>> {
         self.expires
+    }
+
+    pub fn map<N: RecordData>(self, f: impl FnOnce(R) -> Option<N>) -> Option<Record<N>> {
+        let Self {
+            id,
+            name_labels,
+            dns_class,
+            ttl,
+            rdata,
+            #[cfg(feature = "mdns")]
+            mdns_cache_flush,
+            #[cfg(feature = "__dnssec")]
+            proof,
+            expires,
+            glue,
+        } = self;
+
+        Some(Record {
+            id,
+            name_labels,
+            dns_class,
+            ttl,
+            rdata: f(rdata)?,
+            #[cfg(feature = "mdns")]
+            mdns_cache_flush,
+            #[cfg(feature = "__dnssec")]
+            proof,
+            expires,
+            glue,
+        })
     }
 }
 
@@ -626,25 +663,8 @@ impl FromRow for Record<RData> {
     }
 }
 
-impl From<hickory_proto::rr::Record<RData>> for Record<RData> {
-    fn from(hrecord: hickory_proto::rr::Record<RData>) -> Self {
-        let parts = hrecord.into_parts();
-        Record {
-            id: RecordID::new(),
-            name_labels: parts.name_labels,
-            dns_class: parts.dns_class,
-            ttl: parts.ttl.into(),
-            rdata: parts.rdata,
-            mdns_cache_flush: parts.mdns_cache_flush,
-            proof: parts.proof,
-            expires: None,
-            glue: false,
-        }
-    }
-}
-
 impl<'r> BinDecodable<'r> for Record<RData> {
-    fn read(decoder: &mut BinDecoder<'r>) -> Result<Self, ProtoError> {
+    fn read(decoder: &mut BinDecoder<'_>) -> Result<Self, DecodeError> {
         // NAME            an owner name, i.e., the name of the node to which this
         //                 resource record pertains.
         let name_labels: Name = Name::read(decoder)?;
@@ -658,16 +678,13 @@ impl<'r> BinDecodable<'r> for Record<RData> {
         let class: DNSClass = if record_type == RecordType::OPT {
             // verify that the OPT record is Root
             if !name_labels.is_root() {
-                return Err(ProtoErrorKind::EdnsNameNotRoot(name_labels).into());
+                return Err(DecodeError::EdnsNameNotRoot(name_labels.into()));
             }
 
             //  DNS Class is overloaded for OPT records in EDNS - RFC 6891
-            DNSClass::for_opt(
-                decoder.read_u16()?.unverified(/*restricted to a min of 512 in for_opt*/),
-            )
+            DNSClass::for_opt(decoder.read_u16()?.unverified())
         } else {
-            let dns_class_value =
-                decoder.read_u16()?.unverified(/*DNSClass::from_u16 will verify the value*/);
+            let dns_class_value = decoder.read_u16()?.unverified();
             if dns_class_value & MDNS_ENABLE_CACHE_FLUSH > 0 {
                 mdns_cache_flush = true;
                 DNSClass::from(dns_class_value & !MDNS_ENABLE_CACHE_FLUSH)
@@ -692,13 +709,7 @@ impl<'r> BinDecodable<'r> for Record<RData> {
         let rd_length = decoder
             .read_u16()?
             .verify_unwrap(|u| (*u as usize) <= decoder.len())
-            .map_err(|u| {
-                ProtoError::from(format!(
-                    "rdata length too large for remaining bytes, need: {} remain: {}",
-                    u,
-                    decoder.len()
-                ))
-            })?;
+            .map_err(|_| DecodeError::InsufficientBytes)?;
 
         // this is to handle updates, RFC 2136, which uses 0 to indicate certain aspects of pre-requisites
         //   Null represents any data.
@@ -728,10 +739,7 @@ impl<'r> BinDecodable<'r> for Record<RData> {
 }
 
 impl<R: RecordData> BinEncodable for Record<R> {
-    fn emit(
-        &self,
-        encoder: &mut hickory_proto::serialize::binary::BinEncoder<'_>,
-    ) -> Result<(), ProtoError> {
+    fn emit(&self, encoder: &mut BinEncoder<'_>) -> Result<(), ProtocolError> {
         self.name_labels.emit(encoder)?;
         self.record_type().emit(encoder)?;
         if self.mdns_cache_flush {
@@ -761,84 +769,11 @@ impl<R: RecordData> BinEncodable for Record<R> {
     }
 }
 
-impl<R: RecordData> AsHickory for Record<R> {
-    type Hickory = hickory_proto::rr::Record<R>;
-
-    fn as_hickory(&self) -> Self::Hickory {
-        hickory_proto::rr::Record::from_rdata(
-            self.name().clone(),
-            self.ttl().into(),
-            self.rdata().clone(),
-        )
-    }
-}
-
-// FIXME: this should be a TryFrom
-impl<'a> From<&'a Record> for Edns {
-    fn from(value: &'a Record) -> Self {
-        assert!(value.record_type() == RecordType::OPT);
-
-        let ttl: u32 = value.ttl().into();
-        let rcode_high = ((ttl & 0xFF00_0000u32) >> 24) as u8;
-        let version = ((ttl & 0x00FF_0000u32) >> 16) as u8;
-        let flags = EdnsFlags::from((ttl & 0x0000_FFFFu32) as u16);
-        let max_payload = u16::from(value.dns_class());
-
-        let options = match value.data() {
-            RData::Update0(..) | RData::NULL(..) => {
-                // NULL, there was no data in the OPT
-                OPT::default()
-            }
-            RData::OPT(option_data) => {
-                option_data.clone() // TODO: Edns should just refer to this, have the same lifetime as the Record
-            }
-            _ => {
-                // this should be a coding error, as opposed to a parsing error.
-                panic!("rr_type doesn't match the RData: {:?}", value.data()) // valid panic, never should happen
-            }
-        };
-
-        let mut edns = Self::new();
-        edns.set_rcode_high(rcode_high);
-        edns.set_version(version);
-        *edns.flags_mut() = flags;
-        edns.set_max_payload(max_payload);
-        *edns.options_mut() = options;
-
-        edns
-    }
-}
-
-impl<'a> From<&'a Edns> for Record {
-    /// This returns a Resource Record that is formatted for Edns(0).
-    /// Note: the rcode_high value is only part of the rcode, the rest is part of the base
-    fn from(value: &'a Edns) -> Self {
-        // rebuild the TTL field
-        let mut ttl: u32 = u32::from(value.rcode_high()) << 24;
-        ttl |= u32::from(value.version()) << 16;
-        ttl |= u32::from(u16::from(*value.flags()));
-
-        // now for each option, write out the option array
-        //  also, since this is a hash, there is no guarantee that ordering will be preserved from
-        //  the original binary format.
-        // maybe switch to: https://crates.io/crates/linked-hash-map/
-        let mut record = Self::from_rdata(
-            Name::root(),
-            TimeToLive::from_secs(ttl),
-            RData::OPT(value.options().clone()),
-        );
-
-        record.set_dns_class(DNSClass::for_opt(value.max_payload()));
-
-        record
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rr::{RecordType, rdata::A};
     use chrono::{Duration, Utc};
-    use hickory_proto::rr::{RecordType, rdata::A};
 
     fn create_test_name() -> Name {
         Name::from_utf8("test.example.com.").unwrap()
@@ -966,10 +901,7 @@ mod tests {
         let record = create_test_a_record();
         let rrkey = record.rrkey();
 
-        assert_eq!(
-            rrkey.name(),
-            &hickory_proto::rr::LowerName::from(record.name())
-        );
+        assert_eq!(rrkey.name(), record.name());
         assert_eq!(rrkey.record_type, RecordType::A);
     }
 
@@ -1000,17 +932,6 @@ mod tests {
         let rdata_record2 = record2.into_record_rdata();
 
         assert!(rdata_record1 < rdata_record2);
-    }
-
-    #[test]
-    fn test_record_as_hickory() {
-        let record = create_test_a_record();
-        let hickory_record = record.as_hickory();
-
-        assert_eq!(hickory_record.name(), record.name());
-        assert_eq!(hickory_record.ttl(), u32::from(record.ttl()));
-        assert_eq!(hickory_record.record_type(), record.record_type());
-        assert_eq!(hickory_record.dns_class(), record.dns_class());
     }
 
     #[test]

@@ -5,8 +5,12 @@ use chrono::Utc;
 
 use rusqlite::types::{FromSql, ToSql};
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 /// DNS Cache Time-to-live, in seconds
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct TimeToLive(u32);
 
 impl Default for TimeToLive {

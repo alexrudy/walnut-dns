@@ -8,7 +8,7 @@ use hickory_proto::ProtoError;
 use hickory_proto::dnssec::rdata::{DNSKEY, DNSSECRData, KEY, NSEC, NSEC3, NSEC3PARAM, RRSIG, SIG};
 use hickory_proto::dnssec::{DnsSecError, DnsSecResult, Nsec3HashAlgorithm, SigSigner, TBS};
 use hickory_proto::op::ResponseCode;
-use hickory_proto::rr::{DNSClass, LowerName, RData, RecordType, RrKey};
+use hickory_proto::rr::{DNSClass, Name, RData, RecordType, RrKey};
 
 use super::lookup::{LookupControlFlow, LookupOptions, LookupRecords};
 use super::{Lookup, LookupError, Records, Update, ZoneInfo};
@@ -348,7 +348,7 @@ where
         } = info;
 
         let rr_key = RrKey::new(
-            LowerName::new(&self.get_hashed_owner_name(&info, self.origin())?),
+            Name::new(&self.get_hashed_owner_name(&info, self.origin())?),
             RecordType::NSEC3,
         );
         let qname_match = self.get(&rr_key);
@@ -396,7 +396,7 @@ where
         if wildcard_match {
             let wildcard_at_closest_encloser = next_closer_name.into_wildcard();
             let rr_key = RrKey::new(
-                LowerName::new(&self.get_hashed_owner_name(&info, &wildcard_at_closest_encloser)?),
+                Name::new(&self.get_hashed_owner_name(&info, &wildcard_at_closest_encloser)?),
                 RecordType::NSEC3,
             );
 
@@ -425,7 +425,7 @@ where
 
         while !closest_encloser.is_root() {
             let rr_key = RrKey::new(
-                LowerName::new(&self.get_hashed_owner_name(info, &closest_encloser)?),
+                Name::new(&self.get_hashed_owner_name(info, &closest_encloser)?),
                 RecordType::NSEC3,
             );
             if let Some(rrs) = self.get(&rr_key) {
@@ -992,7 +992,7 @@ where
         name: &Name,
         lookup_options: LookupOptions,
     ) -> LookupControlFlow<LookupRecords> {
-        let rr_key = RrKey::new(LowerName::new(name), RecordType::NSEC);
+        let rr_key = RrKey::new(Name::new(name), RecordType::NSEC);
         let no_data = self.get(&rr_key).map(|rr_set| {
             LookupRecords::records(vec![rr_set.clone().into()], lookup_options.clone())
         });

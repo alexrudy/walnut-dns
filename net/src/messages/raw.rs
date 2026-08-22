@@ -694,7 +694,7 @@ impl Message {
     }
 
     /// Decodes a message from the buffer.
-    pub fn from_vec(buffer: &[u8]) -> ProtoResult<Self> {
+    pub fn from_vec(buffer: &[u8]) -> Result<Self, ProtocolError> {
         let mut decoder = BinDecoder::new(buffer);
         Self::read(&mut decoder)
     }
@@ -820,7 +820,7 @@ pub fn update_header_counts(
 }
 
 /// Alias for a function verifying if a message is properly signed
-pub type MessageVerifier = Box<dyn FnMut(&[u8]) -> ProtoResult<DnsResponse> + Send>;
+pub type MessageVerifier = Box<dyn FnMut(&[u8]) -> Result<DnsResponse, ProtocolError> + Send>;
 
 /// A trait for performing final amendments to a Message before it is sent.
 ///
@@ -856,7 +856,7 @@ pub trait MessageFinalizer: Send + Sync + 'static {
 }
 
 /// Returns the count written and a boolean if it was truncated
-pub fn count_was_truncated(result: ProtoResult<usize>) -> ProtoResult<(usize, bool)> {
+pub fn count_was_truncated(result: Result<usize, ProtocolError>) -> ProtoResult<(usize, bool)> {
     match result {
         Ok(count) => Ok((count, false)),
         Err(e) => match e.kind() {
@@ -869,11 +869,11 @@ pub fn count_was_truncated(result: ProtoResult<usize>) -> ProtoResult<(usize, bo
 /// A trait that defines types which can be emitted as a set, with the associated count returned.
 pub trait EmitAndCount {
     /// Emit self to the encoder and return the count of items
-    fn emit(&mut self, encoder: &mut BinEncoder<'_>) -> ProtoResult<usize>;
+    fn emit(&mut self, encoder: &mut BinEncoder<'_>) -> Result<usize, ProtocolError>;
 }
 
 impl<'e, I: Iterator<Item = &'e E>, E: 'e + BinEncodable> EmitAndCount for I {
-    fn emit(&mut self, encoder: &mut BinEncoder<'_>) -> ProtoResult<usize> {
+    fn emit(&mut self, encoder: &mut BinEncoder<'_>) -> Result<usize, ProtocolError> {
         encoder.emit_all(self)
     }
 }
@@ -893,7 +893,7 @@ pub fn emit_message_parts<Q, A, N, D>(
     edns: Option<&Edns>,
     signature: &[Record],
     encoder: &mut BinEncoder<'_>,
-) -> ProtoResult<Header>
+) -> Result<Header, ProtocolError>
 where
     Q: EmitAndCount,
     A: EmitAndCount,
@@ -966,7 +966,7 @@ impl BinEncodable for Message {
 }
 
 impl<'r> BinDecodable<'r> for Message {
-    fn read(decoder: &mut BinDecoder<'r>) -> ProtoResult<Self> {
+    fn read(decoder: &mut BinDecoder<'r>) -> Result<Self, ProtocolError> {
         let mut header = Header::read(decoder)?;
 
         // TODO: return just header, and in the case of the rest of message getting an error.
