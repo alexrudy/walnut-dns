@@ -7,7 +7,7 @@ use bytes::Bytes;
 use chateau::client::conn::protocol::framed::Tagged;
 use walnut_proto::{
     ProtocolError,
-    op::{Message, Metadata, Query},
+    op::{Message, Query},
     serialize::binary::{BinDecodable, BinEncodable, BinEncoder, DecodeError},
 };
 
@@ -95,23 +95,12 @@ where
     }
 }
 
+/// A wrapper type for a request, containing the decoded message and request info.
 #[derive(Debug, Clone)]
 pub struct Request {
     pub message: Decoded<Message>,
     pub protocol: Protocol,
     pub src: SocketAddr,
-}
-
-#[derive(Debug, Clone)]
-pub struct RequestInfo<'a> {
-    /// The source address from which the request came
-    pub src: SocketAddr,
-    /// The protocol used for the request
-    pub protocol: Protocol,
-    /// The header from the original request
-    pub header: &'a Metadata,
-    /// The query from the request
-    pub query: &'a Query,
 }
 
 /// A type which represents an MessageRequest for dynamic Update.
