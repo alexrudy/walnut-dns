@@ -1,7 +1,10 @@
 use bytes::TryGetError;
 use thiserror::Error;
 
-use crate::rr::{Name, RecordType};
+use crate::{
+    rr::{Name, RecordType},
+    serialize::binary::BinDecodable,
+};
 
 use super::Restrict;
 
@@ -72,6 +75,32 @@ impl<'a> BinDecoder<'a> {
             buffer: self.buffer,
             remaining: &self.buffer[index_at as usize..],
         }
+    }
+
+    /// Returns a new decoder that is restricted to the given length, and advances the current index
+    pub fn restricted(&mut self, length: usize) -> Result<Self, DecodeError> {
+        if self.remaining.len() < length {
+            return Err(DecodeError::InsufficientBytes);
+        }
+
+        let (target, remaining) = self.remaining.split_at(length);
+        self.remaining = remaining;
+
+        Ok(Self {
+            buffer: self.buffer,
+            remaining: &target,
+        })
+    }
+
+    /// Returns a new decoder that is restricted to the given length, and advances the current index
+    /// by reading the length prefix first from the current decoder.
+    pub fn prefixed_restricted<P>(&mut self) -> Result<Self, DecodeError>
+    where
+        P: BinDecodable<'a>,
+        usize: From<P>,
+    {
+        let length = P::read(self)?;
+        self.restricted(length.into())
     }
 
     /// Reads a String from the buffer

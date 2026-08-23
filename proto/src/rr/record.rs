@@ -731,14 +731,11 @@ impl<'r> BinDecodable<'r> for Record<RData> {
 
         // RDLENGTH        an unsigned 16 bit integer that specifies the length in
         //                octets of the RDATA field.
-        let rd_length = decoder
-            .read_u16()?
-            .verify_unwrap(|u| (*u as usize) <= decoder.len())
-            .map_err(|_| DecodeError::InsufficientBytes)?;
+        let mut rd_decoder = decoder.prefixed_restricted::<u16>()?;
 
         // this is to handle updates, RFC 2136, which uses 0 to indicate certain aspects of pre-requisites
         //   Null represents any data.
-        let rdata = if rd_length == 0 {
+        let rdata = if rd_decoder.is_empty() {
             RData::Update0(record_type)
         } else {
             // RDATA           a variable length string of octets that describes the
@@ -746,7 +743,8 @@ impl<'r> BinDecodable<'r> for Record<RData> {
             //                according to the TYPE and CLASS of the resource record.
             // Adding restrict to the rdata length because it's used for many calculations later
             //  and must be validated before hand
-            RData::read(decoder, record_type, Restrict::new(rd_length))?
+            let rd_length = rd_decoder.len() as u16;
+            RData::read(&mut rd_decoder, record_type, Restrict::new(rd_length))?
         };
 
         Ok(Self {
