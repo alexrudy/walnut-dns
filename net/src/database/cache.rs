@@ -221,6 +221,7 @@ mod tests {
     use crate::cache::CacheTimestamp;
     use std::str::FromStr;
     use walnut_proto::rr::QueryID;
+    use walnut_proto::rr::rdata::SOA;
     use walnut_proto::rr::{Name, RData, Record, RecordType, rdata::A};
 
     async fn create_test_cache() -> SQLiteCache {
@@ -241,7 +242,7 @@ mod tests {
             300.into(),
             RData::A(A::new(192, 168, 1, 1)),
         );
-        let lookup = QueryLookup::new(
+        let mut lookup = QueryLookup::new(
             QueryID::new(),
             query.clone(),
             vec![record.into()],
@@ -249,12 +250,28 @@ mod tests {
             CacheTimestamp::from(now + chrono::Duration::seconds(300)),
         );
 
+        lookup.records.authorities.push(Record::from_rdata(
+            Name::from_str("example.com.").unwrap(),
+            300.into(),
+            RData::SOA(SOA::new(
+                Name::from_str("example.com.").unwrap(),
+                Name::from_str("admin.example.com.").unwrap(),
+                0,
+                3600,
+                3600,
+                86400,
+                300,
+            )),
+        ));
+
         cache.insert(&lookup, now).await.unwrap();
 
         let result = cache.get(query, now).await.unwrap();
         assert!(result.is_some());
         let retrieved = result.unwrap();
         assert_eq!(retrieved.query_type(), RecordType::A);
+        assert_eq!(retrieved.records.authorities.len(), 1);
+        assert_eq!(retrieved.records.answers.len(), 1);
     }
 
     #[tokio::test]

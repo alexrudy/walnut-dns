@@ -1,6 +1,7 @@
 use rusqlite::named_params;
 use tracing::trace;
 use walnut_proto::op::Query;
+use walnut_proto::rr::record::SectionFlags;
 
 use crate::database::record::RecordPersistence;
 use crate::lookup::{CacheTimestamp, EntryMeta, QueryLookup};
@@ -88,7 +89,21 @@ impl<'c> QueryPersistence<'c> {
         })?;
         trace!("Adding {n} records", n = lookup.records().iter().count());
         let rx = RecordPersistence::new(self.connection);
-        rx.insert_records_for_query(lookup.id(), lookup.records().iter())?;
+        rx.insert_records_for_query(
+            lookup.id(),
+            lookup.records().answers.iter(),
+            SectionFlags::empty(),
+        )?;
+        rx.insert_records_for_query(
+            lookup.id(),
+            lookup.records().additionals.iter(),
+            SectionFlags::ADDITIONAL,
+        )?;
+        rx.insert_records_for_query(
+            lookup.id(),
+            lookup.records().authorities.iter(),
+            SectionFlags::AUTHORITY,
+        )?;
 
         Ok(())
     }

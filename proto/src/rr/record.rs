@@ -7,6 +7,7 @@ use crate::rr::{DNSClass, RData, RecordData, RecordType, RrKey};
 use crate::serialize::binary::{
     BinDecodable, BinDecoder, BinEncodable, BinEncoder, DecodeError, Restrict,
 };
+use bitflags::bitflags;
 use chrono::{DateTime, Utc};
 
 use crate::serialize::sqlite::FromRow;
@@ -27,6 +28,36 @@ use crate::rr::Name;
 /// ```
 const MDNS_ENABLE_CACHE_FLUSH: u16 = 1 << 15;
 
+/// Where in the DNS Zone this record lives.
+///
+/// Implicit in DNS messages, but persisted in the database
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+pub struct SectionFlags(u8);
+
+bitflags! {
+    impl SectionFlags: u8 {
+        const AUTHORITY = 1 << 0;
+        const ADDITIONAL = 1 << 1;
+        const GLUE = 1 << 2;
+    }
+}
+
+impl fmt::Display for SectionFlags {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.contains(SectionFlags::AUTHORITY) {
+            write!(f, "A")?;
+        }
+        if self.contains(SectionFlags::ADDITIONAL) {
+            write!(f, "D")?;
+        }
+        if self.contains(SectionFlags::GLUE) {
+            write!(f, "G")?;
+        }
+        Ok(())
+    }
+}
+
 /// DNS Resource Record with extra fields
 ///
 /// The extra fields are `id` to provide a database ID for internal use, and `expires`,
@@ -46,7 +77,7 @@ pub struct Record<R: RecordData = RData> {
     #[cfg(feature = "__dnssec")]
     pub proof: Proof,
     pub expires: Option<DateTime<Utc>>,
-    pub glue: bool,
+    pub sections: SectionFlags,
 }
 
 /// [RFC 1033](https://tools.ietf.org/html/rfc1033)
@@ -95,7 +126,7 @@ impl<R: RecordData> fmt::Display for Record<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         write!(
             f,
-            "{name} {ttl} {class} {ty} {rdata} {glue}; {id}{sp}{expires}",
+            "{name} {ttl} {class} {ty} {rdata}; {flags} {id}{sp}{expires}",
             name = self.name_labels,
             ttl = self.ttl,
             class = self.dns_class,
@@ -104,7 +135,7 @@ impl<R: RecordData> fmt::Display for Record<R> {
             id = self.id,
             sp = self.expires.map(|_| " ").unwrap_or(""),
             expires = self.expires.map(|dt| dt.to_rfc3339()).unwrap_or("".into()),
-            glue = if self.glue { "(g) " } else { "" },
+            flags = self.sections,
         )?;
 
         Ok(())
@@ -137,7 +168,7 @@ impl<R: RecordData> Record<R> {
             #[cfg(feature = "__dnssec")]
             proof: Proof::default(),
             expires: None,
-            glue: false,
+            sections: SectionFlags::default(),
         }
     }
 }
@@ -168,7 +199,7 @@ impl Record {
             #[cfg(feature = "__dnssec")]
             proof: Proof::default(),
             expires: None,
-            glue: false,
+            sections: SectionFlags::default(),
         }
     }
 }
@@ -193,7 +224,7 @@ impl<R: RecordData> Record<R> {
             #[cfg(feature = "__dnssec")]
             proof: self.proof,
             expires: self.expires,
-            glue: self.glue,
+            sections: self.sections,
         }
     }
 
@@ -304,13 +335,17 @@ impl<R: RecordData> Record<R> {
     ///
     /// A mutable reference to this record for method chaining
     pub fn set_glue(&mut self, glue: bool) -> &mut Self {
-        self.glue = glue;
+        if glue {
+            self.sections.insert(SectionFlags::GLUE);
+        } else {
+            self.sections.remove(SectionFlags::GLUE);
+        }
         self
     }
 
     /// Checks if this is a glue record.
     pub fn is_glue(&self) -> bool {
-        self.glue
+        self.sections.contains(SectionFlags::GLUE)
     }
 }
 
@@ -406,7 +441,7 @@ impl<R: RecordData> Record<R> {
             #[cfg(feature = "__dnssec")]
             proof: self.proof,
             expires: self.expires,
-            glue: self.glue,
+            sections: self.sections,
         })
     }
 
@@ -467,7 +502,7 @@ impl<R: RecordData> Record<R> {
             #[cfg(feature = "__dnssec")]
             proof,
             expires,
-            glue,
+            sections,
         } = self;
 
         Some(Record {
@@ -480,7 +515,7 @@ impl<R: RecordData> Record<R> {
             #[cfg(feature = "__dnssec")]
             proof,
             expires,
-            glue,
+            sections,
         })
     }
 }
@@ -500,7 +535,7 @@ impl Record {
             #[cfg(feature = "__dnssec")]
             proof: Proof::default(),
             expires: None,
-            glue: false,
+            sections: SectionFlags::default(),
         }
     }
 }
@@ -584,7 +619,7 @@ impl<R: RecordData> RecordRef<'_, R> {
             mdns_cache_flush: self.record.mdns_cache_flush,
             #[cfg(feature = "__dnssec")]
             proof: self.record.proof,
-            glue: self.record.glue,
+            sections: self.record.sections,
             expires: self.record.expires,
         }
     }
@@ -683,7 +718,7 @@ impl FromRow for Record<RData> {
             #[cfg(feature = "__dnssec")]
             proof: Proof::default(),
             expires: row.get("expires")?,
-            glue: row.get("glue")?,
+            sections: SectionFlags::from_bits_retain(row.get("sections")?),
         })
     }
 }
@@ -757,7 +792,7 @@ impl<'r> BinDecodable<'r> for Record<RData> {
             #[cfg(feature = "__dnssec")]
             proof: Proof::default(),
             expires: None,
-            glue: false,
+            sections: SectionFlags::default(),
         })
     }
 }

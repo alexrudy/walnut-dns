@@ -15,7 +15,7 @@ use thiserror::Error;
 use walnut_proto::{
     ProtocolError,
     op::{Message, Query, ResponseCode},
-    rr::{DNSClass, Name, RData, RecordType},
+    rr::{DNSClass, Name, RData, RecordType, record::SectionFlags},
     serialize::binary::DecodeError,
 };
 
@@ -633,7 +633,7 @@ impl TryFrom<DnsResponse> for QueryLookup {
 ///
 /// Contains the basic information about a cached query without the full record data.
 /// Used as an intermediate type when retrieving entries from the database.
-pub struct EntryMeta {
+pub(crate) struct EntryMeta {
     id: QueryID,
     query: Query,
     metadata: QueryMetadata,
@@ -642,13 +642,8 @@ pub struct EntryMeta {
 
 impl EntryMeta {
     /// Returns the unique identifier for this query.
-    pub fn id(&self) -> QueryID {
+    pub(crate) fn id(&self) -> QueryID {
         self.id
-    }
-
-    /// Returns the cache expiration timestamp.
-    pub fn expires(&self) -> CacheTimestamp {
-        self.expires
     }
 
     /// Constructs a complete lookup result from metadata and associated records.
@@ -660,14 +655,30 @@ impl EntryMeta {
     /// # Returns
     ///
     /// A unified `Lookup` that can represent any response type.
-    pub fn into_lookup(self, records: Vec<Record>) -> QueryLookup {
+    pub(crate) fn into_lookup(self, records: Vec<Record>) -> QueryLookup {
+        let mut authorities = Vec::new();
+        let mut additionals = Vec::new();
+        let mut answers = Vec::new();
+        for record in records {
+            if record.sections.contains(SectionFlags::AUTHORITY) {
+                authorities.push(record);
+            } else if record.sections.contains(SectionFlags::ADDITIONAL) {
+                additionals.push(record);
+            } else {
+                answers.push(record);
+            }
+        }
+
+        let records = QueryLookupSections {
+            answers,
+            authorities,
+            additionals,
+        };
+
         QueryLookup {
             id: self.id,
             query: self.query,
-            records: QueryLookupSections {
-                answers: records,
-                ..Default::default()
-            },
+            records,
             metadata: self.metadata,
             valid_until: self.expires,
         }

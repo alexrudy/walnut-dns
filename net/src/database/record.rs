@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use rusqlite::named_params;
+use walnut_proto::rr::record::SectionFlags;
 use walnut_proto::rr::{DNSClass, Name, RecordType, RrKey};
 use walnut_proto::serialize::binary::BinEncodable;
 
@@ -36,7 +37,7 @@ impl<'c> RecordPersistence<'c> {
             "rdata",
             "mdns_cache_flush",
             "expires",
-            "glue",
+            "sections",
         ],
         primary: "id",
     };
@@ -157,6 +158,7 @@ impl<'c> RecordPersistence<'c> {
         &self,
         id: QueryID,
         records: impl Iterator<Item = &'q Record>,
+        flags: SectionFlags,
     ) -> rusqlite::Result<()> {
         let mut stmt = self.connection.prepare(&Self::TABLE.upsert())?;
         let mut n = 0;
@@ -176,7 +178,7 @@ impl<'c> RecordPersistence<'c> {
                 ":rdata": record.rdata().to_bytes().map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?,
                 ":mdns_cache_flush": record.mdns_cache_flush(),
                 ":expires": record.expires(),
-                ":glue": record.is_glue(),
+                ":sections": (record.sections | flags).bits(),
             })?;
         }
 
@@ -208,7 +210,7 @@ impl<'c> RecordPersistence<'c> {
                 ":rdata": record.rdata().to_bytes().map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?,
                 ":mdns_cache_flush": record.mdns_cache_flush(),
                 ":expires": record.expires(),
-                ":glue": record.is_glue(),
+                ":sections": record.sections.bits(),
             })?;
         }
 

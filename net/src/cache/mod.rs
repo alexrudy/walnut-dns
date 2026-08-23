@@ -39,7 +39,7 @@ use crate::database::Result;
 
 pub use self::config::CacheConfig;
 pub use self::service::{DnsCacheLayer, DnsCacheService};
-pub use crate::lookup::{CacheTimestamp, EntryMeta, QueryLookup};
+pub use crate::lookup::{CacheTimestamp, QueryLookup};
 
 mod config;
 mod lookup;

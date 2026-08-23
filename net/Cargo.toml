@@ -1,7 +1,13 @@
 [package]
 name = "walnut-dns"
-edition = "2024"
-
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
 
 [dependencies]
 arc-swap.workspace = true
