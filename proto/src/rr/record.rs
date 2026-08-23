@@ -488,12 +488,14 @@ impl<R: RecordData> Record<R> {
 impl Record {
     #[cfg(test)]
     pub(crate) fn stub() -> Self {
+        use crate::rr::rdata::A;
+
         Self {
             id: RecordID::default(),
             name_labels: Name::from_ascii(".").unwrap(),
             dns_class: DNSClass::IN,
             ttl: TimeToLive::ZERO,
-            rdata: RData::Update0(RecordType::NULL),
+            rdata: RData::A(A::new(0, 0, 0, 0)),
             mdns_cache_flush: false,
             #[cfg(feature = "__dnssec")]
             proof: Proof::default(),

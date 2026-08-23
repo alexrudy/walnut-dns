@@ -428,6 +428,7 @@ impl Message {
                 && record.record_type() != RecordType::OPT
                 && record.rdata.is_update()
             {
+                debug!(%op, type=%record.record_type(), "Invalid empty record");
                 return Err(DecodeError::InvalidEmptyRecord);
             }
 

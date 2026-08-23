@@ -723,7 +723,6 @@ pub fn signed_bitmessage_to_buf(
         mut metadata,
         mut counts,
     } = Header::read(&mut decoder)?;
-
     // Adjust the header additional count down by one - this separates out the final
     // additional data TSIG record.
     if counts.additionals > 0 {
