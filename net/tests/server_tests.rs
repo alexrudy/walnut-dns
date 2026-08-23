@@ -39,7 +39,7 @@ use walnut_dns::client::nameserver::{ConnectionConfig, NameserverConfig};
 #[cfg(feature = "tls")]
 use walnut_dns::client::nameserver::{NameServerConnection, Nameserver};
 use walnut_dns::client::{Client, ClientConfiguration};
-use walnut_dns::messages::server::Incoming;
+use walnut_dns::messages::server::Decoded;
 use walnut_dns::server::stream::DnsOverStream;
 use walnut_dns::server::udp::{DnsOverUdp, UdpListener};
 use walnut_dns::server::{
@@ -464,7 +464,7 @@ async fn new_catalog() -> Catalog<Zone> {
 async fn server_thread_udp(udp_socket: UdpSocket, shutdown: oneshot::Receiver<()>) {
     let catalog = new_catalog().await;
     let catalog_svc = tower::ServiceBuilder::new()
-        .map_request(|incoming: Incoming<Message>| incoming.into_inner())
+        .map_request(|incoming: Decoded<Message>| incoming.into_inner())
         .layer(ValidateRequestLayer::new())
         .layer(MessageMetadataLayer::new())
         .layer(ValidateLookupLayer::new())
@@ -486,7 +486,7 @@ async fn server_thread_udp(udp_socket: UdpSocket, shutdown: oneshot::Receiver<()
 async fn server_thread_tcp(tcp_listener: TcpListener, shutdown: oneshot::Receiver<()>) {
     let catalog = new_catalog().await;
     let catalog_svc = tower::ServiceBuilder::new()
-        .map_request(|incoming: Incoming<Message>| incoming.into_inner())
+        .map_request(|incoming: Decoded<Message>| incoming.into_inner())
         .layer(ValidateRequestLayer::new())
         .layer(MessageMetadataLayer::new())
         .layer(ValidateLookupLayer::new())
@@ -511,7 +511,7 @@ async fn server_thread_tls(
 ) {
     let catalog = new_catalog().await;
     let catalog_svc = tower::ServiceBuilder::new()
-        .map_request(|incoming: Incoming<Message>| incoming.into_inner())
+        .map_request(|incoming: Decoded<Message>| incoming.into_inner())
         .layer(ValidateRequestLayer::new())
         .layer(MessageMetadataLayer::new())
         .layer(ValidateLookupLayer::new())
@@ -544,11 +544,11 @@ async fn server_thread_https(
     cert_chain: Arc<dyn ResolvesServerCert>,
 ) {
     use hyperdriver::server::ServerProtocolExt as _;
-    use walnut_dns::{messages::server::Incoming, services::http::DnsOverHttpLayer};
+    use walnut_dns::{messages::server::Decoded, services::http::DnsOverHttpLayer};
 
     let catalog = new_catalog().await;
     let catalog_svc = tower::ServiceBuilder::new()
-        .map_request(|incoming: Incoming<Message>| incoming.into_inner())
+        .map_request(|incoming: Decoded<Message>| incoming.into_inner())
         .layer(ValidateRequestLayer::new())
         .layer(MessageMetadataLayer::new())
         .layer(ValidateLookupLayer::new())

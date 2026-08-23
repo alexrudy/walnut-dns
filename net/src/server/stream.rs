@@ -8,7 +8,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use walnut_proto::op::Message;
 
 use crate::messages::Protocol as DnsProtocol;
-use crate::{error::HickoryError, messages::server::Incoming};
+use crate::{error::HickoryError, messages::server::Decoded};
 
 use super::connection::{DnsConnection, DnsFramedStream};
 
@@ -35,11 +35,11 @@ impl<IO> DnsOverStream<IO> {
     }
 }
 
-impl<S, IO> Protocol<S, IO, Incoming<Message>> for DnsOverStream<IO>
+impl<S, IO> Protocol<S, IO, Decoded<Message>> for DnsOverStream<IO>
 where
     IO: AsyncRead + AsyncWrite + HasConnectionInfo + 'static,
     IO::Addr: Into<SocketAddr> + Clone,
-    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError> + 'static,
+    S: tower::Service<Decoded<Message>, Response = Message, Error = HickoryError> + 'static,
     S::Future: Send + 'static,
 {
     type Response = Message;
@@ -71,10 +71,10 @@ impl<IO> DnsOverStreamUnprotected<IO> {
     }
 }
 
-impl<S, IO> Protocol<S, IO, Incoming<Message>> for DnsOverStreamUnprotected<IO>
+impl<S, IO> Protocol<S, IO, Decoded<Message>> for DnsOverStreamUnprotected<IO>
 where
     IO: AsyncRead + AsyncWrite + 'static,
-    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError> + 'static,
+    S: tower::Service<Decoded<Message>, Response = Message, Error = HickoryError> + 'static,
     S::Future: Send + 'static,
 {
     type Response = Message;

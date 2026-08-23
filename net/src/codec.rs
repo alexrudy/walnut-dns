@@ -11,7 +11,7 @@ use walnut_proto::op::{Edns, Header, Metadata, ResponseCode};
 use walnut_proto::serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder};
 
 use crate::messages::Protocol;
-use crate::messages::server::{Incoming, Request};
+use crate::messages::server::{Decoded, Request};
 use crate::server::response::encode_fallback_servfail_response;
 use walnut_proto::op::Message;
 
@@ -117,7 +117,7 @@ pub enum MessageDecoded<M> {
     Failed(Header, ResponseCode),
 }
 
-impl MessageDecoded<Incoming<Message>> {
+impl MessageDecoded<Decoded<Message>> {
     pub fn with_address(self, addr: SocketAddr, protocol: Protocol) -> DnsRequest {
         match self {
             MessageDecoded::Message(message_request) => DnsRequest::Message(Request {
@@ -217,7 +217,7 @@ impl DnsMessage for Message {
     }
 }
 
-impl<M> DnsMessage for Incoming<M>
+impl<M> DnsMessage for Decoded<M>
 where
     M: DnsMessage,
 {

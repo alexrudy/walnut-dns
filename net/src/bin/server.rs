@@ -5,7 +5,7 @@ use clap::arg;
 use tracing_subscriber::EnvFilter;
 use walnut_dns::{
     Catalog, SqliteStore,
-    messages::server::Incoming,
+    messages::server::Decoded,
     server::{
         CatalogService, MessageMetadataLayer, ValidateLookupLayer,
         udp::{DnsOverUdp, UdpListener},
@@ -62,7 +62,7 @@ async fn server(
     let catalog = Catalog::new(store);
 
     let catalog_svc = tower::ServiceBuilder::new()
-        .map_request(|incoming: Incoming<Message>| incoming.into_inner())
+        .map_request(|incoming: Decoded<Message>| incoming.into_inner())
         .layer(MessageMetadataLayer::new())
         .layer(ValidateLookupLayer::new())
         .service(CatalogService::new(catalog));

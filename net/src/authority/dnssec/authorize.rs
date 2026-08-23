@@ -10,7 +10,7 @@ use walnut_proto::{
 
 use crate::{
     Lookup,
-    messages::server::{Incoming, UpdateRequest as _},
+    messages::server::{Decoded, UpdateRequest as _},
 };
 use walnut_proto::rr::Record;
 
@@ -72,7 +72,7 @@ where
     ///
     pub async fn authorize(
         &self,
-        update_message: &Incoming<Message>,
+        update_message: &Decoded<Message>,
         now: DateTime<Utc>,
     ) -> (Result<(), ResponseCode>, Option<TSigResponseContext>) {
         // 3.3.3 - Pseudocode for Permission Checking
@@ -107,7 +107,7 @@ where
     async fn authorized_tsig(
         &self,
         tsig: &Record<TSIG>,
-        request: &Incoming<Message>,
+        request: &Decoded<Message>,
         now: DateTime<Utc>,
     ) -> (Result<(), ResponseCode>, TSigResponseContext) {
         let req_id = request.id();

@@ -3,7 +3,7 @@ use std::str::FromStr;
 #[cfg(feature = "__dnssec")]
 use chrono::Utc;
 #[cfg(feature = "__dnssec")]
-use walnut_dns::messages::server::Incoming;
+use walnut_dns::messages::server::Decoded;
 use walnut_proto::op::Query;
 #[cfg(feature = "__dnssec")]
 use walnut_proto::op::{Message, MessageType, OpCode, ResponseCode};
@@ -218,7 +218,7 @@ async fn test_authorize() {
     message.add_query(Query::default());
 
     let bytes = message.to_bytes().unwrap();
-    let message = Incoming::<Message>::from_bytes(&bytes).unwrap();
+    let message = Decoded::<Message>::from_bytes(&bytes).unwrap();
 
     assert_eq!(
         authority.authorize(&message, Utc::now()).await.0,

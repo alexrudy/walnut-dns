@@ -23,7 +23,7 @@ use crate::authority::{LookupError, Search, Update};
 use crate::error::HickoryError;
 use crate::lookup::QueryLookup;
 use crate::messages::DnsQuery;
-use crate::messages::server::Incoming;
+use crate::messages::server::Decoded;
 use crate::{Lookup, ZoneInfo};
 use walnut_proto::rr::{Name, RecordSet};
 
@@ -614,7 +614,7 @@ where
     A: Update + Sync + Send + 'static,
 {
     #[expect(dead_code)]
-    async fn update(&self, request: &Incoming<Message>) -> Result<Message, HickoryError> {
+    async fn update(&self, request: &Decoded<Message>) -> Result<Message, HickoryError> {
         //TODO: Encapsulate processing / validating request
         let query = match request.queries.first() {
             Some(q) => q,

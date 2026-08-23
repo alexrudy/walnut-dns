@@ -14,17 +14,17 @@ use walnut_proto::{
 use super::Protocol;
 use walnut_proto::rr::Record;
 
+/// A wrapper message type which retains the raw bytes
+/// along with the decoded message.
 #[derive(Debug, Clone)]
-pub struct Incoming<M> {
+pub struct Decoded<M> {
     message: M,
 
     /// The raw bytes of the incoming message
     raw: Bytes,
-    // address: SocketAddr,
-    // protocol: Protocol,
 }
 
-impl<M> Incoming<M> {
+impl<M> Decoded<M> {
     pub fn new(message: M, raw: Bytes) -> Self {
         Self { message, raw }
     }
@@ -38,13 +38,13 @@ impl<M> Incoming<M> {
     }
 }
 
-impl<M> AsRef<M> for Incoming<M> {
+impl<M> AsRef<M> for Decoded<M> {
     fn as_ref(&self) -> &M {
         &self.message
     }
 }
 
-impl<M> Deref for Incoming<M> {
+impl<M> Deref for Decoded<M> {
     type Target = M;
 
     fn deref(&self) -> &Self::Target {
@@ -52,13 +52,13 @@ impl<M> Deref for Incoming<M> {
     }
 }
 
-impl<M> DerefMut for Incoming<M> {
+impl<M> DerefMut for Decoded<M> {
     fn deref_mut(&mut self) -> &mut M {
         &mut self.message
     }
 }
 
-impl<M> Tagged for Incoming<M>
+impl<M> Tagged for Decoded<M>
 where
     M: Tagged,
 {
@@ -69,7 +69,7 @@ where
     }
 }
 
-impl<M> BinEncodable for Incoming<M>
+impl<M> BinEncodable for Decoded<M>
 where
     M: BinEncodable,
 {
@@ -78,7 +78,7 @@ where
     }
 }
 
-impl<'r, M> BinDecodable<'r> for Incoming<M>
+impl<'r, M> BinDecodable<'r> for Decoded<M>
 where
     M: BinDecodable<'r>,
 {
@@ -88,7 +88,7 @@ where
         let start = reader.index();
         let msg = M::read(reader)?;
         let raw = reader.slice_from(start)?;
-        Ok(Incoming {
+        Ok(Decoded {
             message: msg,
             raw: Bytes::copy_from_slice(raw),
         })
@@ -97,7 +97,7 @@ where
 
 #[derive(Debug, Clone)]
 pub struct Request {
-    pub message: Incoming<Message>,
+    pub message: Decoded<Message>,
     pub protocol: Protocol,
     pub src: SocketAddr,
 }

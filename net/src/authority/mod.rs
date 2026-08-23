@@ -29,7 +29,7 @@ use walnut_proto::op::{Query, ResponseCode};
 use walnut_proto::rr::{DNSClass, Name, RData, RecordType, RrKey};
 
 use crate::catalog::CatalogError;
-use crate::messages::server::Incoming;
+use crate::messages::server::Decoded;
 use walnut_proto::op::Message;
 use walnut_proto::rr::{Mismatch, Record, RecordSet, SerialNumber, TimeToLive, Zone, ZoneType};
 
@@ -501,7 +501,7 @@ pub trait Update: ZoneInfo {
     ///
     /// 3.4.2.5. Signal NOERROR to the requestor.
     /// ```
-    async fn update(&mut self, _update: &Incoming<Message>) -> Result<bool, ResponseCode>;
+    async fn update(&mut self, _update: &Decoded<Message>) -> Result<bool, ResponseCode>;
 
     async fn get_nsec_records(
         &self,
@@ -522,7 +522,7 @@ pub trait Update: ZoneInfo {
 
 #[async_trait::async_trait]
 impl Update for Zone {
-    async fn update(&mut self, _update: &Incoming<Message>) -> Result<bool, ResponseCode> {
+    async fn update(&mut self, _update: &Decoded<Message>) -> Result<bool, ResponseCode> {
         // No update for non-DNSSEC Zone
         if ZoneInfo::is_axfr_allowed(self) {
             tracing::warn!(origin=%ZoneInfo::origin(self), "No update for non-DNSSEC Zone");

@@ -15,7 +15,7 @@ use super::lookup::{LookupControlFlow, LookupOptions, LookupRecords};
 use super::{Lookup, LookupError, Records, Update, ZoneInfo};
 use crate::authority::Journal;
 use crate::catalog::CatalogError;
-use crate::messages::server::{Incoming, UpdateRequest as _};
+use crate::messages::server::{Decoded, UpdateRequest as _};
 use walnut_proto::op::Message;
 use walnut_proto::rr::{Mismatch, Record, RecordSet, TimeToLive};
 
@@ -867,7 +867,7 @@ impl<Z> Update for DnsSecZone<Z>
 where
     Z: Update + Lookup + Records + Clone + Sync + Send + 'static,
 {
-    async fn update(&mut self, update: &Incoming<Message>) -> Result<bool, ResponseCode> {
+    async fn update(&mut self, update: &Decoded<Message>) -> Result<bool, ResponseCode> {
         // the spec says to authorize after prereqs, seems better to auth first.
         // TODO: Pass TSigResponseContext back through everything?
         let (result, _ctx) = self.authorize(update, Utc::now()).await;

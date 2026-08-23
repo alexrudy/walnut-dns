@@ -14,7 +14,7 @@ use tracing::trace;
 use crate::codec::{CodecError, DnsCodec, DnsCodecRecovery, DnsRequest};
 use crate::error::HickoryError;
 use crate::messages::Protocol as DnsProtocol;
-use crate::messages::server::Incoming;
+use crate::messages::server::Decoded;
 use walnut_proto::op::Message;
 
 use super::connection::DnsConnection;
@@ -30,9 +30,9 @@ impl DnsOverUdp {
     }
 }
 
-impl<S> Protocol<S, UdpSocket, Incoming<Message>> for DnsOverUdp
+impl<S> Protocol<S, UdpSocket, Decoded<Message>> for DnsOverUdp
 where
-    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError> + 'static,
+    S: tower::Service<Decoded<Message>, Response = Message, Error = HickoryError> + 'static,
     S::Future: Send + 'static,
 {
     type Response = Message;
@@ -54,11 +54,11 @@ where
 #[pin_project::pin_project]
 pub struct DnsFramedUdp {
     #[pin]
-    framed: UdpFramed<DnsCodecRecovery<Message, Incoming<Message>>, UdpSocket>,
+    framed: UdpFramed<DnsCodecRecovery<Message, Decoded<Message>>, UdpSocket>,
 }
 
 impl DnsFramedUdp {
-    pub fn new(framed: UdpFramed<DnsCodecRecovery<Message, Incoming<Message>>, UdpSocket>) -> Self {
+    pub fn new(framed: UdpFramed<DnsCodecRecovery<Message, Decoded<Message>>, UdpSocket>) -> Self {
         Self { framed }
     }
 }

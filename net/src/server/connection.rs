@@ -17,7 +17,7 @@ use tracing::{Instrument, debug, debug_span, trace, trace_span, warn};
 use crate::codec::{CodecError, DnsCodec, DnsCodecRecovery, DnsRequest};
 use crate::error::HickoryError;
 use crate::messages::Protocol;
-use crate::messages::server::Incoming;
+use crate::messages::server::Decoded;
 use walnut_proto::op::Message;
 
 #[pin_project::pin_project]
@@ -25,7 +25,7 @@ pub struct DnsFramedStream<IO> {
     addr: Option<SocketAddr>,
 
     #[pin]
-    codec: Framed<IO, DnsCodecRecovery<Message, Incoming<Message>>>,
+    codec: Framed<IO, DnsCodecRecovery<Message, Decoded<Message>>>,
     protocol: Protocol,
 }
 
@@ -173,7 +173,7 @@ where
 #[pin_project::pin_project]
 pub struct DnsConnection<S, F>
 where
-    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
+    S: tower::Service<Decoded<Message>, Response = Message, Error = HickoryError>,
 {
     service: ServiceState<S>,
     #[pin]
@@ -187,7 +187,7 @@ where
 
 impl<S, F> DnsConnection<S, F>
 where
-    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
+    S: tower::Service<Decoded<Message>, Response = Message, Error = HickoryError>,
 {
     pub fn new(service: S, codec: F) -> Self {
         Self {
@@ -203,7 +203,7 @@ where
 impl<S, IO> DnsConnection<S, DnsFramedStream<IO>>
 where
     IO: AsyncRead + AsyncWrite,
-    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
+    S: tower::Service<Decoded<Message>, Response = Message, Error = HickoryError>,
 {
     /// Creates a new `DnsFramedStream` without an address, meaning that
     /// no address validation is performed on send.
@@ -219,7 +219,7 @@ impl<S, IO> DnsConnection<S, DnsFramedStream<IO>>
 where
     IO: AsyncRead + AsyncWrite + HasConnectionInfo,
     IO::Addr: Into<SocketAddr> + Clone,
-    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
+    S: tower::Service<Decoded<Message>, Response = Message, Error = HickoryError>,
 {
     /// Creates a new `DnsFramedStream` with an address, meaning that
     /// address validation is performed on send.
@@ -230,7 +230,7 @@ where
 
 impl<S, F> fmt::Debug for DnsConnection<S, F>
 where
-    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
+    S: tower::Service<Decoded<Message>, Response = Message, Error = HickoryError>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DNSConnection").finish()
@@ -244,7 +244,7 @@ enum ReadAction {
 
 impl<S, F> DnsConnection<S, F>
 where
-    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
+    S: tower::Service<Decoded<Message>, Response = Message, Error = HickoryError>,
     F: Stream<Item = Result<DnsRequest, CodecError>>,
 {
     fn poll_read(
@@ -315,7 +315,7 @@ where
 
 impl<S, F> DnsConnection<S, F>
 where
-    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
+    S: tower::Service<Decoded<Message>, Response = Message, Error = HickoryError>,
 {
     fn poll_tasks(
         mut self: Pin<&mut Self>,
@@ -338,7 +338,7 @@ where
 
 impl<S, F> DnsConnection<S, F>
 where
-    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
+    S: tower::Service<Decoded<Message>, Response = Message, Error = HickoryError>,
     F: Sink<(Message, SocketAddr), Error = CodecError>,
 {
     fn poll_write(
@@ -380,7 +380,7 @@ where
 
 impl<S, F> Future for DnsConnection<S, F>
 where
-    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
+    S: tower::Service<Decoded<Message>, Response = Message, Error = HickoryError>,
     F: Stream<Item = Result<DnsRequest, CodecError>>
         + Sink<(Message, SocketAddr), Error = CodecError>,
 {
@@ -442,7 +442,7 @@ where
 
 impl<S, F> Connection for DnsConnection<S, F>
 where
-    S: tower::Service<Incoming<Message>, Response = Message, Error = HickoryError>,
+    S: tower::Service<Decoded<Message>, Response = Message, Error = HickoryError>,
 {
     fn graceful_shutdown(self: Pin<&mut Self>) {
         *self.project().cancelled = true;
