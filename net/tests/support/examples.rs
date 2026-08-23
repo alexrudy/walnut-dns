@@ -1,9 +1,9 @@
 use std::{str::FromStr as _, sync::Arc};
 
-use walnut_dns::{
-    Lookup as _, ZoneInfo as _,
-    authority::{DnsSecZone, NxProofKind, Records},
-};
+use walnut_dns::authority::Records;
+#[cfg(feature = "__dnssec")]
+use walnut_dns::authority::{DnsSecZone, NxProofKind};
+use walnut_dns::{Lookup as _, ZoneInfo as _};
 use walnut_proto::rr::RData;
 use walnut_proto::rr::{Name, Zone, ZoneType};
 
@@ -179,6 +179,7 @@ pub fn create_example() -> Zone {
     zone
 }
 
+#[cfg(feature = "__dnssec")]
 pub fn create_secure_example() -> DnsSecZone<Zone> {
     use rustls_pki_types::PrivatePkcs8KeyDer;
     use std::time::Duration;

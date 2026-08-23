@@ -1,29 +1,44 @@
 use std::str::FromStr;
 
+#[cfg(feature = "__dnssec")]
 use chrono::Utc;
+#[cfg(feature = "__dnssec")]
 use walnut_dns::messages::server::Incoming;
-use walnut_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
+use walnut_proto::op::Query;
+#[cfg(feature = "__dnssec")]
+use walnut_proto::op::{Message, MessageType, OpCode, ResponseCode};
 use walnut_proto::rr::Name;
-use walnut_proto::rr::rdata::{A, AAAA, NS, TXT};
+#[cfg(feature = "__dnssec")]
+use walnut_proto::rr::rdata::AAAA;
+use walnut_proto::rr::rdata::{A, NS, TXT};
 use walnut_proto::rr::{DNSClass, RData, RecordType};
 
+#[cfg(feature = "__dnssec")]
 use tracing::Instrument as _;
 use walnut_dns::Lookup as _;
+#[cfg(feature = "__dnssec")]
 use walnut_dns::SqliteStore;
 use walnut_dns::ZoneInfo as _;
 use walnut_dns::authority::LookupOptions;
+#[cfg(feature = "__dnssec")]
 use walnut_dns::authority::Records as _;
 use walnut_dns::authority::Search as _;
+#[cfg(feature = "__dnssec")]
 use walnut_dns::authority::Update as _;
 #[cfg(feature = "__dnssec")]
 use walnut_dns::authority::{DnsSecZone, NxProofKind};
+#[cfg(feature = "__dnssec")]
 use walnut_dns::catalog::CatalogStore;
 #[cfg(feature = "__dnssec")]
 use walnut_dns::database::DnsSecStore;
-use walnut_proto::rr::{Record, TimeToLive};
+use walnut_proto::rr::Record;
+#[cfg(feature = "__dnssec")]
+use walnut_proto::rr::TimeToLive;
 
 mod support;
-use support::examples::{create_example, create_secure_example};
+use support::examples::create_example;
+#[cfg(feature = "__dnssec")]
+use support::examples::create_secure_example;
 use support::subscribe;
 
 #[tokio::test]
@@ -188,6 +203,7 @@ async fn test_authority() {
 }
 
 #[tokio::test]
+#[cfg(feature = "__dnssec")]
 async fn test_authorize() {
     use walnut_proto::serialize::binary::{BinDecodable, BinEncodable};
 
@@ -215,6 +231,7 @@ async fn test_authorize() {
 }
 
 #[tokio::test]
+#[cfg(feature = "__dnssec")]
 async fn test_prerequisites() {
     subscribe();
     let not_zone = Name::from_str("not.a.domain.com.").unwrap();
@@ -411,6 +428,7 @@ async fn test_prerequisites() {
 }
 
 #[tokio::test]
+#[cfg(feature = "__dnssec")]
 async fn test_pre_scan() {
     subscribe();
 
@@ -624,6 +642,7 @@ async fn test_pre_scan() {
 }
 
 #[tokio::test]
+#[cfg(feature = "__dnssec")]
 async fn test_update() {
     subscribe();
     let new_name = Name::from_str("new.example.com.").unwrap();
@@ -947,6 +966,7 @@ async fn test_zone_signing() {
 }
 
 #[tokio::test]
+#[cfg(feature = "__dnssec")]
 async fn test_get_nsec() {
     subscribe();
     let name = Name::from_str("zzz.example.com.").unwrap();
@@ -964,6 +984,7 @@ async fn test_get_nsec() {
 }
 
 #[tokio::test]
+#[cfg(feature = "__dnssec")]
 async fn test_journal() {
     subscribe();
     // test that this message can be inserted
@@ -1044,6 +1065,7 @@ async fn test_journal() {
 }
 
 #[tokio::test]
+#[cfg(feature = "__dnssec")]
 async fn test_recovery() {
     subscribe();
     // test that this message can be inserted

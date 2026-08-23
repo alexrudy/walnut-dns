@@ -13,9 +13,7 @@ use std::{boxed::Box, fmt, vec::Vec};
 use chateau::client::conn::protocol::framed::Tagged;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "__dnssec")]
-use tracing::debug;
-use tracing::warn;
+use tracing::{debug, warn};
 
 #[cfg(feature = "__dnssec")]
 use crate::dnssec::rdata::DNSSECRData;

@@ -607,6 +607,7 @@ pub struct Mismatch(pub &'static str);
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "__dnssec")]
     use std::net::Ipv4Addr;
 
     use super::*;
