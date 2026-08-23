@@ -11,7 +11,8 @@ use std::{
 use pin_project::pin_project;
 
 use crate::client::DnsClientError;
-use crate::messages::{Message, Protocol};
+use crate::messages::Protocol;
+use walnut_proto::op::Message;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PriorityTier {

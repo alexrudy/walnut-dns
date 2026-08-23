@@ -5,14 +5,14 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use chateau::services::SharedService;
-use hickory_proto::op::{Edns, OpCode, Query};
-use hickory_proto::rr::{DNSClass, Name, RecordType};
 use pin_project::pin_project;
 use serde::Deserialize;
 use tower::ServiceExt;
+use walnut_proto::op::{Edns, Message, OpCode, Query};
+use walnut_proto::rr::{DNSClass, Name, RecordType};
 
 use crate::cache::{DnsCache, DnsCacheService};
-use crate::messages::{DnsRequest, DnsRequestOptions, DnsResponse, Message};
+use crate::messages::{DnsRequest, DnsRequestOptions, DnsResponse};
 use walnut_proto::rr::RecordSet;
 
 pub use self::error::DnsClientError;
@@ -25,7 +25,7 @@ pub use self::udp::{
 };
 
 mod error;
-#[cfg(feature = "h2")]
+#[cfg(any(feature = "h2-ring", feature = "h2-aws-lc"))]
 mod http;
 mod messages;
 pub mod nameserver;
@@ -132,9 +132,9 @@ impl Client {
         use rand::prelude::*;
 
         let mut rng = rand::rng();
-        let mut message = Message::new();
-        message.set_id(rng.random());
-        tracing::Span::current().record("dns.id", tracing::field::display(message.id()));
+        let mut message = Message::query();
+        message.metadata.id = rng.random();
+        tracing::Span::current().record("dns.id", tracing::field::display(message.metadata.id));
 
         let mut original_query = None;
 
@@ -144,14 +144,13 @@ impl Client {
             query.name.randomize_label_case();
         }
 
-        message
-            .add_query(query)
-            .set_recursion_desired(options.recursion_desired);
+        message.add_query(query);
+        message.metadata.recursion_desired = options.recursion_desired;
 
         // Extended dns
         if options.use_edns {
             message
-                .extensions_mut()
+                .edns
                 .get_or_insert_with(Edns::new)
                 .set_max_payload(self.config.max_payload_len)
                 .set_version(0)
@@ -177,21 +176,20 @@ impl Client {
 
         // build the message
         let mut rng = rand::rng();
-        let mut message = Message::new();
-        message.set_id(rng.random());
-        message
-            // 3.3. NOTIFY is similar to QUERY in that it has a request message with
-            // the header QR flag "clear" and a response message with QR "set".  The
-            // response message contains no useful information, but its reception by
-            // the Primary is an indication that the Secondary has received the NOTIFY
-            // and that the Primary Zone Server can remove the Secondary from any retry queue for
-            // this NOTIFY event.
-            .set_op_code(OpCode::Notify);
+        let mut message = Message::query();
+        message.metadata.id = rng.random();
+        // 3.3. NOTIFY is similar to QUERY in that it has a request message with
+        // the header QR flag "clear" and a response message with QR "set".  The
+        // response message contains no useful information, but its reception by
+        // the Primary is an indication that the Secondary has received the NOTIFY
+        // and that the Primary Zone Server can remove the Secondary from any retry queue for
+        // this NOTIFY event.
+        message.metadata.op_code = OpCode::Notify;
 
         // Extended dns
         if options.use_edns {
             message
-                .extensions_mut()
+                .edns
                 .get_or_insert_with(Edns::new)
                 .set_max_payload(self.config.max_payload_len)
                 .set_version(0);

@@ -25,21 +25,25 @@ use std::collections::HashSet;
 use std::ops::RangeBounds;
 use std::sync::Arc;
 
-use hickory_proto::op::{Query, ResponseCode};
-use hickory_proto::rr::{DNSClass, Name, RecordType, RrKey};
+use walnut_proto::op::{Query, ResponseCode};
+use walnut_proto::rr::{DNSClass, Name, RData, RecordType, RrKey};
 
-use crate::messages::Message;
 use crate::messages::server::Incoming;
+use walnut_proto::op::Message;
 use walnut_proto::rr::{Mismatch, Record, RecordSet, SerialNumber, TimeToLive, Zone, ZoneType};
 
+#[cfg(feature = "__dnssec")]
 pub mod dnssec;
 pub(crate) mod edns;
 pub(crate) mod error;
 pub(crate) mod lookup;
 pub(crate) mod zone;
 
+#[cfg(feature = "__dnssec")]
 pub use self::dnssec::Nsec3QueryInfo;
+#[cfg(feature = "__dnssec")]
 pub use self::dnssec::NxProofKind;
+#[cfg(feature = "__dnssec")]
 pub use self::dnssec::{DnsSecZone, DnsSecZoneError, Journal};
 pub use self::error::LookupError;
 pub use self::lookup::{LookupControlFlow, LookupOptions, LookupRecords};
@@ -570,7 +574,7 @@ where
             // evaluate any cnames for additional inclusion
             let additional_records_chain_root: Option<(_, _)> = answer
                 .as_ref()
-                .and_then(|rrset| rrset.next_lookup_name(query_type))
+                .and_then(|rrset| maybe_next_name(rrset, query_type))
                 .and_then(|(search_name, search_type)| {
                     self.additional_search(
                         name,
@@ -742,8 +746,8 @@ where
     ) -> Option<&RecordSet> {
         tracing::trace!("Lookup {name} {query_type}");
         // this range covers all the records for any of the RecordTypes at a given label.
-        let start_range_key = RrKey::new(Name::new(name), RecordType::Unknown(u16::MIN));
-        let end_range_key = RrKey::new(Name::new(name), RecordType::Unknown(u16::MAX));
+        let start_range_key = RrKey::new(name.clone(), RecordType::Unknown(u16::MIN));
+        let end_range_key = RrKey::new(name.clone(), RecordType::Unknown(u16::MAX));
 
         fn aname_covers_type(key_type: RecordType, query_type: RecordType) -> bool {
             (query_type == RecordType::A || query_type == RecordType::AAAA)
@@ -851,9 +855,7 @@ where
                         additionals.push(additional.clone());
                     }
 
-                    next_name = additional
-                        .next_lookup_name(*query_type)
-                        .map(|(name, _)| name);
+                    next_name = maybe_next_name(&additional, *query_type).map(|(name, _)| name);
                 }
             }
         }
@@ -869,10 +871,7 @@ where
 }
 
 /// Gets the next search name, and returns the RecordType that it originated from
-fn maybe_next_name(
-    record_set: &RecordSet,
-    query_type: RecordType,
-) -> Option<(LowerName, RecordType)> {
+fn maybe_next_name(record_set: &RecordSet, query_type: RecordType) -> Option<(Name, RecordType)> {
     match (record_set.record_type(), query_type) {
         // ANAME is similar to CNAME,
         //  unlike CNAME, it is only something that continue to additional processing if the
@@ -880,42 +879,40 @@ fn maybe_next_name(
         (t @ RecordType::ANAME, RecordType::A)
         | (t @ RecordType::ANAME, RecordType::AAAA)
         | (t @ RecordType::ANAME, RecordType::ANAME) => record_set
-            .records_without_rrsigs()
+            .records(/* without rrsigs */ false)
             .next()
             .map(Record::data)
             .and_then(RData::as_aname)
-            .map(|aname| LowerName::from(&aname.0))
+            .map(|aname| aname.0.clone())
             .map(|name| (name, t)),
         (t @ RecordType::NS, RecordType::NS) => record_set
-            .records_without_rrsigs()
+            .records(/* without rrsigs */ false)
             .next()
             .map(Record::data)
             .and_then(RData::as_ns)
-            .map(|ns| LowerName::from(&ns.0))
+            .map(|ns| ns.0.clone())
             .map(|name| (name, t)),
         // CNAME will continue to additional processing for any query type
         (t @ RecordType::CNAME, _) => record_set
-            .records_without_rrsigs()
+            .records(/* without rrsigs */ false)
             .next()
             .map(Record::data)
             .and_then(RData::as_cname)
-            .map(|cname| LowerName::from(&cname.0))
+            .map(|cname| cname.0.clone())
             .map(|name| (name, t)),
         (t @ RecordType::MX, RecordType::MX) => record_set
-            .records_without_rrsigs()
+            .records(/* without rrsigs */ false)
             .next()
             .map(Record::data)
             .and_then(RData::as_mx)
-            .map(|mx| mx.exchange().clone())
-            .map(LowerName::from)
+            .map(|mx| mx.exchange.clone())
             .map(|name| (name, t)),
         (t @ RecordType::SRV, RecordType::SRV) => record_set
-            .records_without_rrsigs()
+            .records(/* without rrsigs */ false)
             .next()
             .map(Record::data)
             .and_then(RData::as_srv)
-            .map(|srv| srv.target().clone())
-            .map(LowerName::from)
+            .map(|srv| srv.target.clone())
             .map(|name| (name, t)),
         // other additional collectors can be added here can be added here
         _ => None,

@@ -248,7 +248,7 @@ impl<'a> BinEncoder<'a> {
     // /// and reserves the additional space in the buffer
     // fn enforce_size(&mut self, additional: usize) -> Result<(), ProtocolError> {
     //     if (self.buffer.len() + additional) > self.max_size {
-    //         Err(ProtocolErrorKind::MaxBufferSizeExceeded(self.max_size).into())
+    //         Err(ProtocolError::MaxBufferSizeExceeded(self.max_size).into())
     //     } else {
     //         self.reserve(additional);
     //         Ok(())
@@ -300,7 +300,7 @@ impl<'a> BinEncoder<'a> {
     /// matches description from above.
     ///
     /// ```
-    /// use hickory_proto::serialize::binary::BinEncoder;
+    /// use walnut_proto::serialize::binary::BinEncoder;
     ///
     /// let mut bytes: Vec<u8> = Vec::new();
     /// {

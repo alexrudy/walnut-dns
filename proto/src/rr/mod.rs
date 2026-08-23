@@ -37,6 +37,7 @@ pub use self::rr_set::RecordSetIter;
 pub use self::rr_set::{Mismatch, RecordSet};
 pub use self::sequence::SerialNumber;
 pub use self::sql::{NameExt, SqlName};
+#[cfg(feature = "__dnssec")]
 pub use self::tsig::{TSigVerifier, TSigner};
 pub use self::ttl::TimeToLive;
 pub use self::zone::{Zone, ZoneType};

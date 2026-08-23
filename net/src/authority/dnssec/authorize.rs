@@ -1,14 +1,16 @@
-use hickory_proto::{
-    dnssec::{Verifier as _, rdata::DNSSECRData},
-    op::ResponseCode,
-    rr::RecordType,
+use chrono::{DateTime, Utc};
+use tracing::{debug, warn};
+use walnut_proto::{
+    op::{Message, ResponseCode},
+    rr::{
+        rdata::{TSIG, tsig::TsigError},
+        tsig::TSigResponseContext,
+    },
 };
-use tracing::{info, warn};
 
 use crate::{
     Lookup,
-    authority::lookup::{LookupControlFlow, LookupOptions},
-    messages::Message,
+    messages::server::{Incoming, UpdateRequest as _},
 };
 use walnut_proto::rr::Record;
 
@@ -68,9 +70,11 @@ where
     ///   requestor.
     /// ```
     ///
-    pub async fn authorize(&self, update_message: &Message) -> Result<(), ResponseCode> {
-        use tracing::debug;
-
+    pub async fn authorize(
+        &self,
+        update_message: &Incoming<Message>,
+        now: DateTime<Utc>,
+    ) -> (Result<(), ResponseCode>, Option<TSigResponseContext>) {
         // 3.3.3 - Pseudocode for Permission Checking
         //
         //      if (security policy exists)
@@ -86,62 +90,75 @@ where
                 "update attempted on non-updatable Authority: {}",
                 self.origin()
             );
-            return Err(ResponseCode::Refused);
+            return (Err(ResponseCode::Refused), None);
         }
 
-        // verify sig0, currently the only authorization that is accepted.
-        let sig0s: &[Record] = update_message.sig0();
-        debug!("authorizing with: {:?}", sig0s);
-        if !sig0s.is_empty() {
-            let mut found_key = false;
-            for sig in sig0s
-                .iter()
-                .filter_map(|sig0| sig0.data().as_dnssec().and_then(DNSSECRData::as_sig))
-            {
-                let name = sig.signer_name();
-                let keys = self
-                    .lookup(name, RecordType::KEY, LookupOptions::default())
-                    .await;
-
-                let keys = match keys {
-                    LookupControlFlow::Continue(Ok(keys)) => keys,
-                    _ => continue, // error trying to lookup a key by that name, try the next one.
-                };
-
-                debug!("found keys {:?}", keys);
-                // TODO: check key usage flags and restrictions
-                found_key = keys
-                    .iter()
-                    .filter_map(|rr_set| rr_set.data().as_dnssec().and_then(DNSSECRData::as_key))
-                    .any(|key| {
-                        key.verify_message(update_message, sig.sig(), sig)
-                            .map(|_| {
-                                info!("verified sig: {:?} with key: {:?}", sig, key);
-                                true
-                            })
-                            .unwrap_or_else(|_| {
-                                debug!("did not verify sig: {:?} with key: {:?}", sig, key);
-                                false
-                            })
-                    });
-
-                if found_key {
-                    break; // stop searching for matching keys, we found one
-                }
+        match update_message.signature() {
+            Some(tsig) => {
+                let (resp, signer) = self.authorized_tsig(tsig, update_message, now).await;
+                (resp, Some(signer))
             }
-
-            if found_key {
-                return Ok(());
-            }
-        } else {
-            warn!(
-                "no sig0 matched registered records: id {}",
-                update_message.id()
-            );
+            None => (Err(ResponseCode::Refused), None),
         }
-
         // getting here, we will always default to rejecting the request
         //  the code will only ever explicitly return authorized actions.
-        Err(ResponseCode::Refused)
+    }
+
+    async fn authorized_tsig(
+        &self,
+        tsig: &Record<TSIG>,
+        request: &Incoming<Message>,
+        now: DateTime<Utc>,
+    ) -> (Result<(), ResponseCode>, TSigResponseContext) {
+        let req_id = request.id();
+
+        debug!("authorizing with: {tsig:?}");
+        // RFC 8945 Section 5.5: "To prevent cross-algorithm attacks, there SHOULD only be
+        // one algorithm associated with any given key name." We rely on this and only check
+        // the key name when filtering TSIG keys.
+        let Some(tsigner) = self
+            .tsig_signers
+            .iter()
+            .find(|tsigner| tsigner.signer_name() == tsig.name())
+        else {
+            warn!("no TSIG key name matched: id {req_id}");
+            return (
+                Err(ResponseCode::NotAuth),
+                TSigResponseContext::unknown_key(
+                    req_id,
+                    now.timestamp() as u64,
+                    tsig.name().clone(),
+                ),
+            );
+        };
+
+        let Ok((_, _, range)) = tsigner.verify_message_byte(request.raw(), None, true) else {
+            warn!("invalid TSIG signature: id {req_id}");
+            return (
+                Err(ResponseCode::NotAuth),
+                TSigResponseContext::bad_signature(req_id, now.timestamp() as u64, tsigner.clone()),
+            );
+        };
+
+        let mut error = None;
+        let mut response = Ok(());
+
+        if !range.contains(&(now.timestamp() as u64)) {
+            warn!("expired TSIG signature: id {req_id}");
+            // "A response indicating a BADTIME error MUST be signed by the same key as the request."
+            response = Err(ResponseCode::NotAuth);
+            error = Some(TsigError::BadTime);
+        }
+
+        (
+            response,
+            TSigResponseContext::new(
+                req_id,
+                now.timestamp() as u64,
+                tsigner.clone(),
+                tsig.rdata.mac.clone(),
+                error,
+            ),
+        )
     }
 }

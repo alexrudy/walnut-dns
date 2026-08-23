@@ -4,16 +4,20 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use bytes::{Buf, BufMut};
 use chateau::client::conn::protocol::framed::Tagged;
-use hickory_proto::ProtoError;
-use hickory_proto::op::{Edns, Header, ResponseCode};
-use hickory_proto::serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder};
-use hickory_proto::udp::MAX_RECEIVE_BUFFER_SIZE;
 use tokio_util::codec::{Decoder, Encoder};
 use tracing::{debug, error, trace};
+use walnut_proto::ProtocolError;
+use walnut_proto::op::{Edns, Header, Metadata, ResponseCode};
+use walnut_proto::serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder};
 
-use crate::messages::server::Incoming;
-use crate::messages::{Message, Protocol};
+use crate::messages::Protocol;
+use crate::messages::server::{Incoming, Request};
 use crate::server::response::encode_fallback_servfail_response;
+use walnut_proto::op::Message;
+
+/// Max size for the UDP receive buffer as recommended by
+/// [RFC6891](https://datatracker.ietf.org/doc/html/rfc6891#section-6.2.5).
+pub const MAX_RECEIVE_BUFFER_SIZE: usize = 4_096;
 
 /// The wire codec for standard DNS messages defined in RFC 1035.
 pub struct DnsCodec<Req, Res> {
@@ -91,12 +95,12 @@ impl<Req, Res> DnsCodec<Req, Res> {
 #[derive(Debug, thiserror::Error)]
 pub enum CodecError {
     #[error("Failed to decode message, dropping")]
-    DropMessage(#[source] ProtoError, usize),
+    DropMessage(#[source] ProtocolError, usize),
 
     #[error("Invalid message: {0}")]
-    Protocol(#[source] ProtoError),
+    Protocol(#[source] ProtocolError),
 
-    #[error("Failed to handle message {}: {}", .0.id(), .1)]
+    #[error("Failed to handle message {}: {}", .0.id, .1)]
     FailedMessage(Header, ResponseCode),
 
     #[error(transparent)]
@@ -113,14 +117,16 @@ pub enum MessageDecoded<M> {
     Failed(Header, ResponseCode),
 }
 
-impl MessageDecoded<Message> {
+impl MessageDecoded<Incoming<Message>> {
     pub fn with_address(self, addr: SocketAddr, protocol: Protocol) -> DnsRequest {
         match self {
-            MessageDecoded::Message(message_request) => {
-                DnsRequest::Message(Incoming::new(message_request, addr, protocol))
-            }
+            MessageDecoded::Message(message_request) => DnsRequest::Message(Request {
+                message: message_request,
+                protocol,
+                src: addr,
+            }),
             MessageDecoded::Failed(header, response_code) => DnsRequest::Failed((
-                Message::error_msg(header.id(), header.op_code(), response_code),
+                Message::error_msg(header.id, header.op_code, response_code),
                 addr,
             )),
         }
@@ -128,13 +134,13 @@ impl MessageDecoded<Message> {
 
     pub fn without_address(self, protocol: Protocol) -> DnsRequest {
         match self {
-            MessageDecoded::Message(message_request) => DnsRequest::Message(Incoming::new(
-                message_request,
-                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+            MessageDecoded::Message(message_request) => DnsRequest::Message(Request {
+                message: message_request,
                 protocol,
-            )),
+                src: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+            }),
             MessageDecoded::Failed(header, response_code) => DnsRequest::Failed((
-                Message::error_msg(header.id(), header.op_code(), response_code),
+                Message::error_msg(header.id, header.op_code, response_code),
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
             )),
         }
@@ -150,7 +156,7 @@ where
     fn tag(&self) -> Self::Tag {
         match self {
             MessageDecoded::Message(msg) => msg.tag(),
-            MessageDecoded::Failed(header, _) => header.id(),
+            MessageDecoded::Failed(header, _) => header.id,
         }
     }
 }
@@ -160,7 +166,7 @@ where
 /// to the underlying protocol.
 #[derive(Debug)]
 pub enum DnsRequest {
-    Message(Incoming<Message>),
+    Message(Request),
     Failed((Message, SocketAddr)),
 }
 
@@ -189,25 +195,38 @@ where
         trace!("decode buffer={}", src.len());
 
         let mut decoder = BinDecoder::new(src);
-        let message =
-            Res::read(&mut decoder).map_err(|error| CodecError::DropMessage(error, length))?;
+        let message = Res::read(&mut decoder)
+            .map_err(|error| CodecError::DropMessage(error.into(), length))?;
         src.advance(length);
         Ok(Some(message))
     }
 }
 
 pub trait DnsMessage {
-    fn header(&self) -> &Header;
+    fn header(&self) -> &Metadata;
     fn extensions(&self) -> Option<&Edns>;
 }
 
 impl DnsMessage for Message {
-    fn header(&self) -> &Header {
-        self.header()
+    fn header(&self) -> &Metadata {
+        &self.metadata
     }
 
     fn extensions(&self) -> Option<&Edns> {
-        self.extensions().as_ref()
+        self.edns.as_ref()
+    }
+}
+
+impl<M> DnsMessage for Incoming<M>
+where
+    M: DnsMessage,
+{
+    fn header(&self) -> &Metadata {
+        M::header(&*self)
+    }
+
+    fn extensions(&self) -> Option<&Edns> {
+        M::extensions(&*self)
     }
 }
 
@@ -215,7 +234,7 @@ impl<T, A> DnsMessage for (T, A)
 where
     T: DnsMessage,
 {
-    fn header(&self) -> &Header {
+    fn header(&self) -> &Metadata {
         self.0.header()
     }
 
@@ -231,11 +250,11 @@ where
     type Error = CodecError;
 
     fn encode(&mut self, req: Req, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
-        let id = req.header().id();
+        let id = req.header().id;
         trace!(
             id,
-            response_code = %req.header().response_code(),
-            type=%req.header().message_type(),
+            response_code = %req.header().response_code,
+            type=%req.header().message_type,
             "encoding",
         );
         let mut buffer = Vec::with_capacity(512);

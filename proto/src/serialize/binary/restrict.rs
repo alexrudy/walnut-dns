@@ -14,7 +14,7 @@ impl<T> Restrict<T> {
     /// It is the responsibility of this function to verify the contained type is valid.
     ///
     /// ```
-    /// use hickory_proto::serialize::binary::Restrict;
+    /// use walnut_proto::serialize::binary::Restrict;
     ///
     /// let unrestricted = Restrict::new(0).verify(|r| *r == 0).then(|r| *r + 1).unwrap();
     /// assert!(unrestricted == 1);
@@ -35,7 +35,7 @@ impl<T> Restrict<T> {
     /// It is the responsibility of this function to verify the contained type is valid.
     ///
     /// ```
-    /// use hickory_proto::serialize::binary::Restrict;
+    /// use walnut_proto::serialize::binary::Restrict;
     ///
     /// let unrestricted = Restrict::new(0).verify_unwrap(|r| *r == 0).unwrap();
     /// assert!(unrestricted == 0);
@@ -59,7 +59,7 @@ impl<T> Restrict<T> {
     /// Map the internal type of the restriction
     ///
     /// ```
-    /// use hickory_proto::serialize::binary::Restrict;
+    /// use walnut_proto::serialize::binary::Restrict;
     ///
     /// let restricted = Restrict::new(0).map(|b| vec![b, 1]);
     /// assert!(restricted.verify(|v| v == &[0, 1]).is_valid());

@@ -1,15 +1,13 @@
 use core::fmt;
 use std::ops::{Deref, DerefMut};
 
-use hickory_proto::{
-    ProtoError,
-    op::{Query, ResponseCode},
+use walnut_proto::{
+    ProtocolError,
+    op::{Message, Query, ResponseCode},
     rr::{RecordType, rdata::SOA},
 };
 
 use walnut_proto::rr::{RecordRef, TimeToLive};
-
-use super::raw::Message;
 
 /// A set of options for expressing options to how requests should be treated
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,7 +103,7 @@ pub struct DnsResponse {
 
 impl DnsResponse {
     /// Constructs a new DnsResponse with a buffer synthesized from the message
-    pub fn from_message(message: Message) -> Result<Self, ProtoError> {
+    pub fn from_message(message: Message) -> Result<Self, ProtocolError> {
         Ok(Self {
             buffer: message.to_vec()?,
             message,
@@ -115,14 +113,15 @@ impl DnsResponse {
     /// Constructs a new DnsResponse by parsing a message from a buffer.
     ///
     /// Returns an error if the response message cannot be decoded.
-    pub fn from_buffer(buffer: Vec<u8>) -> Result<Self, ProtoError> {
+    pub fn from_buffer(buffer: Vec<u8>) -> Result<Self, ProtocolError> {
         let message = Message::from_vec(&buffer)?;
         Ok(Self { message, buffer })
     }
 
     /// Retrieves the SOA from the response. This will only exist if it was an authoritative response.
     pub fn soa(&self) -> Option<RecordRef<'_, SOA>> {
-        self.name_servers()
+        self.message
+            .authorities
             .iter()
             .find_map(|record| RecordRef::try_from(record).ok())
     }
@@ -184,16 +183,17 @@ impl DnsResponse {
     /// ```
     pub fn negative_ttl(&self) -> Option<TimeToLive> {
         // TODO: should this ensure that the SOA zone matches the Queried Zone?
-        self.name_servers()
+        self.message
+            .authorities
             .iter()
             .filter_map(|record| record.data().as_soa().map(|soa| (record.ttl(), soa)))
             .next()
-            .map(|(ttl, soa)| (ttl).min(soa.minimum().into()))
+            .map(|(ttl, soa)| (ttl).min(soa.minimum.into()))
     }
 
     /// Does the response contain any records matching the query name and type?
     pub fn contains_answer(&self) -> bool {
-        for q in self.queries().iter() {
+        for q in self.message.queries.iter() {
             let found = match q.query_type() {
                 RecordType::ANY => self.all_sections().any(|r| r.name() == q.name()),
                 RecordType::SOA => {
@@ -203,7 +203,7 @@ impl DnsResponse {
                         .any(|r| r.name().zone_of(q.name()))
                 }
                 q_type => {
-                    if !self.answers().is_empty() {
+                    if !self.message.answers.is_empty() {
                         true
                     } else {
                         self.all_sections()
@@ -226,13 +226,13 @@ impl DnsResponse {
     ///
     /// See [NegativeType]
     pub fn negative_type(&self) -> Option<NegativeType> {
-        let response_code = self.response_code();
+        let response_code = self.response_code;
         let ttl_from_soa = self.negative_ttl();
         let has_soa = ttl_from_soa.is_some();
-        let has_ns_records = self.name_servers().iter().any(|r| r.record_type().is_ns());
-        let has_cname = self.answers().iter().any(|r| r.record_type().is_cname());
-        let has_non_cname = self.answers().iter().any(|r| !r.record_type().is_cname());
-        let has_additionals = self.additional_count() > 0;
+        let has_ns_records = self.authorities.iter().any(|r| r.record_type().is_ns());
+        let has_cname = self.answers.iter().any(|r| r.record_type().is_cname());
+        let has_non_cname = self.answers.iter().any(|r| !r.record_type().is_cname());
+        let has_additionals = !self.additionals.is_empty();
 
         match (
             response_code,
@@ -616,12 +616,11 @@ impl NegativeType {
 
 #[cfg(test)]
 mod tests {
-    use crate::messages::Message;
-    use hickory_proto::op::{Query, ResponseCode};
-    use hickory_proto::rr::RData;
-    use hickory_proto::rr::rdata::{A, CNAME, NS, SOA};
-    use hickory_proto::rr::{Name, RecordType};
+    use walnut_proto::op::{Message, Query, ResponseCode};
+    use walnut_proto::rr::RData;
     use walnut_proto::rr::Record;
+    use walnut_proto::rr::rdata::{A, CNAME, NS, SOA};
+    use walnut_proto::rr::{Name, RecordType};
 
     use super::*;
 
@@ -699,8 +698,8 @@ mod tests {
 
     #[test]
     fn test_contains_answer() {
-        let mut message = Message::default();
-        message.set_response_code(ResponseCode::NXDomain);
+        let mut message = Message::query();
+        message.metadata.response_code = ResponseCode::NXDomain;
         message.add_query(Query::query(Name::root(), RecordType::A));
         message.add_answer(Record::from_rdata(
             Name::root(),
@@ -715,13 +714,13 @@ mod tests {
 
     #[test]
     fn test_nx_type1() {
-        let mut message = Message::default();
-        message.set_response_code(ResponseCode::NXDomain);
+        let mut message = Message::query();
+        message.metadata.response_code = ResponseCode::NXDomain;
         message.add_query(an_query());
         message.add_answer(an_cname_record());
-        message.add_name_server(soa());
-        message.add_name_server(ns1_record());
-        message.add_name_server(ns2_record());
+        message.add_authority(soa());
+        message.add_authority(ns1_record());
+        message.add_authority(ns2_record());
         message.add_additional(ns1_a());
         message.add_additional(ns2_a());
 
@@ -734,11 +733,11 @@ mod tests {
 
     #[test]
     fn test_nx_type2() {
-        let mut message = Message::default();
-        message.set_response_code(ResponseCode::NXDomain);
+        let mut message = Message::query();
+        message.metadata.response_code = ResponseCode::NXDomain;
         message.add_query(an_query());
         message.add_answer(an_cname_record());
-        message.add_name_server(soa());
+        message.add_authority(soa());
 
         let response = DnsResponse::from_message(message).unwrap();
         let ty = response.negative_type();
@@ -749,8 +748,8 @@ mod tests {
 
     #[test]
     fn test_nx_type3() {
-        let mut message = Message::default();
-        message.set_response_code(ResponseCode::NXDomain);
+        let mut message = Message::query();
+        message.metadata.response_code = ResponseCode::NXDomain;
         message.add_query(an_query());
         message.add_answer(an_cname_record());
 
@@ -763,12 +762,12 @@ mod tests {
 
     #[test]
     fn test_nx_type4() {
-        let mut message = Message::default();
-        message.set_response_code(ResponseCode::NXDomain);
+        let mut message = Message::query();
+        message.metadata.response_code = ResponseCode::NXDomain;
         message.add_query(an_query());
         message.add_answer(an_cname_record());
-        message.add_name_server(ns1_record());
-        message.add_name_server(ns2_record());
+        message.add_authority(ns1_record());
+        message.add_authority(ns2_record());
         message.add_additional(ns1_a());
         message.add_additional(ns2_a());
 
@@ -781,12 +780,12 @@ mod tests {
 
     #[test]
     fn test_no_data_type1() {
-        let mut message = Message::default();
-        message.set_response_code(ResponseCode::NoError);
+        let mut message = Message::query();
+        message.metadata.response_code = ResponseCode::NoError;
         message.add_query(another_query());
-        message.add_name_server(soa());
-        message.add_name_server(ns1_record());
-        message.add_name_server(ns2_record());
+        message.add_authority(soa());
+        message.add_authority(ns1_record());
+        message.add_authority(ns2_record());
         message.add_additional(ns1_a());
         message.add_additional(ns2_a());
         let response = DnsResponse::from_message(message).unwrap();
@@ -798,10 +797,10 @@ mod tests {
 
     #[test]
     fn test_no_data_type2() {
-        let mut message = Message::default();
-        message.set_response_code(ResponseCode::NoError);
+        let mut message = Message::query();
+        message.metadata.response_code = ResponseCode::NoError;
         message.add_query(another_query());
-        message.add_name_server(soa());
+        message.add_authority(soa());
 
         let response = DnsResponse::from_message(message).unwrap();
         let ty = response.negative_type();
@@ -812,8 +811,8 @@ mod tests {
 
     #[test]
     fn test_no_data_type3() {
-        let mut message = Message::default();
-        message.set_response_code(ResponseCode::NoError);
+        let mut message = Message::query();
+        message.metadata.response_code = ResponseCode::NoError;
         message.add_query(another_query());
 
         let response = DnsResponse::from_message(message).unwrap();
@@ -825,12 +824,12 @@ mod tests {
 
     #[test]
     fn referral() {
-        let mut message = Message::default();
-        message.set_response_code(ResponseCode::NoError);
+        let mut message = Message::query();
+        message.metadata.response_code = ResponseCode::NoError;
         message.add_query(an_query());
         message.add_answer(an_cname_record());
-        message.add_name_server(ns1_record());
-        message.add_name_server(ns2_record());
+        message.add_authority(ns1_record());
+        message.add_authority(ns2_record());
         message.add_additional(ns1_a());
         message.add_additional(ns2_a());
 
@@ -840,11 +839,11 @@ mod tests {
         assert!(response.contains_answer());
         assert_eq!(ty.unwrap(), NegativeType::Referral);
 
-        let mut message = Message::default();
-        message.set_response_code(ResponseCode::NoError);
+        let mut message = Message::query();
+        message.metadata.response_code = ResponseCode::NoError;
         message.add_query(another_query());
-        message.add_name_server(ns1_record());
-        message.add_name_server(ns2_record());
+        message.add_authority(ns1_record());
+        message.add_authority(ns2_record());
         message.add_additional(ns1_a());
         message.add_additional(ns2_a());
 
@@ -857,10 +856,10 @@ mod tests {
 
     #[test]
     fn contains_soa() {
-        let mut message = Message::default();
-        message.set_response_code(ResponseCode::NoError);
+        let mut message = Message::query();
+        message.metadata.response_code = ResponseCode::NoError;
         message.add_query(Query::query(an_example(), RecordType::SOA));
-        message.add_name_server(soa());
+        message.add_authority(soa());
 
         let response = DnsResponse::from_message(message).unwrap();
 
@@ -869,10 +868,10 @@ mod tests {
 
     #[test]
     fn contains_any() {
-        let mut message = Message::default();
-        message.set_response_code(ResponseCode::NoError);
+        let mut message = Message::query();
+        message.metadata.response_code = ResponseCode::NoError;
         message.add_query(Query::query(xx(), RecordType::ANY));
-        message.add_name_server(ns1_record());
+        message.add_authority(ns1_record());
         message.add_additional(ns1_a());
 
         let response = DnsResponse::from_message(message).unwrap();

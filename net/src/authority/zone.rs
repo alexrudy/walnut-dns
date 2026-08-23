@@ -1,5 +1,5 @@
 //! Trait implementations for the zone item
-use hickory_proto::rr::RrKey;
+use walnut_proto::rr::RrKey;
 use walnut_proto::rr::{
     DNSClass, Mismatch, Name, Record, RecordSet, RecordType, SerialNumber, TimeToLive, Zone,
     ZoneType,
@@ -31,7 +31,7 @@ impl ZoneInfo for Zone {
     fn soa(&self) -> Option<&Record> {
         let rrset = self
             .records
-            .get(&RrKey::new(self.name().into(), RecordType::SOA))?;
+            .get(&RrKey::new(self.name().clone(), RecordType::SOA))?;
 
         rrset.records(false).next()
     }
@@ -40,21 +40,21 @@ impl ZoneInfo for Zone {
     fn serial(&self) -> SerialNumber {
         self.soa()
             .and_then(|soa| soa.rdata().as_soa())
-            .map_or(SerialNumber::ZERO, |soa| SerialNumber::from(soa.serial()))
+            .map_or(SerialNumber::ZERO, |soa| SerialNumber::from(soa.serial))
     }
 
     /// The minimum TTL for this zone, from the SOA record.
     fn minimum_ttl(&self) -> TimeToLive {
         self.soa()
             .and_then(|soa| soa.rdata().as_soa())
-            .map_or(TimeToLive::ZERO, |soa| TimeToLive::from(soa.minimum()))
+            .map_or(TimeToLive::ZERO, |soa| TimeToLive::from(soa.minimum))
     }
 
     /// Increment the serial number of this zone's SOA record.
     fn increment_soa_serial(&mut self) -> SerialNumber {
         let Some(rrset) = self
             .records
-            .get_mut(&RrKey::new(self.name().into(), RecordType::SOA))
+            .get_mut(&RrKey::new(self.name().clone(), RecordType::SOA))
         else {
             return SerialNumber::ZERO;
         };
@@ -68,7 +68,7 @@ impl ZoneInfo for Zone {
         };
 
         soa_data.increment_serial();
-        SerialNumber::from(soa_data.serial())
+        SerialNumber::from(soa_data.serial)
     }
 }
 
@@ -121,8 +121,8 @@ impl Records for Zone {
                 (upsert_type != check_type && occupied_type == check_type)
         }
 
-        let start_range_key = RrKey::new(record.name().into(), RecordType::Unknown(u16::MIN));
-        let end_range_key = RrKey::new(record.name().into(), RecordType::Unknown(u16::MAX));
+        let start_range_key = RrKey::new(record.name().clone(), RecordType::Unknown(u16::MIN));
+        let end_range_key = RrKey::new(record.name().clone(), RecordType::Unknown(u16::MAX));
 
         let multiple_records_at_label_disallowed = self
             .records
@@ -173,7 +173,7 @@ mod tests {
     use walnut_proto::rr::TimeToLive;
 
     use super::*;
-    use hickory_proto::rr::{
+    use walnut_proto::rr::{
         RecordType,
         rdata::{A, SOA},
     };

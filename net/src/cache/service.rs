@@ -7,11 +7,11 @@ use std::task::{Context, Poll};
 
 use chrono::Utc;
 use futures::future::BoxFuture;
-use hickory_proto::op::ResponseCode;
+use walnut_proto::op::{Message, ResponseCode};
 
 use super::{BoxError, DnsCache};
 use crate::client::DnsClientError;
-use crate::messages::{DnsRequest, DnsResponse, Message};
+use crate::messages::{DnsRequest, DnsResponse};
 
 /// Tower layer for adding DNS caching to a service.
 ///
@@ -98,7 +98,7 @@ where
     async fn cache_response(cache: &C, response: &DnsResponse) -> Result<(), DnsClientError> {
         let now = Utc::now();
 
-        match response.response_code() {
+        match response.response_code {
             ResponseCode::NoError | ResponseCode::NXDomain => {
                 let lookup: crate::lookup::QueryLookup = response.clone().try_into()?;
                 cache
@@ -155,7 +155,8 @@ where
             // Check cache first
             match cache
                 .get(
-                    req.query().expect("no query in DnsRequest").clone(),
+                    //TODO: A better way to handle multiple queries in messages?
+                    req.queries.first().expect("no query in DnsRequest").clone(),
                     Utc::now(),
                 )
                 .await
@@ -164,7 +165,7 @@ where
                     // Cache hit - return cached response
                     tracing::trace!("cache hit, reconstructing answer message");
                     let mut msg: Message = answer.into();
-                    msg.set_id(req.id());
+                    msg.metadata.id = req.id;
                     Ok(
                         DnsResponse::from_message(msg)
                             .expect("protocol error from cached response"),

@@ -11,7 +11,7 @@ use tower::ServiceExt;
 use tracing::Instrument as _;
 
 use crate::client::DnsClientError;
-use crate::messages::Message;
+use walnut_proto::op::Message;
 
 use super::Nameserver;
 

@@ -1,15 +1,14 @@
 use std::str::FromStr;
 
-use hickory_proto::op::*;
-use hickory_proto::rr::{rdata::*, *};
-use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
+use walnut_proto::op::*;
+use walnut_proto::rr::{rdata::*, *};
+use walnut_proto::serialize::binary::{BinDecodable, BinEncodable};
 
 use tower::ServiceExt;
 use walnut_dns::Catalog;
 use walnut_dns::SqliteStore;
 use walnut_dns::ZoneInfo as _;
 use walnut_dns::authority::Records as _;
-use walnut_dns::messages::Message;
 use walnut_dns::server::{CatalogService, MessageMetadataLayer, ValidateLookupLayer};
 use walnut_proto::rr::{Record, Zone, ZoneType};
 
@@ -133,7 +132,7 @@ async fn test_catalog_lookup() {
         .layer(ValidateLookupLayer::new())
         .service(CatalogService::new(catalog));
 
-    let mut question: Message = Message::new();
+    let mut question: Message = Message::query();
 
     let mut query: Query = Query::new();
     query.set_name(origin);
@@ -146,11 +145,11 @@ async fn test_catalog_lookup() {
 
     let result = svc.clone().oneshot(question_req).await.unwrap();
 
-    assert_eq!(result.response_code(), ResponseCode::NoError);
-    assert_eq!(result.message_type(), MessageType::Response);
-    assert!(result.header().authoritative());
+    assert_eq!(result.response_code, ResponseCode::NoError);
+    assert_eq!(result.message_type, MessageType::Response);
+    assert!(result.authoritative);
 
-    let answers: &[Record] = result.answers();
+    let answers: &[Record] = &result.answers;
 
     assert!(!answers.is_empty());
     assert_eq!(answers.first().unwrap().record_type(), RecordType::A);
@@ -159,11 +158,11 @@ async fn test_catalog_lookup() {
         &RData::A(A::new(93, 184, 215, 14))
     );
 
-    let ns = result.name_servers();
+    let ns = &result.authorities;
     assert!(ns.is_empty());
 
     // other zone
-    let mut question: Message = Message::new();
+    let mut question: Message = Message::query();
     let mut query: Query = Query::new();
     query.set_name(test_origin);
 
@@ -174,11 +173,11 @@ async fn test_catalog_lookup() {
     let question_req = Message::from_bytes(&question_bytes).unwrap();
     let result = svc.clone().oneshot(question_req).await.unwrap();
 
-    assert_eq!(result.response_code(), ResponseCode::NoError);
-    assert_eq!(result.message_type(), MessageType::Response);
-    assert!(result.header().authoritative());
+    assert_eq!(result.response_code, ResponseCode::NoError);
+    assert_eq!(result.message_type, MessageType::Response);
+    assert!(result.authoritative);
 
-    let answers: &[Record] = result.answers();
+    let answers: &[Record] = &result.answers;
 
     assert!(!answers.is_empty());
     assert_eq!(answers.first().unwrap().record_type(), RecordType::A);
@@ -205,7 +204,7 @@ async fn test_catalog_lookup_soa() {
         .layer(ValidateLookupLayer::new())
         .service(CatalogService::new(catalog));
 
-    let mut question: Message = Message::new();
+    let mut question: Message = Message::query();
 
     let mut query: Query = Query::new();
     query.set_name(origin);
@@ -219,11 +218,11 @@ async fn test_catalog_lookup_soa() {
 
     let result = svc.clone().oneshot(question_req).await.unwrap();
 
-    assert_eq!(result.response_code(), ResponseCode::NoError);
-    assert_eq!(result.message_type(), MessageType::Response);
-    assert!(result.header().authoritative());
+    assert_eq!(result.response_code, ResponseCode::NoError);
+    assert_eq!(result.message_type, MessageType::Response);
+    assert!(result.authoritative);
 
-    let answers: &[Record] = result.answers();
+    let answers: &[Record] = &result.answers;
 
     assert!(!answers.is_empty());
     assert_eq!(answers.first().unwrap().record_type(), RecordType::SOA);
@@ -241,7 +240,7 @@ async fn test_catalog_lookup_soa() {
     );
 
     // assert SOA requests get NS records
-    let mut ns: Vec<Record> = result.name_servers().to_vec();
+    let mut ns: Vec<Record> = result.authorities.clone();
     ns.sort();
     for nsr in &ns {
         eprintln!("{}", nsr);
@@ -273,7 +272,7 @@ async fn test_catalog_nx_soa() {
         .layer(ValidateLookupLayer::new())
         .service(CatalogService::new(catalog));
 
-    let mut question: Message = Message::new();
+    let mut question: Message = Message::query();
     let mut query: Query = Query::new();
     query.set_name(Name::parse("nx.example.com.", None).unwrap());
 
@@ -285,11 +284,11 @@ async fn test_catalog_nx_soa() {
 
     let result = svc.oneshot(question_req).await.unwrap();
 
-    assert_eq!(result.response_code(), ResponseCode::NXDomain);
-    assert_eq!(result.message_type(), MessageType::Response);
-    assert!(result.header().authoritative());
+    assert_eq!(result.response_code, ResponseCode::NXDomain);
+    assert_eq!(result.message_type, MessageType::Response);
+    assert!(result.authoritative);
 
-    let ns: &[Record] = result.name_servers();
+    let ns: &[Record] = &result.authorities;
 
     assert_eq!(ns.len(), 1);
     assert_eq!(ns.first().unwrap().record_type(), RecordType::SOA);
@@ -321,7 +320,7 @@ async fn test_non_authoritive_nx_refused() {
         .layer(ValidateLookupLayer::new())
         .service(CatalogService::new(catalog));
 
-    let mut question: Message = Message::new();
+    let mut question: Message = Message::query();
 
     let mut query: Query = Query::new();
     query.set_name(Name::parse("com.", None).unwrap());
@@ -335,13 +334,13 @@ async fn test_non_authoritive_nx_refused() {
 
     let result = svc.oneshot(question_req).await.unwrap();
 
-    assert_eq!(result.response_code(), ResponseCode::Refused);
-    assert_eq!(result.message_type(), MessageType::Response);
-    assert!(!result.header().authoritative());
+    assert_eq!(result.response_code, ResponseCode::Refused);
+    assert_eq!(result.message_type, MessageType::Response);
+    assert!(!result.authoritative);
 
-    assert_eq!(result.name_servers().len(), 0);
-    assert_eq!(result.answers().len(), 0);
-    assert_eq!(result.additionals().len(), 0);
+    assert_eq!(result.authorities.len(), 0);
+    assert_eq!(result.answers.len(), 0);
+    assert_eq!(result.additionals.len(), 0);
 }
 
 #[tokio::test]
@@ -381,7 +380,7 @@ async fn test_axfr() {
     query.set_name(origin.clone());
     query.set_query_type(RecordType::AXFR);
 
-    let mut question: Message = Message::new();
+    let mut question: Message = Message::query();
     question.add_query(query);
 
     // temp request
@@ -390,7 +389,7 @@ async fn test_axfr() {
 
     let result = svc.oneshot(question_req).await.unwrap();
 
-    let mut answers: Vec<Record> = result.answers().to_vec();
+    let mut answers: Vec<Record> = result.answers.clone();
 
     assert_eq!(answers.first().expect("no records found?"), &soa);
     assert_eq!(answers.last().expect("no records found?"), &soa);
@@ -503,7 +502,7 @@ async fn test_axfr_refused() {
     query.set_name(origin);
     query.set_query_type(RecordType::AXFR);
 
-    let mut question: Message = Message::new();
+    let mut question: Message = Message::query();
     question.add_query(query);
 
     // temp request
@@ -512,10 +511,10 @@ async fn test_axfr_refused() {
 
     let result = svc.oneshot(question_req).await.unwrap();
 
-    assert_eq!(result.response_code(), ResponseCode::Refused);
-    assert!(result.answers().is_empty());
-    assert!(result.name_servers().is_empty());
-    assert!(result.additionals().is_empty());
+    assert_eq!(result.response_code, ResponseCode::Refused);
+    assert!(result.answers.is_empty());
+    assert!(result.authorities.is_empty());
+    assert!(result.additionals.is_empty());
 }
 
 // TODO: add this test
@@ -540,7 +539,7 @@ async fn test_cname_additionals() {
         // .layer(CNameResolverLayer::new(2))
         .service(CatalogService::new(catalog));
 
-    let mut question: Message = Message::new();
+    let mut question: Message = Message::query();
 
     let mut query: Query = Query::new();
     query.set_name(Name::from_str("alias.example.com.").unwrap());
@@ -554,10 +553,10 @@ async fn test_cname_additionals() {
 
     let result = dbg!(svc.oneshot(question_req).await.unwrap());
 
-    assert_eq!(result.message_type(), MessageType::Response);
-    assert_eq!(result.response_code(), ResponseCode::NoError);
+    assert_eq!(result.message_type, MessageType::Response);
+    assert_eq!(result.response_code, ResponseCode::NoError);
 
-    let answers: &[Record] = result.answers();
+    let answers: &[Record] = &result.answers;
     assert_eq!(answers.len(), 1);
     assert_eq!(answers.first().unwrap().record_type(), RecordType::CNAME);
     assert_eq!(
@@ -565,7 +564,7 @@ async fn test_cname_additionals() {
         &RData::CNAME(CNAME(Name::from_str("www.example.com.").unwrap()))
     );
 
-    let additionals: &[Record] = result.additionals();
+    let additionals: &[Record] = &result.additionals;
     assert!(!additionals.is_empty());
     assert_eq!(additionals.first().unwrap().record_type(), RecordType::A);
     assert_eq!(
@@ -588,7 +587,7 @@ async fn test_multiple_cname_additionals() {
         .layer(ValidateLookupLayer::new())
         .service(CatalogService::new(catalog));
 
-    let mut question: Message = Message::new();
+    let mut question: Message = Message::query();
 
     let mut query: Query = Query::new();
     query.set_name(Name::from_str("alias2.example.com.").unwrap());
@@ -602,10 +601,10 @@ async fn test_multiple_cname_additionals() {
 
     let result = svc.oneshot(question_req).await.unwrap();
 
-    assert_eq!(result.message_type(), MessageType::Response);
-    assert_eq!(result.response_code(), ResponseCode::NoError);
+    assert_eq!(result.message_type, MessageType::Response);
+    assert_eq!(result.response_code, ResponseCode::NoError);
 
-    let answers: &[Record] = result.answers();
+    let answers: &[Record] = &result.answers;
     assert_eq!(answers.len(), 1);
     assert_eq!(answers.first().unwrap().record_type(), RecordType::CNAME);
     assert_eq!(
@@ -614,7 +613,7 @@ async fn test_multiple_cname_additionals() {
     );
 
     // we should have the intermediate record
-    let additionals: &[Record] = result.additionals();
+    let additionals: &[Record] = &result.additionals;
     assert!(!additionals.is_empty());
     assert_eq!(
         additionals.first().unwrap().record_type(),
@@ -626,7 +625,7 @@ async fn test_multiple_cname_additionals() {
     );
 
     // final record should be the actual
-    let additionals: &[Record] = result.additionals();
+    let additionals: &[Record] = &result.additionals;
     assert!(!additionals.is_empty());
     assert_eq!(additionals.last().unwrap().record_type(), RecordType::A);
     assert_eq!(

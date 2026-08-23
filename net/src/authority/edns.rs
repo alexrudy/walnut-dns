@@ -1,4 +1,4 @@
-use hickory_proto::op::Edns;
+use walnut_proto::op::Edns;
 
 use super::lookup::LookupOptions;
 

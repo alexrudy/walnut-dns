@@ -7,7 +7,7 @@
 
 use std::{collections::BTreeMap, ops::RangeInclusive};
 
-use hickory_proto::rr::RecordType;
+use walnut_proto::rr::RecordType;
 
 use walnut_proto::rr::TimeToLive;
 

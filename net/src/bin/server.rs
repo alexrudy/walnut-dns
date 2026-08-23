@@ -5,12 +5,13 @@ use clap::arg;
 use tracing_subscriber::EnvFilter;
 use walnut_dns::{
     Catalog, SqliteStore,
-    messages::{Message, server::Incoming},
+    messages::server::Incoming,
     server::{
         CatalogService, MessageMetadataLayer, ValidateLookupLayer,
         udp::{DnsOverUdp, UdpListener},
     },
 };
+use walnut_proto::op::Message;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), ()> {

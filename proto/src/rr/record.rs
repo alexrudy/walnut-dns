@@ -35,7 +35,7 @@ const MDNS_ENABLE_CACHE_FLUSH: u16 = 1 << 15;
 #[derive(Debug, Clone, Eq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Record<R: RecordData = RData> {
-    #[serde(skip, default)]
+    #[cfg_attr(feature = "serde", serde(skip, default))]
     id: RecordID,
     pub name_labels: Name,
     pub dns_class: DNSClass,
@@ -134,6 +134,7 @@ impl<R: RecordData> Record<R> {
             ttl,
             rdata,
             mdns_cache_flush: false,
+            #[cfg(feature = "__dnssec")]
             proof: Proof::default(),
             expires: None,
             glue: false,
@@ -164,6 +165,7 @@ impl Record {
             ttl,
             rdata: RData::Update0(rr_type),
             mdns_cache_flush: false,
+            #[cfg(feature = "__dnssec")]
             proof: Proof::default(),
             expires: None,
             glue: false,
@@ -188,6 +190,7 @@ impl<R: RecordData> Record<R> {
             ttl: self.ttl,
             rdata: self.rdata.into_rdata(),
             mdns_cache_flush: self.mdns_cache_flush,
+            #[cfg(feature = "__dnssec")]
             proof: self.proof,
             expires: self.expires,
             glue: self.glue,
@@ -400,6 +403,7 @@ impl<R: RecordData> Record<R> {
             dns_class: self.dns_class,
             ttl: self.ttl,
             mdns_cache_flush: self.mdns_cache_flush,
+            #[cfg(feature = "__dnssec")]
             proof: self.proof,
             expires: self.expires,
             glue: self.glue,
@@ -459,7 +463,6 @@ impl<R: RecordData> Record<R> {
             dns_class,
             ttl,
             rdata,
-            #[cfg(feature = "mdns")]
             mdns_cache_flush,
             #[cfg(feature = "__dnssec")]
             proof,
@@ -473,7 +476,6 @@ impl<R: RecordData> Record<R> {
             dns_class,
             ttl,
             rdata: f(rdata)?,
-            #[cfg(feature = "mdns")]
             mdns_cache_flush,
             #[cfg(feature = "__dnssec")]
             proof,
@@ -492,7 +494,6 @@ impl Record {
             dns_class: DNSClass::IN,
             ttl: TimeToLive::ZERO,
             rdata: RData::Update0(RecordType::NULL),
-            #[cfg(feature = "mdns")]
             mdns_cache_flush: false,
             #[cfg(feature = "__dnssec")]
             proof: Proof::default(),
@@ -579,6 +580,7 @@ impl<R: RecordData> RecordRef<'_, R> {
             ttl: self.record.ttl,
             rdata: self.rdata.clone(),
             mdns_cache_flush: self.record.mdns_cache_flush,
+            #[cfg(feature = "__dnssec")]
             proof: self.record.proof,
             glue: self.record.glue,
             expires: self.record.expires,
@@ -624,6 +626,7 @@ impl<R: RecordData> RecordRef<'_, R> {
 
     /// The Proof of DNSSEC validation for this record, this is only valid if some form of validation has occurred
     #[inline]
+    #[cfg(feature = "__dnssec")]
     pub fn proof(&self) -> Proof {
         self.record.proof
     }
@@ -675,6 +678,7 @@ impl FromRow for Record<RData> {
             ttl: row.get("ttl")?,
             rdata: RData::from_row(row)?,
             mdns_cache_flush: row.get("mdns_cache_flush")?,
+            #[cfg(feature = "__dnssec")]
             proof: Proof::default(),
             expires: row.get("expires")?,
             glue: row.get("glue")?,
@@ -750,6 +754,7 @@ impl<'r> BinDecodable<'r> for Record<RData> {
             ttl,
             rdata,
             mdns_cache_flush,
+            #[cfg(feature = "__dnssec")]
             proof: Proof::default(),
             expires: None,
             glue: false,

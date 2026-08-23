@@ -3,12 +3,12 @@ use std::time::Duration;
 
 use chrono::Utc;
 use clap::arg;
-use hickory_proto::{op::Query, rr::RecordType};
 use tracing::trace;
 use tracing_subscriber::EnvFilter;
 use walnut_dns::client::ClientConfiguration;
 use walnut_dns::database::cache::SQLiteCache;
 use walnut_dns::messages::DnsRequestOptions;
+use walnut_proto::{op::Query, rr::RecordType};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), ()> {
@@ -84,7 +84,7 @@ async fn lookup(
     trace!("client send request");
     let response = client.lookup(query, DnsRequestOptions::default()).await?;
 
-    response.queries().iter().for_each(|query| {
+    response.queries.iter().for_each(|query| {
         println!(
             "Query: {} {} {}",
             query.name(),
@@ -93,10 +93,10 @@ async fn lookup(
         );
     });
 
-    if response.answer_count() > 0 {
+    if !response.answers.is_empty() {
         println!("Answers:");
     }
-    response.answers().iter().for_each(|answer| {
+    response.answers.iter().for_each(|answer| {
         println!(
             "{} {} {}",
             answer.name(),

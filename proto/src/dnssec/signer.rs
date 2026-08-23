@@ -7,7 +7,7 @@
 
 //! signer is a structure for performing many of the signing processes of the DNSSEC specification
 use core::time::Duration;
-use std::{boxed::Box, vec::Vec};
+use std::{sync::Arc, vec::Vec};
 
 use super::{DnsSecResult, SigningKey};
 use crate::{
@@ -219,9 +219,10 @@ use crate::{
 ///    Note that the response received by the resolver should include all
 ///    NSEC RRs needed to authenticate the response (see Section 3.1.3).
 /// ```
+#[derive(Clone)]
 pub struct DnssecSigner {
     dnskey: DNSKEY,
-    key: Box<dyn SigningKey>,
+    key: Arc<dyn SigningKey>,
     signer_name: Name,
     sig_duration: Duration,
 }
@@ -237,7 +238,7 @@ impl DnssecSigner {
     /// * `sig_duration` - time period for which signatures created by this key are valid
     pub fn new(
         dnskey: DNSKEY,
-        key: Box<dyn SigningKey>,
+        key: Arc<dyn SigningKey>,
         signer_name: Name,
         sig_duration: Duration,
     ) -> Self {
@@ -404,7 +405,7 @@ mod tests {
         let dnskey = DNSKEY::from_key(&pub_key);
         let signer = DnssecSigner::new(
             dnskey,
-            Box::new(key),
+            Arc::new(key),
             Name::root(),
             Duration::from_secs(300),
         );
@@ -453,7 +454,7 @@ mod tests {
         let dnskey = DNSKEY::from_key(&pub_key);
         let signer = DnssecSigner::new(
             dnskey,
-            Box::new(key),
+            Arc::new(key),
             Name::root(),
             Duration::from_secs(300),
         );
@@ -471,7 +472,7 @@ mod tests {
         let dnskey = DNSKEY::from_key(&pub_key);
         let signer = DnssecSigner::new(
             dnskey,
-            Box::new(key),
+            Arc::new(key),
             Name::root(),
             Duration::from_secs(300),
         );

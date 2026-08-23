@@ -13,9 +13,9 @@ use tracing::trace;
 
 use crate::codec::{CodecError, DnsCodec, DnsCodecRecovery, DnsRequest};
 use crate::error::HickoryError;
-use crate::messages::Message;
 use crate::messages::Protocol as DnsProtocol;
 use crate::messages::server::Incoming;
+use walnut_proto::op::Message;
 
 use super::connection::DnsConnection;
 
@@ -54,11 +54,11 @@ where
 #[pin_project::pin_project]
 pub struct DnsFramedUdp {
     #[pin]
-    framed: UdpFramed<DnsCodecRecovery<Message, Message>, UdpSocket>,
+    framed: UdpFramed<DnsCodecRecovery<Message, Incoming<Message>>, UdpSocket>,
 }
 
 impl DnsFramedUdp {
-    pub fn new(framed: UdpFramed<DnsCodecRecovery<Message, Message>, UdpSocket>) -> Self {
+    pub fn new(framed: UdpFramed<DnsCodecRecovery<Message, Incoming<Message>>, UdpSocket>) -> Self {
         Self { framed }
     }
 }

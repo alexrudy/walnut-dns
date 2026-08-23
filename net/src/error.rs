@@ -1,14 +1,14 @@
 use std::io;
 
-use hickory_proto::ProtoError;
 use tokio::task::JoinError;
+use walnut_proto::ProtocolError;
 
 use crate::{authority::LookupError, codec::CodecError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum HickoryError {
     #[error("dns protocol error: {0}")]
-    Protocol(#[from] ProtoError),
+    Protocol(#[from] ProtocolError),
 
     #[error("udp message does not appear to be dns")]
     NotDnsMessage,

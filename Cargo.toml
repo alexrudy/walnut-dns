@@ -29,6 +29,7 @@ chateau = "0.4"
 chrono = "0.4"
 clap = "4"
 data-encoding = { version = "2.11.1", default-features = false }
+enum-as-inner = "*"
 future-eyeballs = "0.1"
 futures = "0.3"
 hickory-proto = { version = "0.25", features = ["mdns", "dnssec-ring", "text-parsing"] }

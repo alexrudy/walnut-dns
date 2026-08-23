@@ -1,8 +1,8 @@
-use hickory_proto::{
-    op::ResponseCode,
-    rr::{DNSClass, Name, RData, RecordType},
-};
 use tracing::warn;
+use walnut_proto::{
+    op::ResponseCode,
+    rr::{DNSClass, RData, RecordType},
+};
 
 use crate::{Lookup, authority::lookup::LookupOptions};
 use walnut_proto::rr::{Record, TimeToLive};
@@ -130,7 +130,7 @@ where
         //           if (zone_rrset<rrset.name, rrset.type> != rrset)
         //                return (NXRRSET)
         for require in pre_requisites {
-            let required_name = Name::from(require.name());
+            let required_name = require.name().clone();
 
             if require.ttl() != TimeToLive::ZERO {
                 warn!("ttl must be 0 for: {}", require);

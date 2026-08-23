@@ -16,18 +16,19 @@ use std::task::Context;
 use std::task::Poll;
 
 use futures::future::BoxFuture;
-use hickory_proto::op::Query;
-use hickory_proto::op::ResponseCode;
-use hickory_proto::rr::RData;
-use hickory_proto::rr::rdata::PTR;
-use hickory_proto::rr::{Name, RecordType};
 use tracing::warn;
+use walnut_proto::op::Message;
+use walnut_proto::op::Query;
+use walnut_proto::op::ResponseCode;
+use walnut_proto::rr::RData;
+use walnut_proto::rr::rdata::PTR;
+use walnut_proto::rr::{Name, RecordType};
 
 use super::QueryLookup;
 use crate::cache::CacheTimestamp;
 use crate::{
     client::DnsClientError,
-    messages::{DnsRequest, DnsResponse, Message},
+    messages::{DnsRequest, DnsResponse},
 };
 use walnut_proto::rr::QueryID;
 use walnut_proto::rr::Record;
@@ -474,14 +475,14 @@ where
     /// A future that resolves to either a hosts file response or forwarded response.
     fn call(&mut self, req: DnsRequest) -> Self::Future {
         // Don't clone the resolver - use a reference to avoid losing data
-        let query = req.query().expect("no query in DnsRequest").clone();
+        let query = req.queries.first().expect("no query in DnsRequest").clone();
 
         // Check hosts file first using the current resolver
         if let Some(lookup) = self.resolver.resolve(query) {
             // Hosts file hit - return direct response immediately
             tracing::trace!("Hosts file hit for {}", lookup.name());
             let mut msg: Message = lookup.into();
-            msg.set_id(req.id());
+            msg.metadata.id = req.metadata.id;
             let response =
                 DnsResponse::from_message(msg).expect("protocol error from hosts file response");
 
@@ -506,14 +507,14 @@ mod tests {
     use crate::messages::DnsRequestOptions;
 
     use super::*;
-    use hickory_proto::{
+    use std::str::FromStr;
+    use walnut_proto::{
         op::ResponseCode,
         rr::{Name, RecordType},
     };
-    use std::str::FromStr;
 
     fn create_test_hosts_with_data() -> HostsResolver {
-        use hickory_proto::rr::{
+        use walnut_proto::rr::{
             RData,
             rdata::{A, AAAA},
         };
@@ -636,8 +637,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_hosts_service_localhost_a_resolution() {
-        use crate::messages::Message;
         use tower::Service;
+        use walnut_proto::op::Message;
 
         let resolver = create_test_hosts_with_data();
 
@@ -649,7 +650,7 @@ mod tests {
         let mut service = HostsService::new(mock_service, resolver);
 
         // Test localhost A record from hosts file (we know this exists in test data)
-        let mut msg = Message::new();
+        let mut msg = Message::query();
         msg.add_query(Query::query(
             Name::from_str("localhost.").unwrap(),
             RecordType::A,
@@ -657,14 +658,14 @@ mod tests {
         let request = DnsRequest::new(msg, DnsRequestOptions::default());
 
         let response = service.call(request).await.unwrap();
-        assert_eq!(response.response_code(), ResponseCode::NoError);
-        assert_eq!(response.answer_count(), 1);
+        assert_eq!(response.response_code, ResponseCode::NoError);
+        assert_eq!(response.answers.len(), 1);
     }
 
     #[tokio::test]
     async fn test_hosts_service_test_local_resolution() {
-        use crate::messages::Message;
         use tower::Service;
+        use walnut_proto::op::Message;
 
         let resolver = create_test_hosts_with_data();
 
@@ -685,7 +686,7 @@ mod tests {
         let mut service = HostsService::new(mock_service, resolver);
 
         // Test test.local A record from hosts file
-        let mut msg = Message::new();
+        let mut msg = Message::query();
         msg.add_query(Query::query(
             Name::from_str("test.local.").unwrap(),
             RecordType::A,
@@ -693,20 +694,20 @@ mod tests {
         let request = DnsRequest::new(msg, DnsRequestOptions::default());
 
         let response = service.call(request).await.unwrap();
-        assert_eq!(response.response_code(), ResponseCode::NoError);
-        assert_eq!(response.answer_count(), 1);
+        assert_eq!(response.response_code, ResponseCode::NoError);
+        assert_eq!(response.answers.len(), 1);
     }
 
     #[tokio::test]
     async fn test_hosts_service_forwarding_behavior() {
-        use crate::messages::Message;
         use tower::Service;
+        use walnut_proto::op::Message;
 
         // Create a mock service that returns NXDOMAIN for forwarded queries
         let mock_service = tower::service_fn(|req: DnsRequest| async move {
-            let mut response_msg = Message::new();
-            response_msg.set_id(req.id());
-            response_msg.set_response_code(ResponseCode::NXDomain);
+            let mut response_msg = Message::query();
+            response_msg.metadata.id = req.metadata.id;
+            response_msg.metadata.response_code = ResponseCode::NXDomain;
             Ok(DnsResponse::from_message(response_msg).unwrap())
         });
 
@@ -722,12 +723,12 @@ mod tests {
         ];
 
         for (hostname, record_type) in forwarded_queries {
-            let mut msg = Message::new();
+            let mut msg = Message::query();
             msg.add_query(Query::query(Name::from_str(hostname).unwrap(), record_type));
             let request = DnsRequest::new(msg, DnsRequestOptions::default());
 
             let response = service.call(request).await.unwrap();
-            assert_eq!(response.response_code(), ResponseCode::NXDomain);
+            assert_eq!(response.response_code, ResponseCode::NXDomain);
         }
     }
 

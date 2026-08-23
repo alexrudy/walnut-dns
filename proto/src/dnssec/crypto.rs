@@ -1,4 +1,4 @@
-use std::{borrow::Cow, boxed::Box, sync::Arc, vec::Vec};
+use std::{borrow::Cow, sync::Arc, vec::Vec};
 
 use rustls_pki_types::{PrivateKeyDer, PrivatePkcs1KeyDer, PrivatePkcs8KeyDer};
 
@@ -18,17 +18,17 @@ use crate::{error::ProtocolError, serialize::binary::DecodeError};
 pub fn signing_key_from_der(
     key_der: &PrivateKeyDer<'_>,
     algorithm: Algorithm,
-) -> DnsSecResult<Box<dyn SigningKey>> {
+) -> DnsSecResult<Arc<dyn SigningKey>> {
     #[allow(deprecated)]
     match algorithm {
         Algorithm::Unknown(v) => Err(format!("unknown algorithm: {v}").into()),
         Algorithm::RSASHA256 | Algorithm::RSASHA512 => {
-            Ok(Box::new(RsaSigningKey::from_key_der(key_der, algorithm)?))
+            Ok(Arc::new(RsaSigningKey::from_key_der(key_der, algorithm)?))
         }
         Algorithm::ECDSAP256SHA256 | Algorithm::ECDSAP384SHA384 => {
-            Ok(Box::new(EcdsaSigningKey::from_key_der(key_der, algorithm)?))
+            Ok(Arc::new(EcdsaSigningKey::from_key_der(key_der, algorithm)?))
         }
-        Algorithm::ED25519 => Ok(Box::new(Ed25519SigningKey::from_key_der(key_der)?)),
+        Algorithm::ED25519 => Ok(Arc::new(Ed25519SigningKey::from_key_der(key_der)?)),
         e => Err(format!("unsupported SigningKey algorithm for ring: {e:?}").into()),
     }
 }

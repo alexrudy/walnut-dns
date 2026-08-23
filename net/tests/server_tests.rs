@@ -13,11 +13,11 @@ use chateau::server::Server;
 use chateau::server::conn::tls::TlsAcceptor;
 #[cfg(feature = "tls")]
 use chateau::services::SharedService;
-use hickory_proto::op::{MessageType, OpCode, Query, ResponseCode};
-use hickory_proto::rr::rdata::{A, OPT};
-use hickory_proto::rr::{DNSClass, Name, RData, RecordType};
 #[cfg(feature = "tls")]
-use hickory_proto::rustls::default_provider;
+use walnut_dns::tls::default_provider;
+use walnut_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
+use walnut_proto::rr::rdata::{A, OPT};
+use walnut_proto::rr::{DNSClass, Name, RData, RecordType};
 
 #[cfg(feature = "tls")]
 use rustls::{
@@ -39,7 +39,6 @@ use walnut_dns::client::nameserver::{ConnectionConfig, NameserverConfig};
 #[cfg(feature = "tls")]
 use walnut_dns::client::nameserver::{NameServerConnection, Nameserver};
 use walnut_dns::client::{Client, ClientConfiguration};
-use walnut_dns::messages::Message;
 use walnut_dns::messages::server::Incoming;
 use walnut_dns::server::stream::DnsOverStream;
 use walnut_dns::server::udp::{DnsOverUdp, UdpListener};
@@ -129,17 +128,17 @@ async fn test_server_unknown_type() {
         .await
         .expect("query failed for unknown");
 
-    assert_eq!(client_result.response_code(), ResponseCode::NoError);
+    assert_eq!(client_result.response_code, ResponseCode::NoError);
     assert_eq!(
-        client_result.queries().first().unwrap().query_type(),
+        client_result.queries.first().unwrap().query_type(),
         RecordType::Unknown(65535)
     );
-    assert!(client_result.answers().is_empty());
-    assert!(!client_result.name_servers().is_empty());
+    assert!(client_result.answers.is_empty());
+    assert!(!client_result.authorities.is_empty());
     // SOA should be the first record in the response
     assert_eq!(
         client_result
-            .name_servers()
+            .authorities
             .first()
             .expect("no SOA present")
             .record_type(),
@@ -170,20 +169,18 @@ async fn test_server_form_error_on_multiple_queries() {
         Name::from_str("www.example.com.").unwrap(),
         RecordType::AAAA,
     );
-    let mut message: Message = Message::new();
-    message
-        .add_query(query_a)
-        .add_query(query_aaaa)
-        .set_message_type(MessageType::Query)
-        .set_op_code(OpCode::Query)
-        .set_recursion_desired(true);
+    let mut message: Message = Message::query();
+    message.metadata.op_code = OpCode::Query;
+    message.metadata.message_type = MessageType::Query;
+    message.metadata.recursion_desired = true;
+    message.add_query(query_a).add_query(query_aaaa);
 
     let client_result = client
         .send(message, Default::default())
         .await
         .expect("query failed");
 
-    assert_eq!(client_result.response_code(), ResponseCode::FormErr);
+    assert_eq!(client_result.response_code, ResponseCode::FormErr);
 
     tx.send(()).unwrap();
     server.await.unwrap();
@@ -211,11 +208,10 @@ async fn test_server_no_response_on_response() {
         .service(CatalogService::new(catalog));
 
     let query_a = Query::query(Name::from_str("www.example.com.").unwrap(), RecordType::A);
-    let mut message = Message::new();
-    message
-        .set_message_type(MessageType::Response)
-        .set_op_code(OpCode::Query)
-        .add_query(query_a);
+    let mut message = Message::query();
+    message.metadata.message_type = MessageType::Response;
+    message.metadata.op_code = OpCode::Query;
+    message.add_query(query_a);
 
     let result = svc.oneshot(message).await;
 
@@ -436,14 +432,14 @@ async fn client_thread_www(future: impl Future<Output = Client>) {
     .expect("error querying");
 
     assert_eq!(
-        response.response_code(),
+        response.response_code,
         ResponseCode::NoError,
         "got an error: {:?}",
-        response.response_code()
+        response.response_code
     );
-    assert!(response.header().authoritative());
+    assert!(response.authoritative);
 
-    let record = &response.answers()[0];
+    let record = &response.answers[0];
     assert_eq!(record.name(), &name);
     assert_eq!(record.record_type(), RecordType::A);
     assert_eq!(record.dns_class(), DNSClass::IN);
@@ -599,7 +595,7 @@ async fn edns_multiple_opt_rr() {
     let (tx, shutdown) = oneshot::channel();
     let server = tokio::spawn(server_thread_udp(udp_socket, shutdown));
 
-    let mut message = Message::new();
+    let mut message = Message::query();
     message.add_query(Query::query(Name::root(), RecordType::NS));
     message.add_additional(Record::from_rdata(
         Name::root(),
@@ -630,8 +626,8 @@ async fn edns_multiple_opt_rr() {
     .unwrap();
     let response = Message::from_vec(&response_buf).unwrap();
 
-    assert_eq!(message.header().id(), response.header().id());
-    assert_eq!(response.response_code(), ResponseCode::FormErr);
+    assert_eq!(message.id, response.id);
+    assert_eq!(response.response_code, ResponseCode::FormErr);
 
     tx.send(()).unwrap();
     server.await.unwrap();

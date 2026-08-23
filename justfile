@@ -3,8 +3,8 @@
 nightly := "nightly-2025-06-20"
 msrv := "1.87"
 rust := env("RUSTUP_TOOLCHAIN", "stable")
-feature-set := "tls-ring,h2-ring,cli,pool"
-extended-features := "tls,tls-ring,h2-ring,cli,pool"
+feature-set := "dnssec-ring,tls-ring,h2-ring,cli,pool"
+extended-features := "dnssec-ring,tls,tls-ring,h2-ring,cli,pool"
 
 import 'justfile.example'
 
@@ -102,7 +102,7 @@ test-build:
 
 [private]
 test-run:
-    cargo +{{rust}} nextest run --features {{extended-features}}
+    cargo +{{rust}} nextest run --features {{extended-features}} --no-fail-fast
     cargo +{{rust}} test --features {{extended-features}} --doc
 
 # Run coverage tests

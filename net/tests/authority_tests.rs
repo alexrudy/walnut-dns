@@ -1,9 +1,11 @@
 use std::str::FromStr;
 
-use hickory_proto::op::{LowerQuery, MessageType, OpCode, Query, ResponseCode};
-use hickory_proto::rr::Name;
-use hickory_proto::rr::rdata::{A, AAAA, NS, TXT};
-use hickory_proto::rr::{DNSClass, RData, RecordType};
+use chrono::Utc;
+use walnut_dns::messages::server::Incoming;
+use walnut_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
+use walnut_proto::rr::Name;
+use walnut_proto::rr::rdata::{A, AAAA, NS, TXT};
+use walnut_proto::rr::{DNSClass, RData, RecordType};
 
 use tracing::Instrument as _;
 use walnut_dns::Lookup as _;
@@ -30,10 +32,9 @@ async fn test_search() {
 
     let mut query: Query = Query::new();
     query.set_name(origin);
-    let query = LowerQuery::from(query);
 
     let result = example
-        .search(query.original(), LookupOptions::default())
+        .search(&query, LookupOptions::default())
         .await
         .unwrap();
     if !result.is_empty() {
@@ -55,10 +56,9 @@ async fn test_search_www() {
 
     let mut query: Query = Query::new();
     query.set_name(www_name);
-    let query = LowerQuery::from(query);
 
     let result = example
-        .search(query.original(), LookupOptions::default())
+        .search(&query, LookupOptions::default())
         .await
         .unwrap();
     if !result.is_empty() {
@@ -187,25 +187,23 @@ async fn test_authority() {
 
 #[tokio::test]
 async fn test_authorize() {
-    use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
-    use walnut_dns::messages::Message;
+    use walnut_proto::serialize::binary::{BinDecodable, BinEncodable};
 
     subscribe();
 
     let authority = DnsSecZone::new(create_example());
 
-    let mut message = Message::new();
-    message
-        .set_id(10)
-        .set_message_type(MessageType::Query)
-        .set_op_code(OpCode::Update);
+    let mut message = Message::query();
+    message.metadata.id = 10;
+    message.metadata.message_type = MessageType::Query;
+    message.metadata.op_code = OpCode::Update;
     message.add_query(Query::default());
 
     let bytes = message.to_bytes().unwrap();
-    let message = Message::from_bytes(&bytes).unwrap();
+    let message = Incoming::<Message>::from_bytes(&bytes).unwrap();
 
     assert_eq!(
-        authority.authorize(&message).await,
+        authority.authorize(&message, Utc::now()).await.0,
         Err(ResponseCode::Refused)
     );
 
@@ -872,8 +870,8 @@ async fn test_update() {
 #[tokio::test]
 #[allow(clippy::uninlined_format_args)]
 async fn test_zone_signing() {
-    use hickory_proto::{dnssec::rdata::RRSIG, rr::RecordData};
     use tracing::info;
+    use walnut_proto::{dnssec::rdata::RRSIG, rr::RecordData};
 
     subscribe();
 
@@ -938,7 +936,7 @@ async fn test_zone_signing() {
                         _ => None,
                     }
                 })
-                .any(|rrsig| rrsig.type_covered() == record.record_type()),
+                .any(|rrsig| rrsig.input().type_covered == record.record_type()),
             "record type not covered: {:?}",
             record
         );
@@ -1125,13 +1123,10 @@ async fn test_axfr() {
     let mut authority = create_example();
     authority.set_allow_axfr(true);
 
-    let query = LowerQuery::from(Query::query(
-        Name::from_str("example.com.").unwrap(),
-        RecordType::AXFR,
-    ));
+    let query = Query::query(Name::from_str("example.com.").unwrap(), RecordType::AXFR);
 
     let result = authority
-        .search(query.original(), LookupOptions::default())
+        .search(&query, LookupOptions::default())
         .await
         .unwrap();
 
@@ -1145,14 +1140,9 @@ async fn test_refused_axfr() {
     let mut authority = create_example();
     authority.set_allow_axfr(false);
 
-    let query = LowerQuery::from(Query::query(
-        Name::from_str("example.com.").unwrap(),
-        RecordType::AXFR,
-    ));
+    let query = Query::query(Name::from_str("example.com.").unwrap(), RecordType::AXFR);
 
-    let result = authority
-        .search(query.original(), LookupOptions::default())
-        .await;
+    let result = authority.search(&query, LookupOptions::default()).await;
 
     // just update this if the count goes up in the authority
     assert!(result.unwrap_err().is_refused());

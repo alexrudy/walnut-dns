@@ -47,7 +47,7 @@ pub use zone_lex::Token;
 ///
 /// # Example
 /// ```
-/// use hickory_proto::serialize::text::parse_ttl;
+/// use walnut_proto::serialize::text::parse_ttl;
 ///
 /// assert_eq!(parse_ttl("0").unwrap(),  0);
 /// assert!(parse_ttl("s").is_err());

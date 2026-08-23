@@ -1,6 +1,6 @@
-use hickory_proto::op::{Edns, Header, ResponseCode};
+use walnut_proto::op::{Edns, Metadata, ResponseCode};
 
-use crate::messages::Message;
+use walnut_proto::op::Message;
 
 /// Middleware which handles Edns validation and response.
 #[derive(Debug, Clone)]
@@ -14,11 +14,10 @@ impl<S> EdnsMiddleware<S> {
     }
 
     fn handle_edns(&self, request: &Message) -> Result<Option<Edns>, Message> {
-        if let Some(req_edns) = request.extensions().as_ref() {
-            let mut response = Message::new();
-            response.add_queries(request.queries().iter().cloned());
-            let mut response_header = Header::response_from_request(request.header());
-
+        if let Some(req_edns) = request.edns.as_ref() {
+            let mut response = Message::query();
+            response.add_queries(request.queries.iter().cloned());
+            let mut response_header = Metadata::response_from_request(&request.metadata);
             let mut resp_edns: Edns = Edns::new();
 
             // check our version against the request
@@ -34,10 +33,10 @@ impl<S> EdnsMiddleware<S> {
                     our_version,
                     req_edns.version()
                 );
-                response_header.set_response_code(ResponseCode::BADVERS);
+                response_header.response_code = ResponseCode::BADVERS;
                 resp_edns.set_rcode_high(ResponseCode::BADVERS.high());
                 response.set_edns(resp_edns);
-                response.set_header(response_header);
+                response.metadata = response_header;
 
                 return Err(response);
             }
@@ -94,10 +93,10 @@ mod future {
     use std::pin::Pin;
     use std::task::{Poll, ready};
 
-    use hickory_proto::op::Edns;
     use pin_project::pin_project;
+    use walnut_proto::op::Edns;
 
-    use crate::messages::Message;
+    use walnut_proto::op::Message;
 
     #[pin_project(project = StateProj)]
     enum State<F> {

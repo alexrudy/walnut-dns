@@ -4,10 +4,11 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll, ready};
 
-use hickory_proto::ProtoError;
 use pin_project::pin_project;
+use walnut_proto::ProtocolError;
+use walnut_proto::op::Message;
 
-use crate::messages::{DnsRequest, DnsResponse, Message};
+use crate::messages::{DnsRequest, DnsResponse};
 
 #[derive(Debug, Clone, Default)]
 pub struct DnsRequestLayer<M> {
@@ -52,7 +53,7 @@ impl<S, M> DnsRequestMiddleware<S, M> {
 impl<S, M> tower::Service<DnsRequest> for DnsRequestMiddleware<S, M>
 where
     S: tower::Service<M, Response = M>,
-    S::Error: From<ProtoError>,
+    S::Error: From<ProtocolError>,
     M: Into<Message> + From<Message> + Send + 'static,
 {
     type Response = DnsResponse;
@@ -85,7 +86,7 @@ pub struct ResponseAdapter<F, M, E> {
 impl<F, M, E> Future for ResponseAdapter<F, M, E>
 where
     F: Future<Output = Result<M, E>>,
-    E: From<ProtoError>,
+    E: From<ProtocolError>,
     M: Into<Message> + Send + 'static,
 {
     type Output = Result<DnsResponse, E>;

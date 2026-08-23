@@ -1,7 +1,7 @@
 use std::{io, sync::Arc};
 
-use hickory_proto::{ProtoError, ProtoErrorKind, op::ResponseCode, rr::rdata::SOA};
 use thiserror::Error;
+use walnut_proto::{ProtocolError, op::ResponseCode, rr::rdata::SOA};
 
 use walnut_proto::rr::Record;
 
@@ -17,7 +17,7 @@ pub enum LookupError {
     ResponseCode(ResponseCode),
     /// Proto error
     #[error("Proto error: {0}")]
-    ProtoError(#[from] ProtoError),
+    ProtocolError(#[from] ProtocolError),
     /// An underlying IO error occurred
     #[error("io error: {0}")]
     Io(io::Error),
@@ -47,21 +47,14 @@ impl LookupError {
 
     /// Return the SOA record, if one exists
     pub fn into_soa(self) -> Option<Record<SOA>> {
-        // Only possible in recursion or resolution, which are not yet supported.
+        //TODO: Only possible in recursion or resolution, which are not yet supported.
         None
     }
 
     /// Return authority records
     pub fn authorities(&self) -> Option<Arc<[Record]>> {
-        match self {
-            Self::ProtoError(e) => match e.kind() {
-                ProtoErrorKind::NoRecordsFound { authorities, .. } => authorities
-                    .clone()
-                    .map(|rrset| rrset.iter().map(|rr| Record::from(rr.clone())).collect()),
-                _ => None,
-            },
-            _ => None,
-        }
+        //TODO: Only possible in recursion or resolution, which are not yet supported.
+        None
     }
 }
 

@@ -1,8 +1,8 @@
-use hickory_proto::{
-    op::ResponseCode,
-    rr::{DNSClass, Name, RData, RecordType, RrKey},
-};
 use tracing::{error, info};
+use walnut_proto::{
+    op::ResponseCode,
+    rr::{DNSClass, RData, RecordType, RrKey},
+};
 
 use crate::{
     Lookup,
@@ -123,7 +123,7 @@ where
         //                zone_rr<rr.name, rr.type, rr.data> = Nil
         //      return (NOERROR)
         for rr in records {
-            let rr_name = Name::from(rr.name());
+            let rr_name = rr.name().clone();
             let rr_key = RrKey::new(rr_name.clone(), rr.record_type());
 
             match rr.dns_class() {

@@ -1,8 +1,8 @@
 #![cfg(feature = "__dnssec")]
 
-use hickory_proto::dnssec::rdata::{DNSKEY, DS};
-use hickory_proto::dnssec::{Algorithm, DigestType, PublicKey, PublicKeyBuf};
-use hickory_proto::rr::Name;
+use walnut_proto::dnssec::rdata::{DNSKEY, DS};
+use walnut_proto::dnssec::{Algorithm, DigestType, PublicKey, PublicKeyBuf};
+use walnut_proto::rr::Name;
 
 #[test]
 #[allow(deprecated)]

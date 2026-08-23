@@ -33,7 +33,7 @@
 //! ```
 
 use chrono::{DateTime, Utc};
-use hickory_proto::op::Query;
+use walnut_proto::op::Query;
 
 use crate::database::Result;
 

@@ -6,20 +6,20 @@ use std::{
 };
 
 use futures::future::BoxFuture;
-use hickory_proto::{
-    op::{Query, ResponseCode},
+use once_cell::sync::Lazy;
+use std::pin::Pin;
+use walnut_proto::{
+    op::{Message, Query, ResponseCode},
     rr::{
         Name, RData, RecordType,
         domain::usage::{self, ResolverUsage, ZoneUsage},
         rdata::{A, AAAA, PTR},
     },
 };
-use once_cell::sync::Lazy;
-use std::pin::Pin;
 
 use super::QueryLookup;
+use crate::client::DnsClientError;
 use crate::messages::{DnsRequest, DnsResponse};
-use crate::{client::DnsClientError, messages::Message};
 
 /// An opaque future type for reserved names service responses.
 ///
@@ -248,14 +248,14 @@ where
 
         ReservedNamesFuture {
             inner: Box::pin(async move {
-                let query = req.query().expect("no query in DnsRequest").clone();
+                let query = req.queries.first().expect("no query in DnsRequest").clone();
 
                 // Check for reserved names first
                 if let Some(lookup) = resolver.resolve(query) {
                     // Reserved name hit - return direct response
                     tracing::trace!("Reserved name hit for {}", lookup.name());
                     let mut msg: Message = lookup.into();
-                    msg.set_id(req.id());
+                    msg.metadata.id = req.metadata.id;
                     Ok(DnsResponse::from_message(msg)
                         .expect("protocol error from reserved name response"))
                 } else {
@@ -273,8 +273,8 @@ mod tests {
     use crate::messages::DnsRequestOptions;
 
     use super::*;
-    use hickory_proto::rr::{Name, RecordType};
     use std::str::FromStr;
+    use walnut_proto::rr::{Name, RecordType};
 
     #[test]
     fn test_reserved_resolver_construction() {
@@ -385,8 +385,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_reserved_names_service_localhost() {
-        use crate::messages::Message;
         use tower::Service;
+        use walnut_proto::op::Message;
 
         // Create a mock service that should never be called for localhost
         let mock_service = tower::service_fn(|_req: DnsRequest| async move {
@@ -397,7 +397,7 @@ mod tests {
         let mut service = ReservedNamesService::new(mock_service, resolver);
 
         // Create a localhost A query
-        let mut msg = Message::new();
+        let mut msg = Message::query();
         msg.add_query(Query::query(
             Name::from_str("localhost.").unwrap(),
             RecordType::A,
@@ -405,20 +405,20 @@ mod tests {
         let request = DnsRequest::new(msg, DnsRequestOptions::default());
 
         let response = service.call(request).await.unwrap();
-        assert_eq!(response.response_code(), ResponseCode::NoError);
-        assert!(response.answer_count() > 0);
+        assert_eq!(response.response_code, ResponseCode::NoError);
+        assert!(!response.answers.is_empty());
     }
 
     #[tokio::test]
     async fn test_reserved_names_service_forward() {
-        use crate::messages::Message;
         use tower::Service;
+        use walnut_proto::op::Message;
 
         // Create a mock service that returns NXDOMAIN
         let mock_service = tower::service_fn(|req: DnsRequest| async move {
-            let mut response_msg = Message::new();
-            response_msg.set_id(req.id());
-            response_msg.set_response_code(ResponseCode::NXDomain);
+            let mut response_msg = Message::query();
+            response_msg.metadata.id = req.metadata.id;
+            response_msg.metadata.response_code = ResponseCode::NXDomain;
             Ok(DnsResponse::from_message(response_msg).unwrap())
         });
 
@@ -430,7 +430,7 @@ mod tests {
         let mut service = ReservedNamesService::new(mock_service, resolver);
 
         // Create a normal domain query that should be forwarded
-        let mut msg = Message::new();
+        let mut msg = Message::query();
         msg.add_query(Query::query(
             Name::from_str("example.com.").unwrap(),
             RecordType::A,
@@ -438,13 +438,13 @@ mod tests {
         let request = DnsRequest::new(msg, DnsRequestOptions::default());
 
         let response = service.call(request).await.unwrap();
-        assert_eq!(response.response_code(), ResponseCode::NXDomain);
+        assert_eq!(response.response_code, ResponseCode::NXDomain);
     }
 
     #[tokio::test]
     async fn test_reserved_names_service_invalid_domain() {
-        use crate::messages::Message;
         use tower::Service;
+        use walnut_proto::op::Message;
 
         // Create a mock service that should never be called for invalid domains
         let mock_service = tower::service_fn(|_req: DnsRequest| async move {
@@ -455,7 +455,7 @@ mod tests {
         let mut service = ReservedNamesService::new(mock_service, resolver);
 
         // Create an invalid domain query
-        let mut msg = Message::new();
+        let mut msg = Message::query();
         msg.add_query(Query::query(
             Name::from_str("test.invalid.").unwrap(),
             RecordType::A,
@@ -463,6 +463,6 @@ mod tests {
         let request = DnsRequest::new(msg, DnsRequestOptions::default());
 
         let response = service.call(request).await.unwrap();
-        assert_eq!(response.response_code(), ResponseCode::NXDomain);
+        assert_eq!(response.response_code, ResponseCode::NXDomain);
     }
 }

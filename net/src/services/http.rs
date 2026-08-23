@@ -12,8 +12,9 @@ use chateau::info::ConnectionInfo;
 use http::HeaderMap;
 use tokio_util::codec::{Decoder, Encoder as _};
 use tracing::debug;
+use walnut_proto::op::Message;
 
-use crate::messages::{Message, Protocol, server::Incoming};
+use crate::messages::{Protocol, server::Incoming};
 use crate::{
     codec::{DnsCodec, DnsCodecRecovery},
     error::HickoryError,
@@ -83,7 +84,7 @@ impl<S> tower::Layer<S> for DnsOverHttpLayer {
 pub struct DnsOverHttp<S> {
     dns_service: S,
     version: http::Version,
-    codec: DnsCodecRecovery<Message, Message>,
+    codec: DnsCodecRecovery<Message, Incoming<Message>>,
 }
 
 impl<S> DnsOverHttp<S> {
@@ -207,7 +208,7 @@ where
     state: DoHFState<B, S>,
     version: http::Version,
     address: SocketAddr,
-    codec: DnsCodecRecovery<Message, Message>,
+    codec: DnsCodecRecovery<Message, Incoming<Message>>,
 }
 
 impl<B, S> DnsOverHttpFuture<B, S>
@@ -218,7 +219,7 @@ where
         error: HickoryError,
         version: http::Version,
         address: SocketAddr,
-        codec: DnsCodecRecovery<Message, Message>,
+        codec: DnsCodecRecovery<Message, Incoming<Message>>,
     ) -> Self {
         Self {
             state: DoHFState::Error { error: Some(error) },
@@ -233,7 +234,7 @@ where
         service: S,
         version: http::Version,
         address: SocketAddr,
-        codec: DnsCodecRecovery<Message, Message>,
+        codec: DnsCodecRecovery<Message, Incoming<Message>>,
     ) -> Self {
         Self {
             state: DoHFState::Decode { bytes, service },
@@ -248,7 +249,7 @@ where
         service: S,
         version: http::Version,
         address: SocketAddr,
-        codec: DnsCodecRecovery<Message, Message>,
+        codec: DnsCodecRecovery<Message, Incoming<Message>>,
     ) -> Self {
         Self {
             state: DoHFState::Collect {
@@ -329,7 +330,7 @@ where
                     Ok(Some(request)) => {
                         match request.with_address(*this.address, Protocol::Https) {
                             crate::codec::DnsRequest::Message(request) => {
-                                let future = service.call(request);
+                                let future = service.call(request.message);
                                 this.state.set(DoHFState::Execute { future })
                             }
                             crate::codec::DnsRequest::Failed((response, _)) => {
@@ -350,7 +351,7 @@ where
                         }
                         crate::codec::CodecError::FailedMessage(header, response_code) => {
                             let response =
-                                Message::error_msg(header.id(), header.op_code(), response_code);
+                                Message::error_msg(header.id, header.op_code, response_code);
                             return Poll::Ready(self.respond(response));
                         }
                         crate::codec::CodecError::IO(error) => {

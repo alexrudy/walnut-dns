@@ -541,10 +541,10 @@ impl<const N: usize> QueryBuilder<N> {
 mod tests {
     use super::*;
     use crate::{ZoneInfo as _, authority::Records as _};
-    use hickory_proto::rr::{RecordType, rdata};
     use std::path::Path;
     use tempfile::TempDir;
     use walnut_proto::rr::{Record, SerialNumber, TimeToLive, Zone, ZoneType};
+    use walnut_proto::rr::{RecordType, rdata};
 
     fn create_test_zone(name: &str) -> Zone {
         let name = Name::from_utf8(name).unwrap();
@@ -900,7 +900,7 @@ mod tests {
         crate::subscribe();
 
         use crate::database::record::RecordPersistence;
-        use hickory_proto::rr::{DNSClass, Name, RData, RrKey};
+        use walnut_proto::rr::{DNSClass, Name, RData, RrKey};
 
         let store = SqliteStore::new_in_memory().await.unwrap();
 
@@ -962,7 +962,7 @@ mod tests {
 
         // The `www A` RRset should have lost only 192.0.2.1.
         let www_rrset = reloaded
-            .get(&RrKey::new(Name::from(&www), RecordType::A))
+            .get(&RrKey::new(www, RecordType::A))
             .expect("www A rrset should still exist");
         let www_addrs: Vec<RData> = www_rrset.records(false).map(|r| r.data().clone()).collect();
         assert_eq!(www_addrs, vec![RData::A(rdata::A::new(192, 0, 2, 2))]);
@@ -970,7 +970,7 @@ mod tests {
         // The `mail A` RRset should be gone entirely.
         assert!(
             reloaded
-                .get(&RrKey::new(Name::from(&mail), RecordType::A))
+                .get(&RrKey::new(mail, RecordType::A))
                 .map(|rrset| rrset.is_empty())
                 .unwrap_or(true),
             "mail A rrset should have been deleted"

@@ -3,8 +3,9 @@ use std::{pin::Pin, task::Poll};
 use bytes::BytesMut;
 use http_body_util::BodyExt;
 use tokio_util::codec::{Decoder as _, Encoder as _};
+use walnut_proto::op::Message;
 
-use crate::messages::{Message, Protocol};
+use crate::messages::Protocol;
 use crate::{codec::DnsCodec, services::http::DnsBody};
 
 use super::DnsClientError;
@@ -92,7 +93,7 @@ where
             let mut buf = BytesMut::with_capacity(512);
 
             let mut msg: Message = req;
-            msg.set_id(0);
+            msg.metadata.id = 0;
 
             codec.encode(msg, &mut buf)?;
 

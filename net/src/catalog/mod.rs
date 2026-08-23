@@ -14,16 +14,16 @@
 use std::fmt;
 use std::sync::Arc;
 
-use hickory_proto::op::{Edns, MessageType, OpCode, Query, ResponseCode};
-use hickory_proto::rr::RecordType;
+use walnut_proto::op::{Edns, Message, MessageType, OpCode, Query, ResponseCode};
+use walnut_proto::rr::RecordType;
 
 use crate::authority::edns::lookup_options_for_edns;
 use crate::authority::lookup::{LookupControlFlow, LookupOptions, LookupRecords};
 use crate::authority::{LookupError, Search, Update};
 use crate::error::HickoryError;
 use crate::lookup::QueryLookup;
+use crate::messages::DnsQuery;
 use crate::messages::server::Incoming;
-use crate::messages::{DnsQuery, Message};
 use crate::{Lookup, ZoneInfo};
 use walnut_proto::rr::{Name, RecordSet};
 
@@ -615,47 +615,45 @@ where
 {
     #[expect(dead_code)]
     async fn update(&self, request: &Incoming<Message>) -> Result<Message, HickoryError> {
-        let request_info = match request.request_info() {
-            Ok(request_info) => request_info,
-            Err(error) => {
-                tracing::warn!("Update Request Protocol Error: {error}");
+        //TODO: Encapsulate processing / validating request
+        let query = match request.queries.first() {
+            Some(q) => q,
+            None => {
+                tracing::warn!("Update Request Protocol Error: more than 1 query present");
                 return Ok(Message::error_msg(
-                    request.id(),
-                    request.op_code(),
+                    request.metadata.id,
+                    request.metadata.op_code,
                     ResponseCode::ServFail,
                 ));
             }
         };
 
-        tracing::Span::current().record("name", tracing::field::display(request_info.query.name()));
+        tracing::Span::current().record("name", tracing::field::display(query.name()));
 
-        if request_info.query.query_type() != RecordType::SOA {
-            tracing::trace!(
-                "Invalid query type for AXFR: {}",
-                request_info.query.query_type()
-            );
+        if query.query_type() != RecordType::SOA {
+            tracing::trace!("Invalid query type for AXFR: {}", query.query_type());
             return Ok(Message::error_msg(
-                request.id(),
-                request.op_code(),
+                request.id,
+                request.op_code,
                 ResponseCode::ServFail,
             ));
         }
 
-        let authorities = match self.find(request_info.query.name()).await {
+        let authorities = match self.find(query.name()).await {
             Ok(Some(zones)) => zones,
             Ok(None) => {
                 tracing::debug!("No zone found");
                 return Ok(Message::error_msg(
-                    request.id(),
-                    request.op_code(),
+                    request.id,
+                    request.op_code,
                     ResponseCode::NotAuth,
                 ));
             }
             Err(error) => {
                 tracing::error!("Error finding zones: {error}");
                 return Ok(Message::error_msg(
-                    request.id(),
-                    request.op_code(),
+                    request.id,
+                    request.op_code,
                     ResponseCode::ServFail,
                 ));
             }
@@ -673,20 +671,19 @@ where
                 tracing::debug!("Error updating zone: {response_code}");
             }
 
-            let mut response = Message::new();
-            response.add_queries(request.queries().iter().cloned());
-            response
-                .set_id(request.id())
-                .set_op_code(OpCode::Update)
-                .set_message_type(MessageType::Response)
-                .set_response_code(response_code);
+            let mut response = Message::query();
+            response.add_queries(request.queries.iter().cloned());
+            response.metadata.id = request.id;
+            response.metadata.op_code = OpCode::Update;
+            response.metadata.message_type = MessageType::Response;
+            response.metadata.response_code = response_code;
 
             return Ok(response);
         }
 
         Ok(Message::error_msg(
-            request.id(),
-            request.op_code(),
+            request.metadata.id,
+            request.metadata.op_code,
             ResponseCode::ServFail,
         ))
     }

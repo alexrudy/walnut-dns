@@ -4,18 +4,19 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use chrono::Utc;
-use hickory_proto::ProtoError;
-use hickory_proto::dnssec::rdata::{DNSKEY, DNSSECRData, KEY, NSEC, NSEC3, NSEC3PARAM, RRSIG, SIG};
-use hickory_proto::dnssec::{DnsSecError, DnsSecResult, Nsec3HashAlgorithm, SigSigner, TBS};
-use hickory_proto::op::ResponseCode;
-use hickory_proto::rr::{DNSClass, Name, RData, RecordType, RrKey};
+use tracing::{debug, error};
+use walnut_proto::ProtocolError;
+use walnut_proto::dnssec::rdata::{DNSKEY, DNSSECRData, KEY, NSEC, NSEC3, NSEC3PARAM, RRSIG};
+use walnut_proto::dnssec::{DnsSecError, DnsSecResult, DnssecSigner, Nsec3HashAlgorithm};
+use walnut_proto::op::ResponseCode;
+use walnut_proto::rr::{DNSClass, Name, RData, RecordType, RrKey, TSigner};
 
 use super::lookup::{LookupControlFlow, LookupOptions, LookupRecords};
 use super::{Lookup, LookupError, Records, Update, ZoneInfo};
 use crate::catalog::CatalogError;
-use crate::messages::Message;
 use crate::messages::server::{Incoming, UpdateRequest as _};
-use walnut_proto::rr::{AsHickory as _, Mismatch, Name, Record, RecordSet, TimeToLive};
+use walnut_proto::op::Message;
+use walnut_proto::rr::{Mismatch, Record, RecordSet, TimeToLive};
 
 mod authorize;
 mod prerequisites;
@@ -108,10 +109,16 @@ pub enum DnsSecZoneError {
 #[derive(Clone)]
 pub struct DnsSecZone<Z> {
     zone: Z,
-    secure_keys: Vec<Arc<SigSigner>>,
     nx_proof_kind: Option<NxProofKind>,
     allow_update: bool,
     is_dnssec_enabled: bool,
+    // Private key mapped to the Record of the DNSKey
+    //  TODO: these private_keys should be stored securely. Ideally, we have keys only stored per
+    //   server instance, but that requires requesting updates from the parent zone, which may or
+    //   may not support dynamic updates to register the new key... Hickory DNS will provide support
+    //   for this, in some form, perhaps alternate root zones...
+    secure_keys: Vec<DnssecSigner>,
+    tsig_signers: Vec<TSigner>,
     journal: Option<Arc<dyn Journal<Self> + Send + Sync + 'static>>,
 }
 
@@ -148,7 +155,6 @@ impl<Z: ZoneInfo + fmt::Debug> fmt::Debug for DnsSecZone<Z> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DNSSecZone")
             .field("zone", &self.zone)
-            .field("secure_keys", &self.secure_keys.len())
             .field("nx_proof_kind", &self.nx_proof_kind)
             .finish()
     }
@@ -173,10 +179,11 @@ where
     pub fn new(zone: Z) -> Self {
         Self {
             zone,
-            secure_keys: Vec::new(),
             nx_proof_kind: None,
             allow_update: false,
             is_dnssec_enabled: true,
+            secure_keys: Vec::new(),
+            tsig_signers: Vec::new(),
             journal: None,
         }
     }
@@ -291,18 +298,6 @@ where
         self
     }
 
-    /// Get the signing keys configured for this zone
-    ///
-    /// Returns a slice of all DNSSEC signing keys that have been
-    /// added to this zone. These keys are used for zone signing.
-    ///
-    /// # Returns
-    ///
-    /// A slice of signing keys
-    pub fn secure_keys(&self) -> &[Arc<SigSigner>] {
-        &self.secure_keys
-    }
-
     /// Persist the current zone state to the journal
     ///
     /// Records the complete current state of the zone to the journal
@@ -333,7 +328,7 @@ where
         &self,
         info: &Nsec3QueryInfo<'_>,
         name: &Name,
-    ) -> Result<Name, ProtoError> {
+    ) -> Result<Name, ProtocolError> {
         let hash = info.algorithm.hash(info.salt, name, info.iterations)?;
         let label = data_encoding::BASE32_DNSSEC.encode(hash.as_ref());
         self.origin().prepend_label(label)
@@ -348,7 +343,7 @@ where
         } = info;
 
         let rr_key = RrKey::new(
-            Name::new(&self.get_hashed_owner_name(&info, self.origin())?),
+            self.get_hashed_owner_name(&info, self.origin())?,
             RecordType::NSEC3,
         );
         let qname_match = self.get(&rr_key);
@@ -390,13 +385,13 @@ where
 
         let wildcard_match = {
             let wildcard = qname.clone().into_wildcard();
-            self.keys().any(|rr_key| rr_key.name == (&wildcard).into())
+            self.keys().any(|rr_key| rr_key.name == wildcard)
         };
 
         if wildcard_match {
             let wildcard_at_closest_encloser = next_closer_name.into_wildcard();
             let rr_key = RrKey::new(
-                Name::new(&self.get_hashed_owner_name(&info, &wildcard_at_closest_encloser)?),
+                self.get_hashed_owner_name(&info, &wildcard_at_closest_encloser)?,
                 RecordType::NSEC3,
             );
 
@@ -419,13 +414,13 @@ where
         &self,
         name: &Name,
         info: &Nsec3QueryInfo<'_>,
-    ) -> Result<Option<(Name, RecordSet)>, ProtoError> {
+    ) -> Result<Option<(Name, RecordSet)>, ProtocolError> {
         let mut next_closer_name = name.clone();
         let mut closest_encloser = next_closer_name.base_name();
 
         while !closest_encloser.is_root() {
             let rr_key = RrKey::new(
-                Name::new(&self.get_hashed_owner_name(info, &closest_encloser)?),
+                self.get_hashed_owner_name(info, &closest_encloser)?,
                 RecordType::NSEC3,
             );
             if let Some(rrs) = self.get(&rr_key) {
@@ -443,7 +438,7 @@ where
         &self,
         name: &Name,
         info: &Nsec3QueryInfo<'_>,
-    ) -> Result<Option<RecordSet>, ProtoError> {
+    ) -> Result<Option<RecordSet>, ProtocolError> {
         let owner_name = self.get_hashed_owner_name(info, name)?;
         let records = self
             .records()
@@ -524,11 +519,11 @@ where
         let mut records: Vec<Record> = vec![];
 
         {
-            let mut nsec_info: Option<(&hickory_proto::rr::Name, BTreeSet<RecordType>)> = None;
+            let mut nsec_info: Option<(&walnut_proto::rr::Name, BTreeSet<RecordType>)> = None;
             for key in self.zone.keys() {
                 match &mut nsec_info {
                     None => nsec_info = Some((&key.name, BTreeSet::from([key.record_type]))),
-                    Some((name, vec)) if *name == &*key.name => {
+                    Some((name, vec)) if **name == key.name => {
                         vec.insert(key.record_type);
                     }
                     Some((name, vec)) => {
@@ -608,12 +603,12 @@ where
             }
             if delegation_points
                 .iter()
-                .any(|name| name.zone_of(&key.name) && name != &*key.name)
+                .any(|name| name.zone_of(&key.name) && name != &key.name)
             {
                 // Non-authoritative record below zone cut
                 continue;
             }
-            if key.record_type == RecordType::NS && &*key.name != self.zone.origin() {
+            if key.record_type == RecordType::NS && &key.name != self.zone.origin() {
                 delegation_points.insert(key.name.clone().into());
             }
 
@@ -656,7 +651,7 @@ where
                 let hashed_name = hash_alg.hash(salt, &name, iterations)?;
                 Ok((hashed_name, (type_bit_maps, exists)))
             })
-            .collect::<Result<Vec<_>, ProtoError>>()?;
+            .collect::<Result<Vec<_>, ProtocolError>>()?;
         // Sort by hash.
         record_types.sort_by(|(a, _), (b, _)| a.as_ref().cmp(b.as_ref()));
 
@@ -707,7 +702,6 @@ where
         tracing::debug!("signing zone: {}", self.zone.origin());
 
         let dns_class = self.zone.dns_class();
-        let minimum_ttl = self.minimum_ttl();
         let secure_keys = &self.secure_keys;
 
         // TODO: should this be an error?
@@ -720,7 +714,7 @@ where
 
         // sign all record_sets, as of 0.12.1 this includes DNSKEY
         for rr_set in self.zone.records_mut() {
-            Self::sign_rrset(rr_set, secure_keys, minimum_ttl, dns_class)?;
+            Self::sign_rrset(rr_set, secure_keys, dns_class)?;
         }
 
         Ok(())
@@ -728,85 +722,36 @@ where
 
     pub(super) fn sign_rrset(
         rr_set: &mut RecordSet,
-        secure_keys: &[Arc<SigSigner>],
-        zone_ttl: TimeToLive,
+        secure_keys: &[DnssecSigner],
         zone_class: DNSClass,
     ) -> DnsSecResult<()> {
         let inception = Utc::now();
 
         rr_set.clear_rrsigs();
 
-        let rrsig_temp = Record::update0(rr_set.name().clone(), zone_ttl, RecordType::RRSIG);
-
         for signer in secure_keys {
-            tracing::debug!(
+            debug!(
                 "signing rr_set: {}, {} with: {}",
                 rr_set.name(),
                 rr_set.record_type(),
                 signer.key().algorithm(),
             );
 
-            let expiration = inception + signer.sig_duration();
-            let records: Vec<_> = rr_set.records(false).map(|rr| rr.as_hickory()).collect();
-            let tbs = TBS::from_sig(
-                rr_set.name(),
-                zone_class,
-                &SIG::new(
-                    rr_set.record_type(),
-                    signer.key().algorithm(),
-                    rr_set.name().num_labels(),
-                    rr_set.ttl().into(),
-                    expiration.timestamp() as u32,
-                    inception.timestamp() as u32,
-                    signer.calculate_key_tag()?,
-                    signer.signer_name().clone(),
-                    Vec::new(), // Gets thrown away anyways.
-                ),
-                records.iter(),
-            );
-
-            // TODO, maybe chain these with some ETL operations instead?
-            let tbs = match tbs {
-                Ok(tbs) => tbs,
+            let rrsig = match RRSIG::from_rrset(rr_set, zone_class, inception, signer) {
+                Ok(rrsig) => rrsig,
                 Err(err) => {
-                    tracing::error!("could not serialize rrset to sign: {}", err);
+                    error!("could not create RRSIG for rrset: {err}");
                     continue;
                 }
             };
-
-            let signature = signer.sign(&tbs);
-            let signature = match signature {
-                Ok(signature) => signature,
-                Err(err) => {
-                    tracing::error!("could not sign rrset: {}", err);
-                    continue;
-                }
-            };
-
-            let mut rrsig = rrsig_temp.clone();
-            rrsig.set_data(RData::DNSSEC(DNSSECRData::RRSIG(RRSIG::new(
-                // type_covered: RecordType,
-                rr_set.record_type(),
-                // algorithm: Algorithm,
-                signer.key().algorithm(),
-                // num_labels: u8,
-                rr_set.name().num_labels(),
-                // original_ttl: u32,
-                rr_set.ttl().into(),
-                // sig_expiration: u32,
-                expiration.timestamp() as u32,
-                inception.timestamp() as u32,
-                // key_tag: u16,
-                signer.calculate_key_tag()?,
-                // signer_name: Name,
-                signer.signer_name().clone(),
-                // sig: Vec<u8>
-                signature,
-            ))));
 
             rr_set
-                .insert_rrsig(rrsig)
-                .map_err(|error| DnsSecError::from(error.to_string()))?;
+                .insert_rrsig(Record::from_rdata(
+                    rr_set.name().clone(),
+                    rr_set.ttl(),
+                    RData::DNSSEC(DNSSECRData::RRSIG(rrsig)),
+                ))
+                .map_err(|_| DnsSecError::Message("Mismatched DNSSEC records in record set"))?;
         }
 
         Ok(())
@@ -865,7 +810,7 @@ where
     /// # Errors
     ///
     /// Returns an error if the key is invalid or cannot be added to the zone
-    pub fn add_zone_signing_key(&mut self, signer: SigSigner) -> Result<(), DnsSecZoneError> {
+    pub fn add_zone_signing_key(&mut self, signer: DnssecSigner) -> Result<(), DnsSecZoneError> {
         let zone_ttl = self.minimum_ttl();
         let dnskey = DNSKEY::from_key(&signer.key().to_public_key()?);
         let dnskey = Record::from_rdata(
@@ -877,7 +822,7 @@ where
         // TODO: also generate the CDS and CDNSKEY
         let serial = self.serial();
         self.zone.upsert(dnskey, serial)?;
-        self.secure_keys.push(Arc::new(signer));
+        self.secure_keys.push(signer);
         Ok(())
     }
 
@@ -968,7 +913,9 @@ where
 {
     async fn update(&mut self, update: &Incoming<Message>) -> Result<bool, ResponseCode> {
         // the spec says to authorize after prereqs, seems better to auth first.
-        self.authorize(update).await?;
+        // TODO: Pass TSigResponseContext back through everything?
+        let (result, _ctx) = self.authorize(update, Utc::now()).await;
+        result?;
         self.verify_prerequisites(update.prerequisites()).await?;
         self.pre_scan(update.updates()).await?;
 
@@ -992,7 +939,7 @@ where
         name: &Name,
         lookup_options: LookupOptions,
     ) -> LookupControlFlow<LookupRecords> {
-        let rr_key = RrKey::new(Name::new(name), RecordType::NSEC);
+        let rr_key = RrKey::new(name.clone(), RecordType::NSEC);
         let no_data = self.get(&rr_key).map(|rr_set| {
             LookupRecords::records(vec![rr_set.clone().into()], lookup_options.clone())
         });

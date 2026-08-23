@@ -5,8 +5,9 @@ use std::net::SocketAddr;
 
 use chateau::{info::HasConnectionInfo, server::Protocol};
 use tokio::io::{AsyncRead, AsyncWrite};
+use walnut_proto::op::Message;
 
-use crate::messages::{Message, Protocol as DnsProtocol};
+use crate::messages::Protocol as DnsProtocol;
 use crate::{error::HickoryError, messages::server::Incoming};
 
 use super::connection::{DnsConnection, DnsFramedStream};

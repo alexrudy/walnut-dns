@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
-use hickory_proto::rr::{DNSClass, Name, RecordType, RrKey};
-use hickory_proto::serialize::binary::BinEncodable;
 use rusqlite::named_params;
+use walnut_proto::rr::{DNSClass, Name, RecordType, RrKey};
+use walnut_proto::serialize::binary::BinEncodable;
 
 use crate::authority::Records as _;
 use crate::lookup::{EntryMeta, QueryLookup};
@@ -247,8 +247,8 @@ fn replay_persisted_record(zone: &mut Zone, record: Record, serial: SerialNumber
         }
         // Delete an entire RRset, or every RRset at a name.
         DNSClass::ANY => {
-            let name = Name::from(record.name());
-            let origin = Name::from(zone.origin());
+            let name = record.name().clone();
+            let origin = zone.origin().clone();
 
             match record.record_type() {
                 RecordType::ANY => {

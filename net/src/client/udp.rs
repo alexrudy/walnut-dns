@@ -21,7 +21,8 @@ use tokio::sync::Mutex;
 use tokio_util::udp::UdpFramed;
 
 use crate::codec::DnsCodec;
-use crate::messages::{Message, Protocol};
+use crate::messages::Protocol;
+use walnut_proto::op::Message;
 
 use super::DnsClientError;
 

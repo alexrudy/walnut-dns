@@ -2,11 +2,11 @@ use std::fmt;
 use std::ops::Deref as _;
 use std::sync::Arc;
 
-use hickory_proto::dnssec::crypto::signing_key_from_der;
-use hickory_proto::dnssec::{Algorithm, DnsSecResult};
-use hickory_proto::dnssec::{SigSigner, rdata::DNSKEY};
-use hickory_proto::rr::Name;
 use rustls_pki_types::PrivateKeyDer;
+use walnut_proto::dnssec::crypto::signing_key_from_der;
+use walnut_proto::dnssec::rdata::DNSKEY;
+use walnut_proto::dnssec::{Algorithm, DnsSecResult, DnssecSigner};
+use walnut_proto::rr::Name;
 use zeroize::Zeroizing;
 
 use crate::ZoneInfo as _;
@@ -61,11 +61,11 @@ impl DnsKey {
         }
     }
 
-    fn build(&self, name: Name) -> DnsSecResult<SigSigner> {
+    fn build(&self, name: Name) -> DnsSecResult<DnssecSigner> {
         let private = PrivateKeyDer::try_from(self.key_data.as_ref())?;
         let key = signing_key_from_der(&private, self.algorithm)?;
 
-        Ok(SigSigner::dnssec(
+        Ok(DnssecSigner::new(
             DNSKEY::from_key(&key.to_public_key().unwrap()),
             key,
             name,

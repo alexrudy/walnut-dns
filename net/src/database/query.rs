@@ -1,6 +1,6 @@
-use hickory_proto::op::Query;
 use rusqlite::named_params;
 use tracing::trace;
+use walnut_proto::op::Query;
 
 use crate::database::record::RecordPersistence;
 use crate::lookup::{CacheTimestamp, EntryMeta, QueryLookup};

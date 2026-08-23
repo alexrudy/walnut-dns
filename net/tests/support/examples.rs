@@ -1,15 +1,15 @@
-use std::str::FromStr as _;
+use std::{str::FromStr as _, sync::Arc};
 
-use hickory_proto::rr::RData;
 use walnut_dns::{
     Lookup as _, ZoneInfo as _,
     authority::{DnsSecZone, NxProofKind, Records},
 };
+use walnut_proto::rr::RData;
 use walnut_proto::rr::{Name, Zone, ZoneType};
 
 /// Construct an example DNS Zone
 pub fn create_example() -> Zone {
-    use hickory_proto::rr::rdata::*;
+    use walnut_proto::rr::rdata::*;
     use walnut_proto::rr::{Record, SerialNumber, Zone};
 
     let origin: Name = Name::parse("example.com.", None).unwrap();
@@ -180,11 +180,11 @@ pub fn create_example() -> Zone {
 }
 
 pub fn create_secure_example() -> DnsSecZone<Zone> {
-    use hickory_proto::dnssec::{
-        Algorithm, PublicKey, SigSigner, SigningKey, crypto::RsaSigningKey, rdata::DNSKEY,
-    };
     use rustls_pki_types::PrivatePkcs8KeyDer;
     use std::time::Duration;
+    use walnut_proto::dnssec::{
+        Algorithm, DnssecSigner, SigningKey, crypto::RsaSigningKey, rdata::DNSKEY,
+    };
 
     let mut authority = DnsSecZone::new(create_example());
     authority.set_nx_proof_kind(Some(NxProofKind::Nsec));
@@ -193,11 +193,11 @@ pub fn create_secure_example() -> DnsSecZone<Zone> {
     let key =
         RsaSigningKey::from_pkcs8(&PrivatePkcs8KeyDer::from(KEY), Algorithm::RSASHA256).unwrap();
     let dnskey = key.to_public_key().unwrap();
-    let signer = SigSigner::dnssec(
+    let signer = DnssecSigner::new(
         DNSKEY::from_key(&key.to_public_key().unwrap()),
-        Box::new(key),
-        authority.origin().clone(),
-        Duration::from_secs(86400 * 7),
+        Arc::new(key),
+        authority.origin().clone().into(),
+        Duration::from_secs(60 * 60 * 24 * 7),
     );
 
     authority.add_zone_signing_key(signer);

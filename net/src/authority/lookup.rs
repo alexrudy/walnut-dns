@@ -1,7 +1,7 @@
 use core::fmt;
 use std::sync::Arc;
 
-use hickory_proto::rr::{Name, RecordType};
+use walnut_proto::rr::{Name, RecordType};
 
 use walnut_proto::rr::{Record, RecordSet, RecordSetIter};
 

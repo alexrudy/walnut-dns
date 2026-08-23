@@ -12,6 +12,7 @@ use std::{
 use futures::future::BoxFuture;
 use serde::Deserialize;
 use tracing::Instrument as _;
+use walnut_proto::op::Message;
 
 pub use self::connection::{
     ConnectionConfig, NameServerConnection, NameserverConfig, ProtocolConfig,
@@ -20,7 +21,7 @@ use self::monitor::{ConnectionStats, MonitoredConnection, PriorityTier};
 pub use self::pool::{Pool, PoolConfig};
 
 use super::DnsClientError;
-use crate::messages::{Message, Protocol};
+use crate::messages::Protocol;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConnectionPolicy {

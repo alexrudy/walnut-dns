@@ -7,21 +7,19 @@
 use std::{ops::Add, time::Duration};
 
 use chrono::{DateTime, TimeDelta, TimeZone as _, Utc};
-use hickory_proto::{
-    ProtoError, ProtoErrorKind,
-    op::{Query, ResponseCode},
-    rr::{DNSClass, Name, RData, RecordType},
-};
 use rusqlite::{
     ToSql,
     types::{FromSql, ToSqlOutput, Value},
 };
 use thiserror::Error;
-
-use crate::{
-    database::FromRow,
-    messages::{DnsResponse, Message},
+use walnut_proto::{
+    ProtocolError,
+    op::{Message, Query, ResponseCode},
+    rr::{DNSClass, Name, RData, RecordType},
+    serialize::binary::DecodeError,
 };
+
+use crate::{database::FromRow, messages::DnsResponse};
 use walnut_proto::rr::{QueryID, Record, SqlName, TimeToLive};
 
 /// Metadata associated with a query.
@@ -548,7 +546,7 @@ impl QueryLookup {
             self.soa().and_then(|soa| {
                 soa.data()
                     .as_soa()
-                    .map(|soa_data| soa.ttl().min(soa_data.minimum().into()))
+                    .map(|soa_data| soa.ttl().min(soa_data.minimum.into()))
             })
         } else {
             None
@@ -563,10 +561,10 @@ impl QueryLookup {
 
 impl From<QueryLookup> for Message {
     fn from(lookup: QueryLookup) -> Self {
-        let mut msg = Message::new();
+        let mut msg = Message::query();
         msg.add_query(lookup.query.clone());
-        msg.set_response_code(lookup.metadata.response_code);
-        msg.set_message_type(hickory_proto::op::MessageType::Response);
+        msg.metadata.response_code = lookup.metadata.response_code;
+        msg.metadata.message_type = walnut_proto::op::MessageType::Response;
 
         if lookup.is_success() {
             // Add answer records for successful responses
@@ -575,33 +573,27 @@ impl From<QueryLookup> for Message {
 
         msg.add_additionals(lookup.additional_records().cloned());
 
-        msg.set_authoritative(lookup.metadata().authoritative);
-        msg.set_authentic_data(lookup.metadata().authentic_data);
-        msg.set_checking_disabled(lookup.metadata().checking_disabled);
+        msg.metadata.authoritative = lookup.metadata().authoritative;
+        msg.metadata.authentic_data = lookup.metadata().authentic_data;
+        msg.metadata.checking_disabled = lookup.metadata().checking_disabled;
 
         // Add authority records for all response types
-        msg.add_name_servers(lookup.authority_records().cloned());
-
-        // Manually update header counts to match the actual records
-        let mut header = *msg.header();
-        header.set_answer_count(msg.answers().len() as u16);
-        header.set_name_server_count(msg.name_servers().len() as u16);
-        msg.set_header(header);
+        msg.add_authorities(lookup.authority_records().cloned());
 
         msg
     }
 }
 
 impl TryFrom<DnsResponse> for QueryLookup {
-    type Error = ProtoError;
+    type Error = ProtocolError;
 
     fn try_from(response: DnsResponse) -> Result<Self, Self::Error> {
-        let response_code = response.response_code();
+        let response_code = response.response_code;
         let negative_ttl = response.negative_ttl();
         let mut metadata = QueryMetadata::from(response_code);
-        metadata.authoritative = response.authoritative();
-        metadata.authentic_data = response.authentic_data();
-        metadata.checking_disabled = response.checking_disabled();
+        metadata.authoritative = response.authoritative;
+        metadata.authentic_data = response.authentic_data;
+        metadata.checking_disabled = response.checking_disabled;
         let (message, _) = response.into_parts();
 
         let ttl = if matches!(response_code, ResponseCode::NoError) {
@@ -625,10 +617,10 @@ impl TryFrom<DnsResponse> for QueryLookup {
                 .queries
                 .into_iter()
                 .next()
-                .ok_or_else(|| ProtoErrorKind::BadQueryCount(0))?,
+                .ok_or_else(|| DecodeError::BadQueryCount(0))?,
             records: QueryLookupSections {
                 answers: message.answers,
-                authorities: message.name_servers,
+                authorities: message.authorities,
                 additionals: message.additionals,
             },
             metadata,
@@ -811,8 +803,8 @@ impl ToSql for CacheTimestamp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hickory_proto::rr::{RData, rdata::A};
     use std::{str::FromStr, time::Duration};
+    use walnut_proto::rr::{RData, rdata::A};
 
     #[test]
     fn test_cache_timestamp_now() {
@@ -893,7 +885,7 @@ mod tests {
         let soa_record = Record::from_rdata(
             Name::from_str("nonexistent.com.").unwrap(),
             3600.into(),
-            RData::SOA(hickory_proto::rr::rdata::SOA::new(
+            RData::SOA(walnut_proto::rr::rdata::SOA::new(
                 Name::from_str("ns1.nonexistent.com.").unwrap(),
                 Name::from_str("admin.nonexistent.com.").unwrap(),
                 1,

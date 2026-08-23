@@ -50,3 +50,20 @@ pub(crate) fn subscribe() {
         tracing::subscriber::set_global_default(subscriber).unwrap();
     });
 }
+
+#[cfg(feature = "tls")]
+pub mod tls {
+    use rustls::crypto::{self, CryptoProvider};
+
+    /// Instantiate a new [`CryptoProvider`] for use with rustls
+    #[cfg(all(feature = "tls-aws-lc", not(feature = "tls-ring")))]
+    pub fn default_provider() -> CryptoProvider {
+        crypto::aws_lc_rs::default_provider()
+    }
+
+    /// Instantiate a new [`CryptoProvider`] for use with rustls
+    #[cfg(feature = "tls-ring")]
+    pub fn default_provider() -> CryptoProvider {
+        crypto::ring::default_provider()
+    }
+}

@@ -1,5 +1,5 @@
-use hickory_proto::rr::Name;
 use rusqlite::named_params;
+use walnut_proto::rr::Name;
 
 use crate::database::record::RecordPersistence;
 use crate::{ZoneInfo as _, database::FromRow as _};

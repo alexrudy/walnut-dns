@@ -17,9 +17,9 @@
 
 use std::sync::Arc;
 
-use hickory_proto::op::{MessageType, Query, ResponseCode};
-use hickory_proto::rr::{Name, RData, RecordType, rdata::A};
-use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
+use walnut_proto::op::{Message, MessageType, Query, ResponseCode};
+use walnut_proto::rr::{Name, RData, RecordType, rdata::A};
+use walnut_proto::serialize::binary::{BinDecodable, BinEncodable};
 
 mod support;
 use support::TestZoneStore;
@@ -29,7 +29,6 @@ use walnut_dns::Catalog;
 use walnut_dns::authority::{
     Lookup, LookupControlFlow, LookupError, LookupOptions, LookupRecords, ZoneInfo,
 };
-use walnut_dns::messages::Message;
 use walnut_dns::server::{CatalogService, MessageMetadataLayer, ValidateLookupLayer};
 use walnut_proto::rr::{Record, RecordSet, SerialNumber, TimeToLive, ZoneType};
 
@@ -155,8 +154,8 @@ impl ZoneInfo for TestAuthority {
         false
     }
 
-    fn dns_class(&self) -> hickory_proto::rr::DNSClass {
-        hickory_proto::rr::DNSClass::IN
+    fn dns_class(&self) -> walnut_proto::rr::DNSClass {
+        walnut_proto::rr::DNSClass::IN
     }
 
     fn serial(&self) -> SerialNumber {
@@ -220,7 +219,7 @@ fn inner_lookup(
     records: &TestRecords,
     lookup_options: LookupOptions,
 ) -> Option<LookupControlFlow<LookupRecords>> {
-    let ascii_name = Name::from(name).to_string();
+    let ascii_name = name.to_string();
     tracing::debug!("inner_lookup {ascii_name}");
     for (record_name, (response_type, response_record)) in records.iter() {
         tracing::trace!("inner_lookup check {record_name}");
@@ -251,13 +250,13 @@ fn inner_lookup(
 
 // Boilerplate to query the catalog.
 async fn do_query(catalog: &Catalog<TestAuthority>, query_name: &str) -> Message {
-    let mut question: Message = Message::new();
+    let mut question: Message = Message::query();
 
     let mut query: Query = Query::new();
     query.set_name(Name::from_ascii(query_name).unwrap());
     question.add_query(query);
-    question.set_recursion_desired(true);
-    question.set_authentic_data(true);
+    question.metadata.recursion_desired = true;
+    question.metadata.authentic_data = true;
 
     let question_bytes = question.to_bytes().unwrap();
     let question_req = Message::from_bytes(&question_bytes).unwrap();
@@ -275,10 +274,10 @@ async fn do_query(catalog: &Catalog<TestAuthority>, query_name: &str) -> Message
 async fn basic_test(catalog: &Catalog<TestAuthority>, query_name: &'static str, answer: A) {
     let result = do_query(catalog, query_name).await;
 
-    let answers: &[Record] = result.answers();
+    let answers: &[Record] = &result.answers;
 
-    assert_eq!(result.response_code(), ResponseCode::NoError);
-    assert_eq!(result.message_type(), MessageType::Response);
+    assert_eq!(result.response_code, ResponseCode::NoError);
+    assert_eq!(result.message_type, MessageType::Response);
     assert!(!answers.is_empty());
     assert_eq!(answers.first().unwrap().record_type(), RecordType::A);
     assert_eq!(answers.first().unwrap().data(), &RData::A(answer));
@@ -287,6 +286,6 @@ async fn basic_test(catalog: &Catalog<TestAuthority>, query_name: &'static str, 
 async fn error_test(catalog: &Catalog<TestAuthority>, query_name: &str, r_code: ResponseCode) {
     let res = do_query(catalog, query_name).await;
 
-    assert_eq!(res.response_code(), r_code);
-    assert!(res.answers().is_empty());
+    assert_eq!(res.response_code, r_code);
+    assert!(res.answers.is_empty());
 }

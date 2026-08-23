@@ -8,20 +8,20 @@ use std::{
 };
 
 use futures::{Stream as _, stream::FuturesUnordered};
-use hickory_proto::{
-    op::{Edns, MessageType, OpCode, Query, ResponseCode},
-    rr::{DNSClass, Name, RecordType},
-};
 use pin_project::pin_project;
 use rand::Rng as _;
 use serde::Deserialize;
 use thiserror::Error;
 use tower::{ServiceExt, util::Oneshot};
 use tracing::{debug, instrument};
+use walnut_proto::{
+    op::{Edns, Message, MessageType, OpCode, Query, ResponseCode},
+    rr::{DNSClass, Name, RecordType},
+};
 
 use crate::client::nameserver::Nameserver;
 use crate::client::{DnsClientError, DnsRequestMiddleware};
-use crate::messages::{DnsRequest, DnsRequestOptions, DnsResponse, Message};
+use crate::messages::{DnsRequest, DnsRequestOptions, DnsResponse};
 use walnut_proto::rr::RecordSet;
 
 #[derive(Debug, Error)]
@@ -85,24 +85,23 @@ impl NotifyManager {
 
         // build the message
         let mut rng = rand::rng();
-        let mut message = Message::new();
-        message
-            .set_id(rng.random())
-            // 3.3. NOTIFY is similar to QUERY in that it has a request message with
-            // the header QR flag "clear" and a response message with QR "set".  The
-            // response message contains no useful information, but its reception by
-            // the Primary is an indication that the Secondary has received the NOTIFY
-            // and that the Primary Zone Server can remove the Secondary from any retry queue for
-            // this NOTIFY event.
-            .set_message_type(MessageType::Query)
-            .set_op_code(OpCode::Notify);
+        let mut message = Message::query();
+        message.metadata.id = rng.random();
+        // 3.3. NOTIFY is similar to QUERY in that it has a request message with
+        // the header QR flag "clear" and a response message with QR "set".  The
+        // response message contains no useful information, but its reception by
+        // the Primary is an indication that the Secondary has received the NOTIFY
+        // and that the Primary Zone Server can remove the Secondary from any retry queue for
+        // this NOTIFY event.
+        message.metadata.message_type = MessageType::Query;
+        message.metadata.op_code = OpCode::Notify;
 
-        tracing::Span::current().record("dns.id", tracing::field::display(message.id()));
+        tracing::Span::current().record("dns.id", tracing::field::display(message.metadata.id));
 
         // Extended dns
         if options.use_edns {
             message
-                .extensions_mut()
+                .edns
                 .get_or_insert_with(Edns::new)
                 .set_max_payload(self.config.max_payload_len)
                 .set_version(0)
@@ -230,14 +229,14 @@ where
         let this = self.project();
         match this.future.poll(cx) {
             Poll::Ready(Ok(response)) => {
-                if matches!(response.response_code(), ResponseCode::NoError) {
-                    tracing::debug!(answered=%response.contains_answer(), code=%response.response_code(), "Recieved response to NOTIFY");
+                if matches!(response.response_code, ResponseCode::NoError) {
+                    tracing::debug!(answered=%response.contains_answer(), code=%response.response_code, "Recieved response to NOTIFY");
                     Poll::Ready(Ok(()))
                 } else {
-                    tracing::error!(code=%response.response_code(), "Recieved error response to NOTIFY");
+                    tracing::error!(code=%response.response_code, "Recieved error response to NOTIFY");
                     Poll::Ready(Err((
                         *this.addr,
-                        DnsClientError::Response(*response.header(), response.response_code()),
+                        DnsClientError::Response(response.metadata, response.response_code),
                     )))
                 }
             }

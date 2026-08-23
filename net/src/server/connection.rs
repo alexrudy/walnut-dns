@@ -16,15 +16,16 @@ use tracing::{Instrument, debug, debug_span, trace, trace_span, warn};
 
 use crate::codec::{CodecError, DnsCodec, DnsCodecRecovery, DnsRequest};
 use crate::error::HickoryError;
+use crate::messages::Protocol;
 use crate::messages::server::Incoming;
-use crate::messages::{Message, Protocol};
+use walnut_proto::op::Message;
 
 #[pin_project::pin_project]
 pub struct DnsFramedStream<IO> {
     addr: Option<SocketAddr>,
 
     #[pin]
-    codec: Framed<IO, DnsCodecRecovery<Message, Message>>,
+    codec: Framed<IO, DnsCodecRecovery<Message, Incoming<Message>>>,
     protocol: Protocol,
 }
 
@@ -264,8 +265,8 @@ where
                 Some(Ok(DnsRequest::Message(message))) => {
                     trace!("Recieved message");
 
-                    let id = message.id();
-                    let addr = message.address();
+                    let id = message.message.metadata.id;
+                    let addr = message.src;
 
                     let mut svc = match this.service {
                         ServiceState::Pending(_) => None,
@@ -273,7 +274,7 @@ where
                     }
                     .expect("service polled to ready");
 
-                    let future = svc.call(message);
+                    let future = svc.call(message.message);
                     this.tasks.push(
                         AddressedFuture::future(future, addr)
                             .instrument(debug_span!(parent: None, "message", %id)),
@@ -283,7 +284,7 @@ where
                     return Ok(ReadAction::Spawned).into();
                 }
                 Some(Ok(DnsRequest::Failed((reply, addr)))) => {
-                    let id = reply.id();
+                    let id = reply.id;
                     this.tasks.push(
                         AddressedFuture::done(reply, addr)
                             .instrument(trace_span!(parent: None, "message", %id)),
@@ -323,7 +324,7 @@ where
         loop {
             match ready!(self.as_mut().project().tasks.try_poll_next(cx)) {
                 Some(Ok((message, addr))) => {
-                    trace!(id=%message.id(), "Service provided response");
+                    trace!(id=%message.metadata.id, "Service provided response");
                     return Ok(Some((message, addr))).into();
                 }
                 Some(Err(error)) => {
@@ -359,7 +360,7 @@ where
             };
 
             let this = self.as_mut().project();
-            trace!(id=%message.0.id(), "Writing message");
+            trace!(id=%message.0.id, "Writing message");
             *this.codec_send_ready = false;
             this.codec.start_send(message).map_err(HickoryError::from)?;
         }

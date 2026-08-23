@@ -9,6 +9,7 @@
 
 use std::fmt;
 
+use enum_as_inner::EnumAsInner;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -50,7 +51,7 @@ pub use self::sig::{SIG, SigInput};
 
 /// Record data enum variants for DNSSEC-specific records.
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-#[derive(Debug, PartialEq, Clone, Eq, Hash)]
+#[derive(Debug, PartialEq, Clone, Eq, Hash, EnumAsInner)]
 #[non_exhaustive]
 pub enum DNSSECRData {
     /// ```text

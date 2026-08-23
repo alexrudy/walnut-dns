@@ -14,6 +14,7 @@ use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use core::{cmp::Ordering, fmt};
 use std::vec::Vec;
 
+use enum_as_inner::EnumAsInner;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tracing::{trace, warn};
@@ -59,7 +60,7 @@ use crate::{
 /// length (including the length octet).
 /// ```
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-#[derive(Debug, PartialEq, Clone, Eq, Hash)]
+#[derive(Debug, PartialEq, Clone, Eq, Hash, EnumAsInner)]
 #[non_exhaustive]
 pub enum RData {
     /// ```text

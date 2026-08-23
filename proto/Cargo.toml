@@ -24,7 +24,7 @@ bitflags = { workspace = true, optional = true }
 rustls-pki-types = { workspace = true, optional = true }
 aws-lc-rs = { workspace = true, optional = true }
 ring = { workspace = true, optional = true }
-
+enum-as-inner.workspace = true
 
 [features]
 serde = ["dep:serde", "chrono/serde"]

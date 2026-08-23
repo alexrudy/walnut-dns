@@ -10,6 +10,7 @@
 use core::{iter, mem, ops::Deref};
 use std::{boxed::Box, fmt, vec::Vec};
 
+use chateau::client::conn::protocol::framed::Tagged;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "__dnssec")]
@@ -742,6 +743,14 @@ impl fmt::Display for Message {
         }
 
         Ok(())
+    }
+}
+
+impl Tagged for Message {
+    type Tag = u16;
+
+    fn tag(&self) -> Self::Tag {
+        self.metadata.id
     }
 }
 

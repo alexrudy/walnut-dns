@@ -1,6 +1,6 @@
 use chateau::client::conn::ConnectionError;
-use hickory_proto::ProtoError;
-use hickory_proto::op::{Header, ResponseCode};
+use walnut_proto::ProtocolError;
+use walnut_proto::op::{Metadata, ResponseCode};
 
 use crate::codec::CodecError;
 
@@ -9,10 +9,10 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 #[derive(Debug, thiserror::Error)]
 pub enum DnsClientError {
     #[error("DNS Protocol: {0}")]
-    DnsProtocol(#[from] ProtoError),
+    DnsProtocol(#[from] ProtocolError),
 
-    #[error("Invalid response for message {}: {}", .0.id(), .1)]
-    Response(Header, ResponseCode),
+    #[error("Invalid response for message {}: {}", .0.id, .1)]
+    Response(Metadata, ResponseCode),
 
     #[cfg(feature = "h2")]
     #[error("Http Request Error: {0}")]
@@ -47,7 +47,7 @@ impl From<CodecError> for DnsClientError {
                 DnsClientError::DnsProtocol(proto_error)
             }
             CodecError::FailedMessage(header, response_code) => {
-                DnsClientError::Response(header, response_code)
+                DnsClientError::Response(header.metadata, response_code)
             }
             CodecError::IO(_) => DnsClientError::Closed,
         }

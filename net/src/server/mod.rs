@@ -2,17 +2,17 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::Poll;
 
-use hickory_proto::op::ResponseCode;
 use tracing::trace;
+use walnut_proto::op::{Message, MessageType, ResponseCode};
 
 use crate::authority::{LookupError, Search};
 use crate::cache::QueryLookup;
 use crate::error::HickoryError;
-use crate::messages::{DnsQuery, Message};
+use crate::messages::DnsQuery;
 use crate::{Catalog, Lookup};
 
 pub mod connection;
-pub mod request;
+// pub mod request;
 pub mod response;
 pub mod stream;
 pub mod udp;
@@ -68,14 +68,14 @@ where
         let service = self.inner.clone();
         let mut service = std::mem::replace(&mut self.inner, service);
 
-        let id = req.id();
-        let op_code = req.op_code();
+        let id = req.metadata.id;
+        let op_code = req.metadata.op_code;
 
         Box::pin(async move {
             let response = match service.call(req).await {
                 Ok(mut message) => {
-                    message.set_op_code(op_code);
-                    message.set_id(id);
+                    message.metadata.op_code = op_code;
+                    message.metadata.id = id;
                     message
                 }
                 Err(HickoryError::LookupError(LookupError::ResponseCode(code))) => {
@@ -206,13 +206,9 @@ where
     fn call(&mut self, req: Message) -> Self::Future {
         let svc = self.inner.clone();
         let mut svc = std::mem::replace(&mut self.inner, svc);
-        match req.header().message_type() {
-            hickory_proto::op::MessageType::Query => {
-                Box::pin(async move { svc.call(req).await.map_err(Into::into) })
-            }
-            hickory_proto::op::MessageType::Response => {
-                Box::pin(async move { Err(HickoryError::ResponseAsRequest) })
-            }
+        match req.metadata.message_type {
+            MessageType::Query => Box::pin(async move { svc.call(req).await.map_err(Into::into) }),
+            MessageType::Response => Box::pin(async move { Err(HickoryError::ResponseAsRequest) }),
         }
     }
 }

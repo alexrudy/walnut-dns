@@ -3,40 +3,38 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use hickory_proto::{
-    ProtoError,
-    op::{Header, Query},
+use bytes::Bytes;
+use chateau::client::conn::protocol::framed::Tagged;
+use walnut_proto::{
+    ProtocolError,
+    op::{Message, Metadata, Query},
+    serialize::binary::{BinDecodable, BinEncodable, BinEncoder, DecodeError},
 };
 
-use super::{Message, Protocol};
+use super::Protocol;
 use walnut_proto::rr::Record;
 
 #[derive(Debug, Clone)]
 pub struct Incoming<M> {
     message: M,
-    address: SocketAddr,
-    protocol: Protocol,
+
+    /// The raw bytes of the incoming message
+    raw: Bytes,
+    // address: SocketAddr,
+    // protocol: Protocol,
 }
 
 impl<M> Incoming<M> {
-    pub fn new(message: M, address: SocketAddr, protocol: Protocol) -> Self {
-        Self {
-            message,
-            address,
-            protocol,
-        }
-    }
-
-    pub fn address(&self) -> SocketAddr {
-        self.address
-    }
-
-    pub fn protocol(&self) -> Protocol {
-        self.protocol
+    pub fn new(message: M, raw: Bytes) -> Self {
+        Self { message, raw }
     }
 
     pub fn into_inner(self) -> M {
         self.message
+    }
+
+    pub fn raw(&self) -> &Bytes {
+        &self.raw
     }
 }
 
@@ -60,6 +58,50 @@ impl<M> DerefMut for Incoming<M> {
     }
 }
 
+impl<M> Tagged for Incoming<M>
+where
+    M: Tagged,
+{
+    type Tag = <M as Tagged>::Tag;
+
+    fn tag(&self) -> Self::Tag {
+        self.message.tag()
+    }
+}
+
+impl<M> BinEncodable for Incoming<M>
+where
+    M: BinEncodable,
+{
+    fn emit(&self, encoder: &mut BinEncoder<'_>) -> Result<(), ProtocolError> {
+        self.message.emit(encoder)
+    }
+}
+
+impl<'r, M> BinDecodable<'r> for Incoming<M>
+where
+    M: BinDecodable<'r>,
+{
+    fn read(
+        reader: &mut walnut_proto::serialize::binary::BinDecoder<'r>,
+    ) -> Result<Self, DecodeError> {
+        let start = reader.index();
+        let msg = M::read(reader)?;
+        let raw = reader.slice_from(start)?;
+        Ok(Incoming {
+            message: msg,
+            raw: Bytes::copy_from_slice(raw),
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Request {
+    pub message: Incoming<Message>,
+    pub protocol: Protocol,
+    pub src: SocketAddr,
+}
+
 #[derive(Debug, Clone)]
 pub struct RequestInfo<'a> {
     /// The source address from which the request came
@@ -67,20 +109,9 @@ pub struct RequestInfo<'a> {
     /// The protocol used for the request
     pub protocol: Protocol,
     /// The header from the original request
-    pub header: &'a Header,
+    pub header: &'a Metadata,
     /// The query from the request
     pub query: &'a Query,
-}
-
-impl Incoming<Message> {
-    pub fn request_info(&self) -> Result<RequestInfo<'_>, ProtoError> {
-        Ok(RequestInfo {
-            src: self.address,
-            protocol: self.protocol,
-            header: self.message.header(),
-            query: self.message.queries().try_as_query()?,
-        })
-    }
 }
 
 /// A type which represents an MessageRequest for dynamic Update.
@@ -89,7 +120,7 @@ pub trait UpdateRequest {
     fn id(&self) -> u16;
 
     /// Zone being updated, this should be the query of a Message
-    fn zone(&self) -> Result<&Query, ProtoError>;
+    fn zone(&self) -> Result<&Query, ProtocolError>;
 
     /// Prerequisites map to the answers of a Message
     fn prerequisites(&self) -> &[Record];
@@ -99,34 +130,29 @@ pub trait UpdateRequest {
 
     /// Additional records
     fn additionals(&self) -> &[Record];
-
-    /// SIG0 records for verifying the Message
-    fn sig0(&self) -> &[Record];
 }
 
 impl UpdateRequest for Message {
     fn id(&self) -> u16 {
-        Self::id(self)
+        self.metadata.id
     }
 
-    fn zone(&self) -> Result<&Query, ProtoError> {
+    fn zone(&self) -> Result<&Query, ProtocolError> {
         // RFC 2136 says "the Zone Section is allowed to contain exactly one record."
-        self.queries().try_as_query()
+        self.queries
+            .first()
+            .ok_or_else(|| DecodeError::BadQueryCount(0).into())
     }
 
     fn prerequisites(&self) -> &[Record] {
-        self.answers()
+        &self.answers
     }
 
     fn updates(&self) -> &[Record] {
-        self.name_servers()
+        &self.authorities
     }
 
     fn additionals(&self) -> &[Record] {
-        self.additionals()
-    }
-
-    fn sig0(&self) -> &[Record] {
-        self.sig0()
+        &self.additionals
     }
 }

@@ -20,12 +20,13 @@ use futures::future::BoxFuture;
 #[cfg(feature = "tls")]
 use rustls::ClientConfig;
 use serde::Deserialize;
+use walnut_proto::op::Message;
 
 use crate::client::DnsClientError;
 use crate::client::udp::{DnsUdpProtocol, DnsUdpTransport};
 use crate::codec::CodecError;
 use crate::codec::DnsCodec;
-use crate::messages::{Message, Protocol};
+use crate::messages::Protocol;
 
 use super::ConnectionPolicy;
 

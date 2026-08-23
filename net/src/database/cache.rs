@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use hickory_proto::op::Query;
+use walnut_proto::op::Query;
 
 use monarch_db::MonarchDB;
 
@@ -219,9 +219,9 @@ impl DnsCache for SQLiteCache {
 mod tests {
     use super::*;
     use crate::cache::CacheTimestamp;
-    use hickory_proto::rr::{Name, RData, Record, RecordType, rdata::A};
     use std::str::FromStr;
     use walnut_proto::rr::QueryID;
+    use walnut_proto::rr::{Name, RData, Record, RecordType, rdata::A};
 
     async fn create_test_cache() -> SQLiteCache {
         let connection = rusqlite::Connection::open_in_memory().unwrap();
@@ -238,14 +238,14 @@ mod tests {
         let query = Query::query(Name::from_str("example.com.").unwrap(), RecordType::A);
         let record = Record::from_rdata(
             Name::from_str("example.com.").unwrap(),
-            300,
+            300.into(),
             RData::A(A::new(192, 168, 1, 1)),
         );
         let lookup = QueryLookup::new(
             QueryID::new(),
             query.clone(),
             vec![record.into()],
-            hickory_proto::op::ResponseCode::NoError,
+            walnut_proto::op::ResponseCode::NoError,
             CacheTimestamp::from(now + chrono::Duration::seconds(300)),
         );
 
@@ -267,7 +267,7 @@ mod tests {
             QueryID::new(),
             query.clone(),
             vec![],
-            hickory_proto::op::ResponseCode::NXDomain,
+            walnut_proto::op::ResponseCode::NXDomain,
             CacheTimestamp::from(now + chrono::Duration::seconds(300)),
         );
 
@@ -290,7 +290,7 @@ mod tests {
             QueryID::new(),
             query.clone(),
             vec![],
-            hickory_proto::op::ResponseCode::NoError,
+            walnut_proto::op::ResponseCode::NoError,
             CacheTimestamp::from(past),
         );
 

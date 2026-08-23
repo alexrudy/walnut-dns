@@ -1051,6 +1051,7 @@ mod tests {
 
     #[test]
     #[allow(clippy::blocks_in_conditions)]
+    #[cfg(feature = "__dnssec")]
     fn test_get_filter() {
         use crate::dnssec::{
             Algorithm,

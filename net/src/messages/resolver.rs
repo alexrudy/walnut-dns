@@ -1,11 +1,9 @@
 use std::ops::Deref;
 
-use hickory_proto::{
-    ProtoError,
-    op::{Edns, Query},
+use walnut_proto::{
+    op::{Edns, Message, Query},
+    serialize::binary::DecodeError,
 };
-
-use super::Message;
 
 /// The request object for a single DNS query.
 #[derive(Debug, Clone)]
@@ -39,11 +37,15 @@ impl From<Query> for DnsQuery {
 }
 
 impl TryFrom<Message> for DnsQuery {
-    type Error = ProtoError;
+    type Error = DecodeError;
 
     fn try_from(message: Message) -> Result<Self, Self::Error> {
-        let query = message.queries().try_as_query()?.clone();
-        let edns = message.extensions().clone();
+        let query = message
+            .queries
+            .into_iter()
+            .next()
+            .ok_or_else(|| DecodeError::BadQueryCount(0))?;
+        let edns = message.edns;
         Ok(DnsQuery { query, edns })
     }
 }

@@ -1,8 +1,8 @@
-use hickory_proto::dnssec::rdata::DNSSECRData;
-use hickory_proto::op::Query;
-use hickory_proto::rr::{RData, RecordType};
 use tower::ServiceExt as _;
 use tracing::{trace, warn};
+use walnut_proto::dnssec::rdata::DNSSECRData;
+use walnut_proto::op::Query;
+use walnut_proto::rr::{RData, RecordType};
 
 use crate::authority::LookupError;
 use crate::lookup::QueryLookup;
@@ -139,7 +139,7 @@ where
             }
 
             if let RData::DNSSEC(DNSSECRData::RRSIG(rrsig)) = rr.rdata() {
-                let type_covered = rrsig.type_covered();
+                let type_covered = rrsig.input().type_covered;
                 trace!(type=%type_covered, "Adding signature {} to chain", rr.name());
                 if type_covered == query_type || type_covered == RecordType::CNAME {
                     return Some(rr.to_owned());
@@ -163,11 +163,11 @@ mod future {
         task::{Poll, ready},
     };
 
-    use hickory_proto::{
+    use pin_project::pin_project;
+    use walnut_proto::{
         op::Query,
         rr::{RData, RecordType},
     };
-    use pin_project::pin_project;
 
     use crate::{
         authority::LookupError, lookup::QueryLookup, messages::DnsQuery,
@@ -260,7 +260,7 @@ mod future {
 
 #[cfg(test)]
 mod test {
-    use hickory_proto::{
+    use walnut_proto::{
         op::Query,
         rr::{Name, RecordType, rdata},
     };

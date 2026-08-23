@@ -1,7 +1,7 @@
-use hickory_proto::rr::rdata;
 use walnut_dns::ZoneInfo as _;
 use walnut_dns::catalog::CatalogStore;
 use walnut_dns::database::SqliteStore;
+use walnut_proto::rr::rdata;
 use walnut_proto::rr::{Name, NameExt, Record, Zone, ZoneType};
 
 mod support;
