@@ -40,6 +40,10 @@ impl TryFrom<Message> for DnsQuery {
     type Error = DecodeError;
 
     fn try_from(message: Message) -> Result<Self, Self::Error> {
+        if message.queries.len() != 1 {
+            return Err(DecodeError::BadQueryCount(message.queries.len()));
+        }
+
         let query = message
             .queries
             .into_iter()

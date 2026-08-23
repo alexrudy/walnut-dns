@@ -33,9 +33,9 @@ enum-as-inner = "*"
 future-eyeballs = "0.1"
 futures = "0.3"
 hickory-proto = { version = "0.25", features = ["mdns", "dnssec-ring", "text-parsing"] }
-http = { version = "1",  }
-http-body = { version = "1",  }
-http-body-util = { version = "0.1",  }
+http = { version = "1" }
+http-body = { version = "1" }
+http-body-util = { version = "0.1" }
 hyper = "1"
 hyperdriver = "0.12.5"
 monarch-db = { version = ">=0.1.1" }

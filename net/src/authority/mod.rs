@@ -28,6 +28,7 @@ use std::sync::Arc;
 use walnut_proto::op::{Query, ResponseCode};
 use walnut_proto::rr::{DNSClass, Name, RData, RecordType, RrKey};
 
+use crate::catalog::CatalogError;
 use crate::messages::server::Incoming;
 use walnut_proto::op::Message;
 use walnut_proto::rr::{Mismatch, Record, RecordSet, SerialNumber, TimeToLive, Zone, ZoneType};
@@ -44,7 +45,7 @@ pub use self::dnssec::Nsec3QueryInfo;
 #[cfg(feature = "__dnssec")]
 pub use self::dnssec::NxProofKind;
 #[cfg(feature = "__dnssec")]
-pub use self::dnssec::{DnsSecZone, DnsSecZoneError, Journal};
+pub use self::dnssec::{DnsSecZone, DnsSecZoneError};
 pub use self::error::LookupError;
 pub use self::lookup::{LookupControlFlow, LookupOptions, LookupRecords};
 
@@ -508,12 +509,14 @@ pub trait Update: ZoneInfo {
         lookup_options: LookupOptions,
     ) -> LookupControlFlow<LookupRecords>;
 
+    #[cfg(feature = "__dnssec")]
     async fn get_nsec3_records(
         &self,
         info: Nsec3QueryInfo<'_>,
         lookup_options: LookupOptions,
     ) -> LookupControlFlow<LookupRecords>;
 
+    #[cfg(feature = "__dnssec")]
     fn nx_proof_kind(&self) -> Option<&NxProofKind>;
 }
 
@@ -537,6 +540,7 @@ impl Update for Zone {
     }
 
     #[expect(unused_variables)]
+    #[cfg(feature = "__dnssec")]
     async fn get_nsec3_records(
         &self,
         info: Nsec3QueryInfo<'_>,
@@ -545,6 +549,7 @@ impl Update for Zone {
         LookupControlFlow::Continue(Ok(LookupRecords::empty()))
     }
 
+    #[cfg(feature = "__dnssec")]
     fn nx_proof_kind(&self) -> Option<&NxProofKind> {
         None
     }
@@ -917,4 +922,49 @@ fn maybe_next_name(record_set: &RecordSet, query_type: RecordType) -> Option<(Na
         // other additional collectors can be added here can be added here
         _ => None,
     }
+}
+
+/// Trait for journaling DNS zone operations
+///
+/// The Journal trait provides an interface for recording DNS operations
+/// such as record insertions and zone updates. This is useful for auditing,
+/// replication, and maintaining operation history.
+#[async_trait::async_trait]
+pub trait Journal<Z> {
+    /// Record the insertion of DNS records
+    ///
+    /// Logs the insertion of one or more DNS records into the specified zone.
+    /// This is typically called during DNS UPDATE operations.
+    ///
+    /// # Arguments
+    ///
+    /// * `zone` - The zone where records are being inserted
+    /// * `records` - The records being inserted
+    ///
+    /// # Returns
+    ///
+    /// Success or an error if the operation cannot be journaled
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the journal backend fails
+    async fn insert_records(&self, zone: &Z, records: &[Record]) -> Result<(), CatalogError>;
+
+    /// Record the update of a DNS zone
+    ///
+    /// Logs the complete state of a zone after an update operation.
+    /// This creates a checkpoint that can be used for recovery.
+    ///
+    /// # Arguments
+    ///
+    /// * `zone` - The zone being updated
+    ///
+    /// # Returns
+    ///
+    /// Success or an error if the operation cannot be journaled
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the journal backend fails
+    async fn upsert_zone(&self, zone: &Z) -> Result<(), CatalogError>;
 }

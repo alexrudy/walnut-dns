@@ -13,6 +13,7 @@ use walnut_proto::rr::{DNSClass, Name, RData, RecordType, RrKey, TSigner};
 
 use super::lookup::{LookupControlFlow, LookupOptions, LookupRecords};
 use super::{Lookup, LookupError, Records, Update, ZoneInfo};
+use crate::authority::Journal;
 use crate::catalog::CatalogError;
 use crate::messages::server::{Incoming, UpdateRequest as _};
 use walnut_proto::op::Message;
@@ -21,51 +22,6 @@ use walnut_proto::rr::{Mismatch, Record, RecordSet, TimeToLive};
 mod authorize;
 mod prerequisites;
 mod update;
-
-/// Trait for journaling DNS zone operations
-///
-/// The Journal trait provides an interface for recording DNS operations
-/// such as record insertions and zone updates. This is useful for auditing,
-/// replication, and maintaining operation history.
-#[async_trait::async_trait]
-pub trait Journal<Z> {
-    /// Record the insertion of DNS records
-    ///
-    /// Logs the insertion of one or more DNS records into the specified zone.
-    /// This is typically called during DNS UPDATE operations.
-    ///
-    /// # Arguments
-    ///
-    /// * `zone` - The zone where records are being inserted
-    /// * `records` - The records being inserted
-    ///
-    /// # Returns
-    ///
-    /// Success or an error if the operation cannot be journaled
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the journal backend fails
-    async fn insert_records(&self, zone: &Z, records: &[Record]) -> Result<(), CatalogError>;
-
-    /// Record the update of a DNS zone
-    ///
-    /// Logs the complete state of a zone after an update operation.
-    /// This creates a checkpoint that can be used for recovery.
-    ///
-    /// # Arguments
-    ///
-    /// * `zone` - The zone being updated
-    ///
-    /// # Returns
-    ///
-    /// Success or an error if the operation cannot be journaled
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the journal backend fails
-    async fn upsert_zone(&self, zone: &Z) -> Result<(), CatalogError>;
-}
 
 /// Dummy implementation for disabling journaling.
 #[async_trait::async_trait]

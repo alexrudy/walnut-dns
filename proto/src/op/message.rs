@@ -760,13 +760,11 @@ mod tests {
 
     use super::*;
 
-    #[cfg(feature = "__dnssec")]
-    use crate::rr::TimeToLive;
     use crate::rr::rdata::opt::{ClientSubnet, EdnsCode, EdnsOption};
     use crate::rr::rdata::{A, OPT};
     #[cfg(feature = "__dnssec")]
     use crate::rr::rdata::{TSIG, tsig::TsigAlgorithm};
-    use crate::rr::{Name, RData};
+    use crate::rr::{Name, RData, TimeToLive};
 
     #[test]
     fn test_emit_and_read_header() {

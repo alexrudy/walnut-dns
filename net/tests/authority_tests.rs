@@ -15,8 +15,10 @@ use walnut_dns::authority::LookupOptions;
 use walnut_dns::authority::Records as _;
 use walnut_dns::authority::Search as _;
 use walnut_dns::authority::Update as _;
+#[cfg(feature = "__dnssec")]
 use walnut_dns::authority::{DnsSecZone, NxProofKind};
 use walnut_dns::catalog::CatalogStore;
+#[cfg(feature = "__dnssec")]
 use walnut_dns::database::DnsSecStore;
 use walnut_proto::rr::{Record, TimeToLive};
 
@@ -869,6 +871,7 @@ async fn test_update() {
 
 #[tokio::test]
 #[allow(clippy::uninlined_format_args)]
+#[cfg(feature = "__dnssec")]
 async fn test_zone_signing() {
     use tracing::info;
     use walnut_proto::{dnssec::rdata::RRSIG, rr::RecordData};

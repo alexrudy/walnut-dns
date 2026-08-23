@@ -1,5 +1,6 @@
 use tower::ServiceExt as _;
 use tracing::{trace, warn};
+#[cfg(feature = "__dnssec")]
 use walnut_proto::dnssec::rdata::DNSSECRData;
 use walnut_proto::op::Query;
 use walnut_proto::rr::{RData, RecordType};
@@ -138,6 +139,7 @@ where
                 return Some(rr.clone());
             }
 
+            #[cfg(feature = "__dnssec")]
             if let RData::DNSSEC(DNSSECRData::RRSIG(rrsig)) = rr.rdata() {
                 let type_covered = rrsig.input().type_covered;
                 trace!(type=%type_covered, "Adding signature {} to chain", rr.name());

@@ -9,6 +9,7 @@ use camino::Utf8PathBuf;
 use monarch_db::{MonarchDB, StaticMonarchConfiguration};
 use serde::Deserialize;
 
+#[cfg(feature = "__dnssec")]
 pub use self::dnssec::{DnsKey, DnsSecStore};
 use self::journal::SqliteJournal;
 use self::record::RecordPersistence;
@@ -17,6 +18,7 @@ use crate::catalog::{CatalogError, CatalogStore};
 use walnut_proto::rr::{Name, Zone, ZoneID};
 
 pub mod cache;
+#[cfg(feature = "__dnssec")]
 pub mod dnssec;
 pub mod journal;
 
